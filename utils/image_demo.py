@@ -1,5 +1,5 @@
-"""                                                                                                    
-Image demo for BlazeFace detection.
+"""
+Image demo for BlazeEar detection.
 Loads images from train.csv and compares detector output with ground truth annotations.
 
 Navigation:
@@ -8,7 +8,7 @@ Navigation:
 - 'q' or ESC: Quit
 
 Supports loading:
-- MediaPipe weights: blazeface.pth (raw state_dict)
+- MediaPipe weights: blazeear.pth (raw state_dict)
 - Retrained checkpoints: *.ckpt (dict with 'model_state_dict' key)
 """
 import argparse
@@ -28,7 +28,7 @@ from utils.data_utils import load_image_boxes_from_csv
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Image demo for BlazeFace detection with CSV comparison",
+        description="Image demo for BlazeEar detection with CSV comparison",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument(
@@ -99,7 +99,7 @@ if __name__ == "__main__":
     print(f"Loaded {len(image_paths)} unique images with annotations")
 
     # Setup window
-    WINDOW = "BlazeFace Image Demo"
+    WINDOW = "BlazeEar Image Demo"
     cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
 
     # Navigation state

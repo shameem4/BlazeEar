@@ -16,10 +16,10 @@ import torch
 from tqdm import tqdm
 
 from dataloader import CSVDetectorDataset, encode_boxes_to_anchors, flatten_anchor_targets
-from blazeface import BlazeFace
+from blazeear import BlazeEar
 from blazedetector import BlazeDetector
 from blazebase import generate_reference_anchors
-from loss_functions import BlazeFaceDetectionLoss, compute_mean_iou
+from loss_functions import BlazeEarDetectionLoss, compute_mean_iou
 from utils import model_utils
 from utils.config import (
     DEFAULT_COMPARE_LABEL,
@@ -119,7 +119,7 @@ def run_anchor_unit_tests() -> None:
     print(f"  PASS multiple boxes mapped to anchors {assigned.tolist()}")
 
 
-def run_decode_unit_test(loss_fn: BlazeFaceDetectionLoss) -> None:
+def run_decode_unit_test(loss_fn: BlazeEarDetectionLoss) -> None:
     print("Running decode sanity check...")
     reference_anchors, _, _ = generate_reference_anchors()
     gt = torch.tensor([[0.1, 0.2, 0.3, 0.4]])
@@ -143,7 +143,7 @@ def run_csv_encode_decode_test(
     """Ensure encode/decode math is consistent with CSV-derived GT boxes."""
     print("\nRunning CSV encode/decode consistency test...")
     reference_anchors, _, _ = generate_reference_anchors()
-    loss_fn = BlazeFaceDetectionLoss(**LOSS_DEBUG_KWARGS)
+    loss_fn = BlazeEarDetectionLoss(**LOSS_DEBUG_KWARGS)
     sample_indices = list(range(min(max_samples, len(dataset))))
 
     for sample_idx in sample_indices:
@@ -300,11 +300,11 @@ def create_debug_visualization(
     output_dir: Path,
     device: torch.device,
     top_k: int = 5,
-    comparison_detector: Optional[BlazeFace] = None,
+    comparison_detector: Optional[BlazeEar] = None,
     comparison_label: str = "Mediapipe",
     primary_label: str = "Finetuned",
     filename: Optional[str] = None,
-    averaged_detector: Optional[BlazeFace] = None,
+    averaged_detector: Optional[BlazeEar] = None,
     averaged_label: str = "Finetuned",
     averaged_threshold: float = 0.5,
     averaged_color: Tuple[int, int, int] = (255, 0, 255)
@@ -465,7 +465,7 @@ def _prepare_inference_tensor(
 
 
 def _run_detector_on_image(
-    detector: Optional[BlazeFace],
+    detector: Optional[BlazeEar],
     image_rgb: np.ndarray,
     device: torch.device,
     target_size: Tuple[int, int] = (128, 128)
@@ -523,11 +523,11 @@ def _select_multiface_indices(
 
 
 def _collect_sample_debug_data(
-    model: BlazeFace,
+    model: BlazeEar,
     dataset: CSVDetectorDataset,
     sample_idx: int,
     device: torch.device,
-    loss_fn: BlazeFaceDetectionLoss,
+    loss_fn: BlazeEarDetectionLoss,
     reference_anchors: torch.Tensor,
     top_k: int = 10
 ) -> Dict[str, torch.Tensor]:
@@ -564,17 +564,17 @@ def _collect_sample_debug_data(
 def generate_readme_screenshots(
     dataset: CSVDetectorDataset,
     output_dir: Path,
-    baseline_model: Optional[BlazeFace],
-    finetuned_model: BlazeFace,
+    baseline_model: Optional[BlazeEar],
+    finetuned_model: BlazeEar,
     device: torch.device,
-    loss_fn: BlazeFaceDetectionLoss,
+    loss_fn: BlazeEarDetectionLoss,
     reference_anchors: torch.Tensor,
     min_faces: int,
     max_candidates: int,
     limit: int,
     baseline_label: str,
     finetuned_label: str,
-    averaged_detector: Optional[BlazeFace],
+    averaged_detector: Optional[BlazeEar],
     averaged_threshold: float
 ) -> List[Path]:
     """Generate README screenshots via the standard debug visualization pipeline."""
@@ -626,7 +626,7 @@ def generate_readme_screenshots(
 
 
 def evaluate_dataset_performance(
-    model: BlazeFace,
+    model: BlazeEar,
     csv_path: Path,
     data_root: Path,
     device: torch.device,
@@ -753,7 +753,7 @@ def _print_evaluation_summary(label: str, stats: Dict[str, float]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Debug BlazeFace training sample (single image end-to-end)"
+        description="Debug BlazeEar training sample (single image end-to-end)"
     )
     parser.add_argument("--csv", type=str, default=DEFAULT_TRAIN_CSV)
     parser.add_argument("--data-root", type=str, default=DEFAULT_DATA_ROOT)
@@ -870,7 +870,7 @@ def main() -> None:
     run_csv_encode_decode_test(dataset)
 
     device = model_utils.setup_device()
-    loss_fn = BlazeFaceDetectionLoss(**LOSS_DEBUG_KWARGS).to(device)
+    loss_fn = BlazeEarDetectionLoss(**LOSS_DEBUG_KWARGS).to(device)
     reference_anchors, _, _ = generate_reference_anchors()
     reference_anchors = reference_anchors.to(device)
     comparison_detector = None

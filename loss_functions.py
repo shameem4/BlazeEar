@@ -2,7 +2,7 @@
 Loss functions for ear detection models.
 
 Provides:
-- BlazeFaceDetectionLoss: Primary loss with BCE or focal loss option
+- BlazeEarDetectionLoss: Primary loss with BCE or focal loss option
 
 Based on vincent1bt/blazeface-tensorflow loss implementation:
 - Hard negative mining for background samples
@@ -20,14 +20,14 @@ from utils.metrics import compute_mean_iou_torch, compute_map_torch
 from utils.box_utils import decode_boxes as _decode_boxes_util
 
 
-class BlazeFaceDetectionLoss(nn.Module):
+class BlazeEarDetectionLoss(nn.Module):
     """
-    Loss function for BlazeFace detector following vincent1bt approach.
-    
+    Loss function for BlazeEar detector following vincent1bt approach.
+
     Combines:
     - Classification loss (BCE or Focal loss with hard negative mining)
     - Regression loss (Huber/Smooth L1 for box coordinates)
-    
+
     Key features:
     - Hard negative mining: Selects highest-scoring background anchors
     - Decodes anchor predictions to absolute coordinates for loss
@@ -175,19 +175,19 @@ class BlazeFaceDetectionLoss(nn.Module):
         reference_anchors: torch.Tensor
     ) -> Dict[str, torch.Tensor]:
         """
-        Compute BlazeFace detection loss.
-        
+        Compute BlazeEar detection loss.
+
         Following vincent1bt/blazeface-tensorflow loss_functions.py:
         - Hard negative mining for background
         - Huber loss for box regression (only positive anchors)
         - BCE for classification
-        
+
         Args:
             class_predictions: [B, 896, 1] predicted class scores (sigmoid applied)
             anchor_predictions: [B, 896, 4] predicted box offsets [dx, dy, w, h]
             anchor_targets: [B, 896, 5] targets [class, ymin, xmin, ymax, xmax]
             reference_anchors: [896, 2] anchor centers [x, y]
-            
+
         Returns:
             Dict with 'total', 'detection', 'background', 'positive' losses
         """
@@ -285,10 +285,10 @@ compute_map = compute_map_torch
 
 def get_loss(**kwargs) -> nn.Module:
     """
-    Factory function to get BlazeFace detection loss.
+    Factory function to get BlazeEar detection loss.
 
     Args:
-        **kwargs: Arguments for BlazeFaceDetectionLoss
+        **kwargs: Arguments for BlazeEarDetectionLoss
             - hard_negative_ratio: Ratio of negatives to positives (default: 1.0)
             - detection_weight: Weight for box regression (default: 150.0)
             - classification_weight: Weight for classification (default: 35.0)
@@ -296,8 +296,8 @@ def get_loss(**kwargs) -> nn.Module:
             - use_focal_loss: Use focal loss instead of BCE (default: False)
             - focal_alpha: Focal loss alpha (default: 0.25)
             - focal_gamma: Focal loss gamma (default: 2.0)
-        
+
     Returns:
-        BlazeFaceDetectionLoss module
+        BlazeEarDetectionLoss module
     """
-    return BlazeFaceDetectionLoss(**kwargs)
+    return BlazeEarDetectionLoss(**kwargs)

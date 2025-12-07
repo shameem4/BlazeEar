@@ -13,8 +13,9 @@ class BlazeDetector(BlazeBase):
     Based on code from https://github.com/tkat0/PyTorch_BlazeFace/ and
     https://github.com/hollance/BlazeFace-PyTorch and
     https://github.com/google/mediapipe/
-    
+
     Training methodology adapted from vincent1bt/blazeface-tensorflow.
+    Used as base class for BlazeEar ear detector.
     """
     
     # Type annotations for class attributes
@@ -131,11 +132,11 @@ class BlazeDetector(BlazeBase):
 
         Arguments:
             img: a NumPy array of shape (H, W, 3) or a PyTorch tensor of
-                 shape (3, H, W). The image's height and width should be 
+                 shape (3, H, W). The image's height and width should be
                  128 pixels.
 
         Returns:
-            A tensor with face detections.
+            A tensor with detections.
         """
         if isinstance(img, np.ndarray):
             img = torch.from_numpy(img).permute((2, 0, 1))
@@ -235,8 +236,8 @@ class BlazeDetector(BlazeBase):
                shape (b, 3, H, W). The height and width should be 128 pixels.
 
         Returns:
-            A list containing a tensor of face detections for each image in 
-            the batch. If no faces are found for an image, returns a tensor
+            A list containing a tensor of detections for each image in
+            the batch. If no detections are found for an image, returns a tensor
             of shape (0, 5).
 
         Each detection is a PyTorch tensor consisting of 5 numbers:
@@ -379,7 +380,7 @@ class BlazeDetector(BlazeBase):
         return boxes
 
     def _weighted_non_max_suppression(self, detections: torch.Tensor) -> list[torch.Tensor]:
-        """The alternative NMS method as mentioned in the BlazeFace paper:
+        """The alternative NMS method as mentioned in the BlazeFace/BlazeEar paper:
 
         "We replace the suppression algorithm with a blending strategy that
         estimates the regression parameters of a bounding box as a weighted

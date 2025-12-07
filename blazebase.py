@@ -150,20 +150,20 @@ def convert_blazeblock_weights(old_state: Dict[str, torch.Tensor],
     return new_state
 
 
-def convert_blazeface_wt_to_trainable(old_state_dict: Dict[str, torch.Tensor]
+def convert_blazeear_wt_to_trainable(old_state_dict: Dict[str, torch.Tensor]
 ) -> Dict[str, torch.Tensor]:
     """
-    Convert full BlazeFace state dict from BlazeBlock_WT to BlazeBlock format.
-    
+    Convert full BlazeEar state dict from BlazeBlock_WT to BlazeBlock format.
+
     This enables loading pretrained MediaPipe weights into a trainable
     BlazeBlock-based model with explicit BatchNorm layers.
-    
+
     Note: Regressor weights are converted to extract only box coordinates (first 4 of 16),
     discarding keypoint regression channels since our trainable model is box-only.
-    
+
     Args:
         old_state_dict: State dict from model using BlazeBlock_WT
-        
+
     Returns:
         New state dict compatible with trainable BlazeBlock model
     """
@@ -264,7 +264,7 @@ def load_mediapipe_weights(model: nn.Module,
         return result.missing_keys, result.unexpected_keys
     except RuntimeError:
         # Fallback: convert folded-BN weights to BlazeBlock format
-        converted = convert_blazeface_wt_to_trainable(original_state)
+        converted = convert_blazeear_wt_to_trainable(original_state)
         converted = split_regressor_heads(maybe_strip(converted))
         result = model.load_state_dict(converted, strict=strict)
         return result.missing_keys, result.unexpected_keys
@@ -368,11 +368,11 @@ class BlazeBlock(nn.Module):
 class BlazeBlock_WT(nn.Module):
     """
     BlazeBlock for Weight Transfer - used for loading pretrained MediaPipe weights.
-    
+
     This version has BatchNorm folded into conv weights (no explicit BN layers),
     matching the format of pretrained .pth files from MediaPipe conversion.
-    
-    Use the weight conversion utilities (convert_blazeface_to_bn, load_pretrained_to_bn_model)
+
+    Use the weight conversion utilities (convert_blazeear_wt_to_trainable, load_mediapipe_weights)
     to transfer weights from this format to the trainable BlazeBlock format.
     """
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, act='relu', skip_proj=False):

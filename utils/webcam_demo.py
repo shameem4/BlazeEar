@@ -1,9 +1,9 @@
-"""                                                                                                    
-Webcam demo for BlazeFace detection.
+"""
+Webcam demo for BlazeEar detection.
 Detection only - no landmarks.
 
 Supports loading:
-- MediaPipe weights: blazeface.pth (raw state_dict)
+- MediaPipe weights: blazeear.pth (raw state_dict)
 - Retrained checkpoints: *.ckpt (dict with 'model_state_dict' key)
 """
 import argparse
@@ -24,7 +24,7 @@ from utils import model_utils, drawing, video_utils, config
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Webcam demo for BlazeFace ear detection",
+        description="Webcam demo for BlazeEar ear detection",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument(
@@ -32,7 +32,7 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=config.DEFAULT_BEST_CHECKPOINT,
         help="Path to weights file (.pth for MediaPipe, .ckpt for retrained). "
-             "If not specified, uses model_weights/blazeface.pth"
+             "If not specified, uses model_weights/blazeear.pth"
     )
     parser.add_argument(
         "--camera", "-c",
@@ -76,7 +76,7 @@ if __name__ == "__main__":
 
     print("Model loaded")
 
-    WINDOW = "BlazeFace Detection"
+    WINDOW = "BlazeEar Detection"
     cv2.namedWindow(WINDOW)
 
     # Use threaded webcam capture

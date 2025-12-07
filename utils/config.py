@@ -1,5 +1,5 @@
 """
-Configuration constants for BlazeFace detection.
+Configuration constants for BlazeEar detection.
 """
 
 # Anchor configuration
@@ -10,12 +10,12 @@ BIG_ANCHORS_PER_CELL = 6
 TOTAL_ANCHORS = 896  # 16*16*2 + 8*8*6
 
 # Default paths
-DEFAULT_WEIGHTS_PATH = "model_weights/blazeface.pth"
-DEFAULT_DATA_ROOT = "data/raw/blazeface"
+DEFAULT_WEIGHTS_PATH = "model_weights/blazeear.pth"
+DEFAULT_DATA_ROOT = "data/raw/blazeear"
 DEFAULT_TRAIN_CSV = "data/splits/train.csv"
 DEFAULT_VAL_CSV = "data/splits/val.csv"
 DEFAULT_CHECKPOINT_DIR = "runs/checkpoints"
-DEFAULT_BEST_CHECKPOINT = "runs/checkpoints/BlazeFace_best.pth"
+DEFAULT_BEST_CHECKPOINT = "runs/checkpoints/BlazeEar_best.pth"
 DEFAULT_LOG_DIR = "runs/logs"
 
 # Training hyperparameters

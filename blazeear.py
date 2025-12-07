@@ -9,10 +9,10 @@ from blazedetector import BlazeDetector
 
 
 
-class BlazeFace(BlazeDetector):
-    """The BlazeFace face detection model from MediaPipe.
-    
-    The version from MediaPipe is simpler than the one in the paper; 
+class BlazeEar(BlazeDetector):
+    """The BlazeEar ear detection model based on MediaPipe BlazeFace architecture.
+
+    The version from MediaPipe is simpler than the one in the paper;
     it does not use the "double" BlazeBlocks.
 
     Architecture notes:
@@ -20,7 +20,7 @@ class BlazeFace(BlazeDetector):
     - Output: 896 anchors = 512 (16x16 grid × 2) + 384 (8x8 grid × 6)
     - Classifier: outputs raw logits, sigmoid applied during post-processing
     - Regressor: outputs 16 coords per anchor (4 box + 6×2 keypoints)
-    
+
     For training (following vincent1bt/blazeface-tensorflow):
     - forward() returns [raw_boxes, raw_scores] for loss computation
     - raw_scores are logits (no sigmoid) - apply sigmoid for loss/inference
@@ -32,7 +32,7 @@ class BlazeFace(BlazeDetector):
 
     """
     def __init__(self):
-        super(BlazeFace, self).__init__()
+        super(BlazeEar, self).__init__()
 
         # These are the settings from the MediaPipe example graph
         # mediapipe/graphs/face_detection/face_detection_mobile_gpu.pbtxt
@@ -233,8 +233,8 @@ class BlazeFace(BlazeDetector):
 
     def process(self, frame: np.ndarray) -> torch.Tensor:
         img1, img2, scale, pad = self.resize_pad(frame)
-        normalized_face_detections = self.predict_on_image(img2)
-        face_detections = self.denormalize_detections(normalized_face_detections, scale, pad)
-        # xc, yc, scale, theta = self.detection2roi(face_detections.cpu())
+        normalized_ear_detections = self.predict_on_image(img2)
+        ear_detections = self.denormalize_detections(normalized_ear_detections, scale, pad)
+        # xc, yc, scale, theta = self.detection2roi(ear_detections.cpu())
 
-        return face_detections
+        return ear_detections

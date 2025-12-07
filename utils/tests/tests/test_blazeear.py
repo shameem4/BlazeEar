@@ -1,23 +1,23 @@
 """
-Unit tests for BlazeFace model.
+Unit tests for BlazeEar model.
 """
 import unittest
 from pathlib import Path
 
 import torch
 
-from blazeface import BlazeFace
+from blazeear import BlazeEar
 from blazebase import load_mediapipe_weights
 from utils.anchor_utils import anchor_options
 
 
-class TestBlazeFace(unittest.TestCase):
-    """Tests for BlazeFace model."""
+class TestBlazeEar(unittest.TestCase):
+    """Tests for BlazeEar model."""
 
     def setUp(self):
         """Set up test fixtures."""
         self.device = torch.device("cpu")
-        self.model = BlazeFace().to(self.device)
+        self.model = BlazeEar().to(self.device)
         self.input_size = 128
         self.num_anchors = 896
         self.num_coords = 16  # 4 box + 12 keypoint coords
@@ -71,13 +71,13 @@ class TestBlazeFace(unittest.TestCase):
 
     def test_load_weights(self):
         """Test loading MediaPipe pretrained weights."""
-        weights_path = Path("model_weights/blazeface.pth")
-        
+        weights_path = Path("model_weights/blazeear.pth")
+
         if not weights_path.exists():
             self.skipTest(f"Weights file not found: {weights_path}")
-        
+
         # Create fresh model
-        model = BlazeFace().to(self.device)
+        model = BlazeEar().to(self.device)
         
         # Load weights
         missing_keys, unexpected_keys = load_mediapipe_weights(
@@ -104,7 +104,7 @@ class TestBlazeFace(unittest.TestCase):
 
     def test_generate_anchors(self):
         """Test anchor generation."""
-        model = BlazeFace().to(self.device)
+        model = BlazeEar().to(self.device)
         
         # Generate anchors
         model.generate_anchors(anchor_options)
@@ -119,12 +119,12 @@ class TestBlazeFace(unittest.TestCase):
 
     def test_predict_on_batch(self):
         """Test predict_on_batch returns filtered detections."""
-        weights_path = Path("model_weights/blazeface.pth")
-        
+        weights_path = Path("model_weights/blazeear.pth")
+
         if not weights_path.exists():
             self.skipTest(f"Weights file not found: {weights_path}")
-        
-        model = BlazeFace().to(self.device)
+
+        model = BlazeEar().to(self.device)
         load_mediapipe_weights(model, str(weights_path), strict=False)
         model.generate_anchors(anchor_options)
         model.eval()
@@ -150,8 +150,8 @@ class TestBlazeFace(unittest.TestCase):
         """Test model has expected number of parameters."""
         total_params = sum(p.numel() for p in self.model.parameters())
         trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
-        
-        # BlazeFace should have around 100k parameters
+
+        # BlazeEar should have around 100k parameters
         self.assertGreater(total_params, 50000)
         self.assertLess(total_params, 500000)
         
@@ -160,7 +160,7 @@ class TestBlazeFace(unittest.TestCase):
 
     def test_freeze_keypoint_regressors(self):
         """Test freezing keypoint regressor layers."""
-        model = BlazeFace()
+        model = BlazeEar()
         
         # Initially all trainable
         kp_params_before = sum(

@@ -1,5 +1,5 @@
 """
-Training script for BlazeFace Face detector.
+Training script for BlazeEar Ear detector.
 
 Complete training pipeline following vincent1bt/blazeface-tensorflow methodology:
 - Anchor-based target encoding (from dataloader)
@@ -8,19 +8,19 @@ Complete training pipeline following vincent1bt/blazeface-tensorflow methodology
 - Huber loss for box regression
 
 Usage (NPY format):
-    python train_blazeface.py --train-data data/preprocessed/train_detector.npy
-    python train_blazeface.py --train-data data/preprocessed/train_detector.npy --val-data data/preprocessed/val_detector.npy
-    python train_blazeface.py --train-data data/preprocessed/train_detector.npy --epochs 500 --lr 1e-4
+    python train_blazeear.py --train-data data/preprocessed/train_detector.npy
+    python train_blazeear.py --train-data data/preprocessed/train_detector.npy --val-data data/preprocessed/val_detector.npy
+    python train_blazeear.py --train-data data/preprocessed/train_detector.npy --epochs 500 --lr 1e-4
 
 Usage (CSV format):
     # Default: MediaPipe weight initialization with auto-resume
-    python train_blazeface.py --csv-format --train-data data/splits/train.csv --val-data data/splits/val.csv --data-root data/raw/blazeface
+    python train_blazeear.py --csv-format --train-data data/splits/train.csv --val-data data/splits/val.csv --data-root data/raw/blazeear
 
     # Train from scratch (random initialization)
-    python train_blazeface.py --csv-format --train-data data/splits/train.csv --val-data data/splits/val.csv --data-root data/raw/blazeface --init-weights scratch
+    python train_blazeear.py --csv-format --train-data data/splits/train.csv --val-data data/splits/val.csv --data-root data/raw/blazeear --init-weights scratch
 
     # Start fresh (disable auto-resume, but use MediaPipe weights)
-    python train_blazeface.py --csv-format --train-data data/splits/train.csv --val-data data/splits/val.csv --data-root data/raw/blazeface --no-auto-resume
+    python train_blazeear.py --csv-format --train-data data/splits/train.csv --val-data data/splits/val.csv --data-root data/raw/blazeear --no-auto-resume
 """
 
 import argparse
@@ -38,10 +38,10 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torch.optim.lr_scheduler import LRScheduler
 
-from blazeface import BlazeFace
+from blazeear import BlazeEar
 from blazebase import generate_reference_anchors, load_mediapipe_weights
 from dataloader import create_dataloader
-from loss_functions import BlazeFaceDetectionLoss, compute_mean_iou, compute_map
+from loss_functions import BlazeEarDetectionLoss, compute_mean_iou, compute_map
 from utils.config import (
     DEFAULT_BEST_CHECKPOINT,
     DEFAULT_BATCH_SIZE,
@@ -69,35 +69,35 @@ def _dataset_length(loader: DataLoader) -> int:
     return len(cast(Sized, dataset))
 
 
-class BlazeFaceTrainer:
+class BlazeEarTrainer:
     """
-    Trainer for BlazeFace Face detector.
-    
+    Trainer for BlazeEar Ear detector.
+
     Handles training loop, validation, checkpointing, and logging.
     Following vincent1bt methodology for loss computation and metrics.
     """
-    
+
     def __init__(
         self,
-        model: BlazeFace,
+        model: BlazeEar,
         train_loader: DataLoader,
         val_loader: Optional[DataLoader] = None,
-        loss_fn: Optional[BlazeFaceDetectionLoss] = None,
+        loss_fn: Optional[BlazeEarDetectionLoss] = None,
         optimizer: Optional[optim.Optimizer] = None,
         scheduler: Optional[LRScheduler] = None,
         device: str = 'cuda',
         checkpoint_dir: str = 'checkpoints',
         log_dir: str = 'logs',
-        model_name: str = 'BlazeFace',
+        model_name: str = 'BlazeEar',
         scale: int = 128,
         compute_train_map: bool = False
     ):
         """
         Args:
-            model: BlazeFace model
+            model: BlazeEar model
             train_loader: Training data loader
             val_loader: Optional validation data loader
-            loss_fn: Loss function (BlazeFaceDetectionLoss if None)
+            loss_fn: Loss function (BlazeEarDetectionLoss if None)
             optimizer: Optimizer (AdamW if None)
             scheduler: Learning rate scheduler
             device: Device to train on
@@ -120,7 +120,7 @@ class BlazeFaceTrainer:
         self.reference_anchors = reference_anchors.float().to(device)
         
         # Setup loss function
-        self.loss_fn = loss_fn if loss_fn else BlazeFaceDetectionLoss(scale=scale)
+        self.loss_fn = loss_fn if loss_fn else BlazeEarDetectionLoss(scale=scale)
         self.loss_fn = self.loss_fn.to(device)
         
         # Setup optimizer
@@ -162,9 +162,9 @@ class BlazeFaceTrainer:
     
     def _get_training_outputs(self, images: torch.Tensor) -> tuple:
         """
-        Get raw training outputs from BlazeFace model.
+        Get raw training outputs from BlazeEar model.
 
-        BlazeFace model returns (raw_boxes, raw_scores) from get_training_outputs()
+        BlazeEar model returns (raw_boxes, raw_scores) from get_training_outputs()
         for training, which bypasses post-processing.
 
         Args:
@@ -730,9 +730,9 @@ class BlazeFaceTrainer:
 def create_model(
     init_weights: str = 'mediapipe',
     weights_path: str = DEFAULT_WEIGHTS_PATH
-) -> BlazeFace:
+) -> BlazeEar:
     """
-    Create BlazeFace model with specified weight initialization.
+    Create BlazeEar model with specified weight initialization.
 
     Args:
         init_weights: Weight initialization strategy:
@@ -741,9 +741,9 @@ def create_model(
         weights_path: Path to MediaPipe weights file
 
     Returns:
-        BlazeFace model
+        BlazeEar model
     """
-    model = BlazeFace()
+    model = BlazeEar()
 
     if init_weights == 'mediapipe':
         weights_path_obj = Path(weights_path)
@@ -768,7 +768,7 @@ def create_model(
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Train BlazeFace face detector',
+        description='Train BlazeEar ear detector',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     
@@ -858,7 +858,7 @@ def main():
     scale = DEFAULT_INPUT_SIZE
     
     print('=' * 60)
-    print('BlazeFace Face Detector Training')
+    print('BlazeEar Ear Detector Training')
     print('=' * 60)
     print(f'Input size: {target_size}')
     print(f'Device: {args.device}')
@@ -936,7 +936,7 @@ def main():
         print(f'Validation samples: {_dataset_length(val_loader)}')
     
     # Create loss function
-    loss_fn = BlazeFaceDetectionLoss(
+    loss_fn = BlazeEarDetectionLoss(
         hard_negative_ratio=args.hard_negative_ratio,
         detection_weight=args.detection_weight,
         classification_weight=args.classification_weight,
@@ -997,7 +997,7 @@ def main():
         )
     
     # Create trainer
-    trainer = BlazeFaceTrainer(
+    trainer = BlazeEarTrainer(
         model=model,
         train_loader=train_loader,
         val_loader=val_loader,
@@ -1007,7 +1007,7 @@ def main():
         device=args.device,
         checkpoint_dir=args.checkpoint_dir,
         log_dir=args.log_dir,
-        model_name='BlazeFace',
+        model_name='BlazeEar',
         scale=scale,
         compute_train_map=args.train_map
     )

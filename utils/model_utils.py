@@ -2,7 +2,7 @@
 Model loading and device setup utilities.
 """
 import torch
-from blazeface import BlazeFace
+from blazeear import BlazeEar
 from utils.config import DEFAULT_NMS_IOU_THRESHOLD
 
 
@@ -22,8 +22,8 @@ def load_model(
     device: torch.device,
     threshold: float | None = None,
     grad_enabled: bool = False
-) -> BlazeFace:
-    """Load BlazeFace model from either MediaPipe weights or training checkpoint.
+) -> BlazeEar:
+    """Load BlazeEar model from either MediaPipe weights or training checkpoint.
 
     Args:
         weights_path: Path to .pth (MediaPipe) or .ckpt (retrained) file
@@ -32,14 +32,14 @@ def load_model(
         grad_enabled: Whether to enable gradients (default: False for inference)
 
     Returns:
-        Loaded BlazeFace model in eval mode
+        Loaded BlazeEar model in eval mode
     """
     from blazebase import anchor_options, load_mediapipe_weights
 
     prev_grad_state = torch.is_grad_enabled()
     torch.set_grad_enabled(grad_enabled)
     try:
-        model = BlazeFace().to(device)
+        model = BlazeEar().to(device)
 
         # Check if this is a training checkpoint or MediaPipe weights
         checkpoint = torch.load(weights_path, map_location=device, weights_only=False)
