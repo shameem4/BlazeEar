@@ -1,5 +1,5 @@
 """
-Integration tests for the BlazeFace training pipeline.
+Integration tests for the BlazeEar training pipeline.
 
 Tests end-to-end workflows:
 - Data loading -> anchor encoding -> loss computation
@@ -19,9 +19,9 @@ from dataloader import (
     flatten_anchor_targets,
     create_dataloader,
 )
-from blazeface import BlazeFace
+from blazeear import BlazeEar
 from blazebase import generate_reference_anchors, load_mediapipe_weights
-from loss_functions import BlazeFaceDetectionLoss, compute_mean_iou
+from loss_functions import BlazeEarDetectionLoss, compute_mean_iou
 from utils.anchor_utils import anchor_options
 
 
@@ -47,7 +47,7 @@ class TestDataToLossPipeline(unittest.TestCase):
             augment=False,
         )
         cls.reference_anchors, _, _ = generate_reference_anchors()
-        cls.loss_fn = BlazeFaceDetectionLoss(scale=128)
+        cls.loss_fn = BlazeEarDetectionLoss(scale=128)
         cls.device = torch.device("cpu")
 
     def test_dataloader_to_loss_pipeline(self):
@@ -147,7 +147,7 @@ class TestModelInferencePipeline(unittest.TestCase):
     def setUpClass(cls):
         """Set up model for testing."""
         cls.device = torch.device("cpu")
-        cls.model = BlazeFace().to(cls.device)
+        cls.model = BlazeEar().to(cls.device)
         cls.reference_anchors, _, _ = generate_reference_anchors()
         
         # Load pretrained weights if available
@@ -233,10 +233,10 @@ class TestFullTrainingStep(unittest.TestCase):
             raise unittest.SkipTest(f"Test data not found: {CSV_PATH}")
         
         cls.device = torch.device("cpu")
-        cls.model = BlazeFace().to(cls.device)
+        cls.model = BlazeEar().to(cls.device)
         cls.reference_anchors, _, _ = generate_reference_anchors()
         cls.reference_anchors = cls.reference_anchors.to(cls.device)
-        cls.loss_fn = BlazeFaceDetectionLoss(scale=128).to(cls.device)
+        cls.loss_fn = BlazeEarDetectionLoss(scale=128).to(cls.device)
         
         cls.dataset = CSVDetectorDataset(
             csv_path=str(CSV_PATH),
@@ -289,12 +289,12 @@ class TestFullTrainingStep(unittest.TestCase):
 
     def test_multiple_training_steps_loss_changes(self):
         """Test that loss changes over multiple training steps."""
-        model = BlazeFace().to(self.device)
+        model = BlazeEar().to(self.device)
         model.train()
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
         
         reference_anchors = self.reference_anchors.clone()
-        loss_fn = BlazeFaceDetectionLoss(scale=128).to(self.device)
+        loss_fn = BlazeEarDetectionLoss(scale=128).to(self.device)
         
         sample = self.dataset[0]
         image = sample["image"].unsqueeze(0).to(self.device)
@@ -327,7 +327,7 @@ class TestFullTrainingStep(unittest.TestCase):
 
     def test_training_with_dataloader(self):
         """Test training loop with DataLoader."""
-        model = BlazeFace().to(self.device)
+        model = BlazeEar().to(self.device)
         model.train()
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
         
@@ -342,7 +342,7 @@ class TestFullTrainingStep(unittest.TestCase):
         )
         
         reference_anchors = self.reference_anchors.clone()
-        loss_fn = BlazeFaceDetectionLoss(scale=128).to(self.device)
+        loss_fn = BlazeEarDetectionLoss(scale=128).to(self.device)
         
         # Run one epoch
         total_loss = 0.0
@@ -382,7 +382,7 @@ class TestMetricsComputation(unittest.TestCase):
     def setUpClass(cls):
         """Set up test fixtures."""
         cls.reference_anchors, _, _ = generate_reference_anchors()
-        cls.loss_fn = BlazeFaceDetectionLoss(scale=128)
+        cls.loss_fn = BlazeEarDetectionLoss(scale=128)
 
     def test_mean_iou_on_decoded_boxes(self):
         """Test mean IoU computation on decoded predictions."""

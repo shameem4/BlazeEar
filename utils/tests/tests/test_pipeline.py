@@ -10,7 +10,7 @@ from dataloader import (
     encode_boxes_to_anchors,
     flatten_anchor_targets,
 )
-from loss_functions import BlazeFaceDetectionLoss
+from loss_functions import BlazeEarDetectionLoss
 from blazebase import generate_reference_anchors
 
 
@@ -52,7 +52,7 @@ class TestPipeline(unittest.TestCase):
     def setUpClass(cls):
         cls.dataset = _load_dataset()
         cls.reference_anchors, _, _ = generate_reference_anchors()
-        cls.loss = BlazeFaceDetectionLoss()
+        cls.loss = BlazeEarDetectionLoss()
 
     def test_normalization_matches_expected(self):
         for sample in self.dataset.samples:

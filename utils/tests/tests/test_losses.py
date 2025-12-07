@@ -5,19 +5,19 @@ import unittest
 
 import torch
 
-from loss_functions import BlazeFaceDetectionLoss, get_loss
+from loss_functions import BlazeEarDetectionLoss, get_loss
 from utils.anchor_utils import generate_reference_anchors
 
 
 class TestLosses(unittest.TestCase):
-    """Tests for BlazeFaceDetectionLoss."""
+    """Tests for BlazeEarDetectionLoss."""
 
     def setUp(self):
         """Set up test fixtures."""
         self.device = torch.device("cpu")
         self.batch_size = 2
         self.num_anchors = 896
-        self.loss_fn = BlazeFaceDetectionLoss(
+        self.loss_fn = BlazeEarDetectionLoss(
             hard_negative_ratio=1.0,
             detection_weight=150.0,
             classification_weight=35.0,
@@ -170,7 +170,7 @@ class TestLosses(unittest.TestCase):
         anchor_preds = torch.randn(B, N, 4) * 0.1
         
         # Create loss with specific settings
-        loss_fn = BlazeFaceDetectionLoss(
+        loss_fn = BlazeEarDetectionLoss(
             hard_negative_ratio=10.0,  # 10 negatives per positive
             min_negatives_per_image=5
         )
@@ -207,7 +207,7 @@ class TestLosses(unittest.TestCase):
         anchor_preds = torch.randn(B, N, 4) * 0.1
         
         # Low ratio but high min
-        loss_fn = BlazeFaceDetectionLoss(
+        loss_fn = BlazeEarDetectionLoss(
             hard_negative_ratio=0.1,  # Would give 0 negatives for 1 positive
             min_negatives_per_image=20
         )
@@ -224,7 +224,7 @@ class TestLosses(unittest.TestCase):
 
     def test_focal_loss(self):
         """Test focal loss option."""
-        loss_fn_focal = BlazeFaceDetectionLoss(
+        loss_fn_focal = BlazeEarDetectionLoss(
             use_focal_loss=True,
             focal_alpha=0.25,
             focal_gamma=2.0
@@ -249,8 +249,8 @@ class TestLosses(unittest.TestCase):
         pred_easy = torch.tensor([0.99])  # confident correct
         target = torch.tensor([1.0])
         
-        loss_fn_bce = BlazeFaceDetectionLoss(use_focal_loss=False)
-        loss_fn_focal = BlazeFaceDetectionLoss(use_focal_loss=True, focal_gamma=2.0)
+        loss_fn_bce = BlazeEarDetectionLoss(use_focal_loss=False)
+        loss_fn_focal = BlazeEarDetectionLoss(use_focal_loss=True, focal_gamma=2.0)
         
         bce_loss = loss_fn_bce.bce_loss(pred_easy, target)
         focal_loss = loss_fn_focal.focal_loss(pred_easy, target)
@@ -287,7 +287,7 @@ class TestLosses(unittest.TestCase):
             use_focal_loss=True
         )
         
-        self.assertIsInstance(loss_fn, BlazeFaceDetectionLoss)
+        self.assertIsInstance(loss_fn, BlazeEarDetectionLoss)
         self.assertEqual(loss_fn.hard_negative_ratio, 2.0)
         self.assertEqual(loss_fn.detection_weight, 100.0)
         self.assertTrue(loss_fn.use_focal_loss)
