@@ -20,27 +20,7 @@ from tqdm import tqdm
 from utils.data_decoder import find_all_annotations, decode_all_annotations
 from utils.data_utils import split_dataframe_by_images
 
-
-def detect_earside(text: str) -> Optional[str]:
-    """
-    Detect left/right ear from text (filename, category name, etc.).
-
-    Returns 'left', 'right', or None if not detected.
-    """
-    text_lower = text.lower()
-
-    left_patterns = [r'\bleft\b', r'\bl_ear\b', r'\bl-ear\b', r'_l\.', r'^l_', r'_l_']
-    right_patterns = [r'\bright\b', r'\br_ear\b', r'\br-ear\b', r'_r\.', r'^r_', r'_r_']
-
-    for pattern in left_patterns:
-        if re.search(pattern, text_lower):
-            return 'left'
-
-    for pattern in right_patterns:
-        if re.search(pattern, text_lower):
-            return 'right'
-
-    return None
+from ultralytics import YOLO
 
 
 def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
@@ -55,6 +35,7 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
     print(f"Found {len(annotation_sources)} annotation sources")
 
     all_rows = []
+    pose_model = YOLO('model_weights/yolo11x-pose.pt') 
 
     for ann_file, ann_type, image_dir in tqdm(annotation_sources, desc="Processing sources"):
         if ann_type == 'images_only':
@@ -83,9 +64,27 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
                 except ValueError:
                     rel_path = image_path
 
-                # Detect earside from filename
-                earside = detect_earside(str(rel_path)) or ''
-
+                # Detect earside using yolo pose estimation
+                results = pose_model(image_path, verbose=False)
+                for r in results:
+                    if r.keypoints is None: continue
+                    keypoints_data = r.keypoints.data.cpu().numpy()
+                    boxes = r.boxes.xyxy.cpu().numpy()
+                    for i, (kp, box) in enumerate(zip(keypoints_data, boxes)):
+                        # Keypoints: 3:L_ear, 4:R_ear
+                        l_ear, r_ear = kp[3], kp[4] 
+                        if box[0] <= x <= box[2] and box[1] <= y <= box[3]:
+                            if l_ear[2] > 0 and r_ear[2] > 0:
+                                earside = 'left' if l_ear[0] < r_ear[0] else 'right'
+                            elif l_ear[2] > 0:
+                                earside = 'left'
+                            elif r_ear[2] > 0:
+                                earside = 'right'
+                            else:
+                                earside = ''
+                            break               
+                
+                
                 all_rows.append({
                     'image_path': rel_path.as_posix(),
                     'x1': int(round(x)),

@@ -3,3 +3,4 @@
 *.pyc
 nul
 /utils/__pycache__
+model_weights/yolo11x-pose.pt
