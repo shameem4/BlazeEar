@@ -1,4 +1,5 @@
 import argparse
+import shutil
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Union
@@ -773,13 +774,13 @@ def main() -> None:
     parser.add_argument(
         "--compare-threshold",
         type=float,
-        default=DEFAULT_COMPARE_THRESHOLD,
+        default=None,#DEFAULT_COMPARE_THRESHOLD,
         help="Detection threshold for the secondary detector"
     )
     parser.add_argument(
         "--compare-label",
         type=str,
-        default=DEFAULT_COMPARE_LABEL,
+        default=None,#DEFAULT_COMPARE_LABEL,
         help="Label prefix for the secondary detector annotations"
     )
     parser.add_argument(
@@ -869,6 +870,10 @@ def main() -> None:
 
     run_csv_encode_decode_test(dataset)
 
+    debug_image_dir = Path("runs/logs") / "debug_images"
+    if debug_image_dir.exists():
+        shutil.rmtree(debug_image_dir)
+
     device = model_utils.setup_device()
     loss_fn = BlazeEarDetectionLoss(**LOSS_DEBUG_KWARGS).to(device)
     reference_anchors, _, _ = generate_reference_anchors()
@@ -900,7 +905,7 @@ def main() -> None:
     averaged_detector = None if args.no_averaged_overlay else model
 
     if args.index is None:
-        rng = np.random.default_rng(42)
+        rng = np.random.default_rng()
         indices = rng.choice(len(dataset), size=min(10, len(dataset)), replace=False)
     else:
         indices = [int(idx.strip()) for idx in args.index.split(",") if idx.strip()]
@@ -1032,7 +1037,7 @@ def main() -> None:
             top_scores=top_scores,
             anchor_targets=anchor_targets,
             class_predictions=class_predictions.squeeze(-1),
-            output_dir=Path("runs/logs") / "debug_images",
+            output_dir=debug_image_dir,
             device=device,
             comparison_detector=comparison_detector,
             comparison_label=args.compare_label,

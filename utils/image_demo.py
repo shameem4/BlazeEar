@@ -8,7 +8,7 @@ Navigation:
 - 'q' or ESC: Quit
 
 Supports loading:
-- MediaPipe weights: blazeear.pth (raw state_dict)
+- MediaPipe weights: blazeface.pth (raw state_dict)
 - Retrained checkpoints: *.ckpt (dict with 'model_state_dict' key)
 """
 import argparse

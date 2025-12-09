@@ -71,7 +71,7 @@ class TestBlazeEar(unittest.TestCase):
 
     def test_load_weights(self):
         """Test loading MediaPipe pretrained weights."""
-        weights_path = Path("model_weights/blazeear.pth")
+        weights_path = Path("model_weights/blazeface.pth")
 
         if not weights_path.exists():
             self.skipTest(f"Weights file not found: {weights_path}")
@@ -119,7 +119,7 @@ class TestBlazeEar(unittest.TestCase):
 
     def test_predict_on_batch(self):
         """Test predict_on_batch returns filtered detections."""
-        weights_path = Path("model_weights/blazeear.pth")
+        weights_path = Path("model_weights/blazeface.pth")
 
         if not weights_path.exists():
             self.skipTest(f"Weights file not found: {weights_path}")

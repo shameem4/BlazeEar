@@ -3,7 +3,7 @@ Webcam demo for BlazeEar detection.
 Detection only - no landmarks.
 
 Supports loading:
-- MediaPipe weights: blazeear.pth (raw state_dict)
+- MediaPipe weights: blazeface.pth (raw state_dict)
 - Retrained checkpoints: *.ckpt (dict with 'model_state_dict' key)
 """
 import argparse
@@ -32,7 +32,7 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=config.DEFAULT_BEST_CHECKPOINT,
         help="Path to weights file (.pth for MediaPipe, .ckpt for retrained). "
-             "If not specified, uses model_weights/blazeear.pth"
+             "If not specified, uses model_weights/blazeface.pth"
     )
     parser.add_argument(
         "--camera", "-c",

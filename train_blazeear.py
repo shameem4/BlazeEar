@@ -154,7 +154,7 @@ class BlazeEarTrainer:
             'background_correct': 0,
             'background_total': 0
         }
-        self.eval_score_threshold = 0.25
+        self.eval_score_threshold = 0.15
         self.nms_iou_threshold = DEFAULT_NMS_IOU_THRESHOLD
         self.max_eval_detections = 50
         self.max_map_candidates = 200
@@ -806,17 +806,17 @@ def main():
                         help='Use focal loss instead of BCE')
     parser.add_argument('--no-focal-loss', dest='use_focal_loss', action='store_false',
                         help='Disable focal loss and fall back to BCE')
-    parser.add_argument('--focal-alpha', type=float, default=0.5,
+    parser.add_argument('--focal-alpha', type=float, default=0.35,
                         help='Focal loss alpha parameter')
     parser.add_argument('--focal-gamma', type=float, default=1.5,
                         help='Focal loss gamma parameter')
     parser.add_argument('--detection-weight', type=float, default=150.0,
                         help='Weight for detection/regression loss')
-    parser.add_argument('--classification-weight', type=float, default=40.0,
+    parser.add_argument('--classification-weight', type=float, default=60.0,
                         help='Weight for background classification loss')
-    parser.add_argument('--positive-classification-weight', type=float, default=120.0,
+    parser.add_argument('--positive-classification-weight', type=float, default=90.0,
                         help='Weight for positive classification loss (encourages higher foreground scores)')
-    parser.add_argument('--hard-negative-ratio', type=float, default=1.0,
+    parser.add_argument('--hard-negative-ratio', type=float, default=2.0,
                         help='Ratio of negatives to positives in hard mining')
     parser.set_defaults(use_focal_loss=True)
     
