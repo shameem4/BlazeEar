@@ -73,6 +73,7 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
     print(f"Found {len(annotation_sources)} annotation sources")
 
     all_rows = []
+    missing_images = 0
     pose_model = YOLO('model_weights/yolo11x-pose.pt') 
     image_size_cache: Dict[Path, Optional[Tuple[int, int]]] = {}
 
@@ -97,6 +98,9 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
                     continue
 
                 image_path = Path(ann['image_path'])
+                if not image_path.exists():
+                    missing_images += 1
+                    continue
 
                 # Make path relative to raw_dir
                 try:
@@ -139,6 +143,9 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
 
         except Exception as e:
             print(f"  Error processing {image_dir}: {e}")
+
+    if missing_images:
+        print(f"Skipped {missing_images} annotations referencing missing images")
 
     if not all_rows:
         return pd.DataFrame(columns=['image_path', 'x1', 'y1', 'w', 'h', 'earside', 'source'])
