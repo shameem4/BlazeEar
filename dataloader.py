@@ -4,7 +4,7 @@ CSV-based data loading utilities for BlazeFace detector training.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import cv2
 import numpy as np
@@ -72,7 +72,12 @@ class CSVDetectorDataset(Dataset):
 
         grouped = df.groupby("image_path", sort=False)
         self.samples: List[Dict] = []
+        missing_files = 0
         for image_path, group in grouped:
+            full_path = self.root_dir / image_path
+            if not full_path.exists():
+                missing_files += 1
+                continue
             boxes = group[["x1", "y1", "w", "h"]].values.astype(np.float32)
             self.samples.append({"image_path": image_path, "boxes": boxes})
 
@@ -81,15 +86,21 @@ class CSVDetectorDataset(Dataset):
 
         total_boxes = sum(len(sample["boxes"]) for sample in self.samples)
         print(f"Loaded {len(self.samples)} images ({total_boxes} boxes) from {self.csv_path}")
+        if missing_files:
+            print(f"Skipped {missing_files} entries with missing files in {self.csv_path}")
+
+        self._missing_logged: Set[str] = set()
 
     def __len__(self) -> int:
         return len(self.samples)
 
     def _load_image(self, image_path: str) -> np.ndarray:
         full_path = self.root_dir / image_path
+        if not full_path.exists():
+            raise FileNotFoundError(full_path)
         image = cv2.imread(str(full_path))
         if image is None:
-            raise ValueError(f"Could not load image: {full_path}")
+            raise RuntimeError(f"Could not read image data: {full_path}")
         return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
     def _augment_image(self, image: np.ndarray, bboxes: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
@@ -163,41 +174,60 @@ class CSVDetectorDataset(Dataset):
         return padded, bboxes
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        sample = self.samples[idx]
-        image = self._load_image(sample["image_path"])
+        total_samples = len(self.samples)
+        if total_samples == 0:
+            raise IndexError("Dataset is empty")
 
-        boxes_px = sample["boxes"]
-        orig_h, orig_w = image.shape[:2]
-        if len(boxes_px) > 0:
-            x1 = boxes_px[:, 0]
-            y1 = boxes_px[:, 1]
-            w = boxes_px[:, 2]
-            h = boxes_px[:, 3]
+        idx = idx % total_samples
+        attempts = 0
 
-            ymin = np.clip(y1 / orig_h, 0, 1)
-            xmin = np.clip(x1 / orig_w, 0, 1)
-            ymax = np.clip((y1 + h) / orig_h, 0, 1)
-            xmax = np.clip((x1 + w) / orig_w, 0, 1)
-            bboxes = np.stack([ymin, xmin, ymax, xmax], axis=1).astype(np.float32)
-        else:
-            bboxes = np.zeros((0, 4), dtype=np.float32)
+        while attempts < total_samples:
+            sample = self.samples[idx]
+            try:
+                image = self._load_image(sample["image_path"])
+            except (FileNotFoundError, RuntimeError) as exc:
+                rel_path = sample["image_path"]
+                if rel_path not in self._missing_logged:
+                    print(f"Warning: {exc}; skipping sample {rel_path}")
+                    self._missing_logged.add(rel_path)
+                idx = (idx + 1) % total_samples
+                attempts += 1
+                continue
 
-        image, bboxes = self._resize_and_pad(image, bboxes)
-        image, bboxes = self._augment_image(image, bboxes)
+            boxes_px = sample["boxes"]
+            orig_h, orig_w = image.shape[:2]
+            if len(boxes_px) > 0:
+                x1 = boxes_px[:, 0]
+                y1 = boxes_px[:, 1]
+                w = boxes_px[:, 2]
+                h = boxes_px[:, 3]
 
-        small_anchors, big_anchors = encode_boxes_to_anchors(bboxes, input_size=self.target_size[0])
-        anchor_targets = flatten_anchor_targets(small_anchors, big_anchors)
+                ymin = np.clip(y1 / orig_h, 0, 1)
+                xmin = np.clip(x1 / orig_w, 0, 1)
+                ymax = np.clip((y1 + h) / orig_h, 0, 1)
+                xmax = np.clip((x1 + w) / orig_w, 0, 1)
+                bboxes = np.stack([ymin, xmin, ymax, xmax], axis=1).astype(np.float32)
+            else:
+                bboxes = np.zeros((0, 4), dtype=np.float32)
 
-        image = np.ascontiguousarray(image)
-        image = torch.from_numpy(image).permute(2, 0, 1).float()
+            image, bboxes = self._resize_and_pad(image, bboxes)
+            image, bboxes = self._augment_image(image, bboxes)
 
-        return {
-            "image": image,
-            "anchor_targets": torch.from_numpy(anchor_targets).float(),
-            "small_anchors": torch.from_numpy(small_anchors).float(),
-            "big_anchors": torch.from_numpy(big_anchors).float(),
-            "gt_boxes": torch.from_numpy(bboxes).float()
-        }
+            small_anchors, big_anchors = encode_boxes_to_anchors(bboxes, input_size=self.target_size[0])
+            anchor_targets = flatten_anchor_targets(small_anchors, big_anchors)
+
+            image = np.ascontiguousarray(image)
+            image = torch.from_numpy(image).permute(2, 0, 1).float()
+
+            return {
+                "image": image,
+                "anchor_targets": torch.from_numpy(anchor_targets).float(),
+                "small_anchors": torch.from_numpy(small_anchors).float(),
+                "big_anchors": torch.from_numpy(big_anchors).float(),
+                "gt_boxes": torch.from_numpy(bboxes).float()
+            }
+
+        raise RuntimeError("No readable images remain in dataset.")
 
     def get_sample_annotations(self, idx: int) -> Tuple[str, np.ndarray]:
         """Return original image path and (x1, y1, w, h) boxes."""
