@@ -10,8 +10,8 @@ BIG_ANCHORS_PER_CELL = 6
 TOTAL_ANCHORS = 896  # 16*16*2 + 8*8*6
 
 # Default paths
-DEFAULT_WEIGHTS_PATH = "model_weights/blazeear.pth"
-DEFAULT_DATA_ROOT = "data/raw/blazeear"
+DEFAULT_WEIGHTS_PATH = "model_weights/blazeface.pth"
+DEFAULT_DATA_ROOT = "data/raw/"
 DEFAULT_TRAIN_CSV = "data/splits/train.csv"
 DEFAULT_VAL_CSV = "data/splits/val.csv"
 DEFAULT_CHECKPOINT_DIR = "runs/checkpoints"
@@ -20,7 +20,7 @@ DEFAULT_LOG_DIR = "runs/logs"
 
 # Training hyperparameters
 DEFAULT_BATCH_SIZE = 32
-DEFAULT_EPOCHS = 20
+DEFAULT_EPOCHS = 100
 DEFAULT_LEARNING_RATE = 1e-4
 DEFAULT_WEIGHT_DECAY = 1e-4
 DEFAULT_NUM_WORKERS = 4
