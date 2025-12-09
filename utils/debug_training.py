@@ -911,24 +911,25 @@ def main() -> None:
 
     if args.screenshot_output:
         if comparison_detector is None:
-            raise ValueError("Mediapipe overlay is required for screenshots; ensure comparison weights are available.")
-        screenshot_paths = generate_readme_screenshots(
-            dataset=dataset,
-            output_dir=Path(args.screenshot_output),
-            baseline_model=comparison_detector,
-            finetuned_model=model,
-            device=device,
-            loss_fn=loss_fn,
-            reference_anchors=reference_anchors,
-            min_faces=args.screenshot_min_faces,
-            max_candidates=args.screenshot_candidates,
-            limit=args.screenshot_count,
-            baseline_label=args.compare_label,
-            finetuned_label="Fine-tuned",
-            averaged_detector=averaged_detector,
-            averaged_threshold=args.averaged_threshold
-        )
-        print(f"Generated {len(screenshot_paths)} screenshot(s) in {args.screenshot_output}")
+            print("Skipping screenshot export because no comparison detector was provided.")
+        else:
+            screenshot_paths = generate_readme_screenshots(
+                dataset=dataset,
+                output_dir=Path(args.screenshot_output),
+                baseline_model=comparison_detector,
+                finetuned_model=model,
+                device=device,
+                loss_fn=loss_fn,
+                reference_anchors=reference_anchors,
+                min_faces=args.screenshot_min_faces,
+                max_candidates=args.screenshot_candidates,
+                limit=args.screenshot_count,
+                baseline_label=args.compare_label,
+                finetuned_label="Fine-tuned",
+                averaged_detector=averaged_detector,
+                averaged_threshold=args.averaged_threshold
+            )
+            print(f"Generated {len(screenshot_paths)} screenshot(s) in {args.screenshot_output}")
 
     if args.run_eval:
         total_params = sum(p.numel() for p in model.parameters())
