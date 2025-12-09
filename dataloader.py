@@ -74,12 +74,13 @@ class CSVDetectorDataset(Dataset):
         self.samples: List[Dict] = []
         missing_files = 0
         for image_path, group in grouped:
-            full_path = self.root_dir / image_path
+            image_path_str = str(image_path)
+            full_path = self.root_dir / image_path_str
             if not full_path.exists():
                 missing_files += 1
                 continue
             boxes = group[["x1", "y1", "w", "h"]].values.astype(np.float32)
-            self.samples.append({"image_path": image_path, "boxes": boxes})
+            self.samples.append({"image_path": image_path_str, "boxes": boxes})
 
         if max_samples:
             self.samples = self.samples[:max_samples]
