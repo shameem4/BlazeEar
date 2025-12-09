@@ -35,7 +35,6 @@ from utils.config import (
     DEFAULT_SCREENSHOT_COUNT,
     DEFAULT_SCREENSHOT_MIN_FACES,
     DEFAULT_SCREENSHOT_OUTPUT,
-    DEFAULT_SECONDARY_WEIGHTS,
     DEFAULT_TRAIN_CSV
 )
 from utils.visualization_utils import (
@@ -879,7 +878,7 @@ def main() -> None:
     reference_anchors, _, _ = generate_reference_anchors()
     reference_anchors = reference_anchors.to(device)
     comparison_detector = None
-    compare_path = args.compare_weights or DEFAULT_SECONDARY_WEIGHTS
+    compare_path = args.compare_weights
     if compare_path:
         try:
             comparison_detector = model_utils.load_model(
@@ -887,11 +886,11 @@ def main() -> None:
                 device=device,
                 threshold=args.compare_threshold
             )
-            print(f"Loaded Mediapipe comparison detector from {compare_path}")
+            print(f"Loaded comparison detector from {compare_path}")
         except FileNotFoundError:
-            print(f"Warning: comparison weights not found at {compare_path}; skipping Mediapipe overlay")
+            print(f"Warning: comparison weights not found at {compare_path}; skipping overlay")
     else:
-        print("Comparison overlay disabled (no weights path provided).")
+        print("Comparison overlay disabled (no --compare-weights path provided).")
 
     model = model_utils.load_model(
         args.weights,
