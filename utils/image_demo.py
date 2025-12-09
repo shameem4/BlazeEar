@@ -130,11 +130,9 @@ if __name__ == "__main__":
         print("No images found in CSV; exiting.")
         sys.exit(1)
 
+    max_images = args.max_images if args.max_images > 0 else len(image_paths)
     if args.headless:
-        max_images = args.max_images if args.max_images > 0 else len(image_paths)
         print(f"Headless mode active; processing {max_images} image(s).")
-    else:
-        max_images = None
 
     print("\nControls:")
     print("  A / Left Arrow  - Previous image")

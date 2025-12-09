@@ -3,9 +3,11 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import List, Sequence
+from typing import List, Sequence, cast
 
 import cv2
+import numpy as np
+from numpy.typing import NDArray
 
 try:
     import tkinter as tk
@@ -30,6 +32,7 @@ COLOR_MAP = {
     "lfpw_txt": (0, 165, 255),
 }
 DEFAULT_BOX_COLOR = (255, 255, 255)
+ArrayLike = NDArray[np.uint8]
 
 
 def parse_args() -> argparse.Namespace:
@@ -76,7 +79,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def pick_directory() -> Path:
-    if filedialog is None:
+    if tk is None or filedialog is None:
         raise SystemExit("tkinter is unavailable; pass --folder to choose a directory explicitly.")
 
     root = tk.Tk()
@@ -108,12 +111,17 @@ def collect_images(folder: Path, recursive: bool) -> List[Path]:
     return sorted(paths)
 
 
-def draw_annotations_on_image(image_path: Path, annotations: Sequence[dict], annotation_type: str | None) -> cv2.Mat:
-    image = cv2.imread(str(image_path))
-    if image is None:
+def draw_annotations_on_image(
+    image_path: Path,
+    annotations: Sequence[dict],
+    annotation_type: str | None
+) -> ArrayLike:
+    img = cv2.imread(str(image_path))
+    if img is None:
         raise FileNotFoundError(f"Failed to read image: {image_path}")
+    image = cast(ArrayLike, img)
 
-    color = COLOR_MAP.get(annotation_type, DEFAULT_BOX_COLOR)
+    color = COLOR_MAP.get(annotation_type or "", DEFAULT_BOX_COLOR)
 
     for ann in annotations:
         bbox = ann.get("bbox")
@@ -142,14 +150,14 @@ def draw_annotations_on_image(image_path: Path, annotations: Sequence[dict], ann
     return image
 
 
-def draw_text_overlay(image: cv2.Mat, lines: Sequence[str]) -> None:
+def draw_text_overlay(image: ArrayLike, lines: Sequence[str]) -> None:
     y = 30
     for line in lines:
         cv2.putText(image, line, (20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
         y += 25
 
 
-def scale_image(image: cv2.Mat, target_width: int) -> cv2.Mat:
+def scale_image(image: ArrayLike, target_width: int) -> ArrayLike:
     if target_width <= 0:
         return image
     h, w = image.shape[:2]
@@ -157,7 +165,8 @@ def scale_image(image: cv2.Mat, target_width: int) -> cv2.Mat:
         return image
     scale = target_width / float(w)
     new_size = (target_width, int(round(h * scale)))
-    return cv2.resize(image, new_size, interpolation=cv2.INTER_AREA)
+    resized = cv2.resize(image, new_size, interpolation=cv2.INTER_AREA)
+    return cast(ArrayLike, resized)
 
 
 def main() -> None:
