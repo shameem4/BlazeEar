@@ -767,7 +767,7 @@ def main() -> None:
     parser.add_argument(
         "--compare-weights",
         type=str,
-        default=DEFAULT_SECONDARY_WEIGHTS,
+        default=None,#DEFAULT_SECONDARY_WEIGHTS,
         help="Optional path to secondary detector weights (.pth or .ckpt) for visual comparison"
     )
     parser.add_argument(
