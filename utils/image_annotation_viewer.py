@@ -1,11 +1,18 @@
-import os
+from __future__ import annotations
+
+import argparse
 import sys
-import tkinter as tk
-from tkinter import filedialog
 from pathlib import Path
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-from PIL import Image
+from typing import List, Sequence
+
+import cv2
+
+try:
+    import tkinter as tk
+    from tkinter import filedialog
+except Exception:  # pragma: no cover - optional for headless servers
+    tk = None
+    filedialog = None
 
 # Allow running as `python utils/image_annotation_viewer.py` from repo root
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -13,117 +20,201 @@ _REPO_ROOT = _SCRIPT_DIR.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-# Import unified decoder and image drawing utility
-from data_decoder import find_annotation, decode_annotation, get_annotation_color
+from data_decoder import decode_annotation, find_annotation
+
+SUPPORTED_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp")
+COLOR_MAP = {
+    "coco": (0, 0, 255),
+    "csv": (0, 255, 0),
+    "pts": (255, 0, 255),
+    "lfpw_txt": (0, 165, 255),
+}
+DEFAULT_BOX_COLOR = (255, 255, 255)
 
 
-def visualize_annotations(image_path, annotations, bbox_color='red', keypoint_color='blue',
-                          bbox_width=2, keypoint_radius=3, figsize=(10, 10)):
-    """
-    Visualize annotations (bounding boxes and keypoints) on an image.
-
-    Args:
-        image_path: Path to the image file
-        annotations: List of annotation dicts with 'bbox' and/or 'keypoints' keys
-                    bbox format: [x, y, width, height]
-                    keypoints format: [x1, y1, v1, x2, y2, v2, ...] (COCO format)
-        bbox_color: Color for bounding boxes (default: 'red')
-        keypoint_color: Color for keypoints (default: 'blue')
-        bbox_width: Line width for bounding boxes (default: 2)
-        keypoint_radius: Radius for keypoint markers (default: 3)
-        figsize: Figure size tuple (default: (10, 10))
-    """
-    # Load image
-    img = Image.open(image_path)
-    
-    # Create figure and axis
-    fig, ax = plt.subplots(1, figsize=figsize)
-    ax.imshow(img)
-    
-    # Draw each annotation
-    for ann in annotations:
-        # Draw bounding box if present
-        bbox = ann.get('bbox')
-        if bbox is not None:
-            x, y, w, h = bbox
-            rect = patches.Rectangle(
-                (x, y), w, h,
-                linewidth=bbox_width,
-                edgecolor=bbox_color,
-                facecolor='none'
-            )
-            ax.add_patch(rect)
-        
-        # Draw keypoints if present
-        keypoints = ann.get('keypoints')
-        if keypoints is not None:
-            # COCO format: [x1, y1, v1, x2, y2, v2, ...]
-            # v = visibility (0: not labeled, 1: labeled but not visible, 2: labeled and visible)
-            for i in range(0, len(keypoints), 3):
-                kp_x = keypoints[i]
-                kp_y = keypoints[i + 1]
-                visibility = keypoints[i + 2] if i + 2 < len(keypoints) else 2
-                
-                # Only draw visible keypoints (visibility > 0)
-                if visibility > 0:
-                    circle = patches.Circle(
-                        (kp_x, kp_y),
-                        radius=keypoint_radius,
-                        color=keypoint_color,
-                        fill=True
-                    )
-                    ax.add_patch(circle)
-    
-    # Remove axis ticks
-    ax.set_xticks([])
-    ax.set_yticks([])
-    
-    # Set title
-    ax.set_title(os.path.basename(image_path))
-    
-    plt.tight_layout()
-    plt.show()
-
-
-
-
-
-
-# Draw annotations on image (COCO, CSV, or PTS)
-def draw_annotations(image_path, annotation_path, annotation_type):
-    # Use unified decoder
-    decoded = decode_annotation(annotation_path, image_path, annotation_type)
-    bbox_color = get_annotation_color(annotation_type)
-
-    if not decoded:
-        print('Image not found in annotation file.')
-        return
-
-    # Use annotation drawer utility to visualize
-    visualize_annotations(
-        image_path,
-        decoded,
-        bbox_color=bbox_color,
-        keypoint_color='blue',
-        bbox_width=2,
-        keypoint_radius=2,
-        figsize=(8, 8)
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Browse a folder of images with annotations using OpenCV controls",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+    parser.add_argument(
+        "--folder",
+        "-f",
+        type=str,
+        default=None,
+        help="Folder that contains images (falls back to folder picker if omitted)",
+    )
+    parser.add_argument(
+        "--recursive",
+        action="store_true",
+        help="Recursively include subdirectories when gathering images",
+    )
+    parser.add_argument(
+        "--start-idx",
+        type=int,
+        default=0,
+        help="Initial image index to show",
+    )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Disable OpenCV UI and just log annotation info (useful for remote sessions)",
+    )
+    parser.add_argument(
+        "--max-images",
+        type=int,
+        default=0,
+        help="Limit the number of images processed in headless mode (0 = all)",
+    )
+    parser.add_argument(
+        "--scale-width",
+        type=int,
+        default=0,
+        help="Resize display width while preserving aspect ratio (0 = original size)",
+    )
+    return parser.parse_args()
 
 
-def main():
+def pick_directory() -> Path:
+    if filedialog is None:
+        raise SystemExit("tkinter is unavailable; pass --folder to choose a directory explicitly.")
+
     root = tk.Tk()
     root.withdraw()
-    image_path = filedialog.askopenfilename(title='Select image file', filetypes=[('Image Files', '*.jpg *.jpeg *.png')])
-    if not image_path:
-        print('No image selected.')
-        return
-    annotation_path, annotation_type = find_annotation(image_path)
-    print(annotation_path,"\n", annotation_type,"\n", image_path,"\n")
-    if not annotation_path:
-        print('No annotation file found (COCO, CSV, or PTS).')
-        return
-    draw_annotations(image_path, annotation_path, annotation_type)
+    folder = filedialog.askdirectory(title="Select image folder")
+    if not folder:
+        raise SystemExit("No folder selected.")
+    return Path(folder)
 
-if __name__ == '__main__':
+
+def resolve_folder(folder_arg: str | None) -> Path:
+    if folder_arg:
+        folder = Path(folder_arg).expanduser()
+    else:
+        folder = pick_directory()
+
+    if not folder.exists():
+        raise SystemExit(f"Folder does not exist: {folder}")
+    if not folder.is_dir():
+        raise SystemExit(f"Path is not a directory: {folder}")
+    return folder
+
+
+def collect_images(folder: Path, recursive: bool) -> List[Path]:
+    if recursive:
+        paths = [p for p in folder.rglob("*") if p.suffix.lower() in SUPPORTED_EXTENSIONS]
+    else:
+        paths = [p for p in folder.iterdir() if p.suffix.lower() in SUPPORTED_EXTENSIONS]
+    return sorted(paths)
+
+
+def draw_annotations_on_image(image_path: Path, annotations: Sequence[dict], annotation_type: str | None) -> cv2.Mat:
+    image = cv2.imread(str(image_path))
+    if image is None:
+        raise FileNotFoundError(f"Failed to read image: {image_path}")
+
+    color = COLOR_MAP.get(annotation_type, DEFAULT_BOX_COLOR)
+
+    for ann in annotations:
+        bbox = ann.get("bbox")
+        if bbox:
+            x, y, w, h = bbox
+            pt1 = (int(round(x)), int(round(y)))
+            pt2 = (int(round(x + w)), int(round(y + h)))
+            cv2.rectangle(image, pt1, pt2, color, 2)
+
+        keypoints = ann.get("keypoints")
+        if keypoints:
+            for idx in range(0, len(keypoints), 3):
+                kx = int(round(keypoints[idx]))
+                ky = int(round(keypoints[idx + 1]))
+                visibility = keypoints[idx + 2] if idx + 2 < len(keypoints) else 2
+                if visibility > 0:
+                    cv2.circle(image, (kx, ky), 3, color, -1)
+
+    info_lines = [
+        image_path.name,
+        f"Annotation: {annotation_type or 'none'}",
+        f"Detections: {len(annotations)}",
+        "Controls: [A] prev  [D] next  [Q] quit",
+    ]
+    draw_text_overlay(image, info_lines)
+    return image
+
+
+def draw_text_overlay(image: cv2.Mat, lines: Sequence[str]) -> None:
+    y = 30
+    for line in lines:
+        cv2.putText(image, line, (20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
+        y += 25
+
+
+def scale_image(image: cv2.Mat, target_width: int) -> cv2.Mat:
+    if target_width <= 0:
+        return image
+    h, w = image.shape[:2]
+    if w == 0:
+        return image
+    scale = target_width / float(w)
+    new_size = (target_width, int(round(h * scale)))
+    return cv2.resize(image, new_size, interpolation=cv2.INTER_AREA)
+
+
+def main() -> None:
+    args = parse_args()
+    folder = resolve_folder(args.folder)
+    image_paths = collect_images(folder, args.recursive)
+
+    if not image_paths:
+        raise SystemExit(f"No images found under {folder} (extensions: {', '.join(SUPPORTED_EXTENSIONS)})")
+
+    current_idx = max(0, min(args.start_idx, len(image_paths) - 1))
+
+    if args.headless:
+        remaining = args.max_images if args.max_images > 0 else len(image_paths)
+        print(f"Headless mode enabled; iterating over {remaining} image(s).")
+        while remaining > 0:
+            image_path = image_paths[current_idx]
+            annotation_path, annotation_type = find_annotation(str(image_path))
+            annotations = (
+                decode_annotation(annotation_path, str(image_path), annotation_type)
+                if annotation_path
+                else []
+            )
+            print(
+                f"[{current_idx + 1}/{len(image_paths)}] {image_path.name} "
+                f"annotation={annotation_type or 'none'} count={len(annotations)}"
+            )
+            current_idx = (current_idx + 1) % len(image_paths)
+            remaining -= 1
+        return
+
+    window_name = "Annotation Viewer"
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+
+    while True:
+        image_path = image_paths[current_idx]
+        annotation_path, annotation_type = find_annotation(str(image_path))
+        annotations = (
+            decode_annotation(annotation_path, str(image_path), annotation_type)
+            if annotation_path
+            else []
+        )
+
+        display = draw_annotations_on_image(image_path, annotations, annotation_type)
+        display = scale_image(display, args.scale_width)
+        cv2.imshow(window_name, display)
+
+        key = cv2.waitKey(0) & 0xFF
+        if key in (27, ord("q")):
+            break
+        if key in (ord("a"), 81):
+            current_idx = (current_idx - 1) % len(image_paths)
+        elif key in (ord("d"), 83):
+            current_idx = (current_idx + 1) % len(image_paths)
+
+    cv2.destroyAllWindows()
+
+
+if __name__ == "__main__":
     main()

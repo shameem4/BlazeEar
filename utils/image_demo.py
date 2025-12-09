@@ -25,6 +25,12 @@ if str(_REPO_ROOT) not in sys.path:
 
 from utils import model_utils, drawing, metrics, config
 from utils.data_utils import load_image_boxes_from_csv
+
+
+def _resolve_path(path_str: str, base_dir: Path) -> Path:
+    """Resolve ``path_str`` relative to ``base_dir`` when not absolute."""
+    candidate = Path(path_str)
+    return candidate if candidate.is_absolute() else base_dir / candidate
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
@@ -61,6 +67,17 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="Start from this image index"
     )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Skip OpenCV UI and just log detections (useful for remote debugging)"
+    )
+    parser.add_argument(
+        "--max-images",
+        type=int,
+        default=0,
+        help="Number of images to process before exiting in headless mode (0 = all)"
+    )
     detection_mode = parser.add_mutually_exclusive_group()
     detection_mode.add_argument(
         "--detection-only",
@@ -81,29 +98,43 @@ def parse_args() -> argparse.Namespace:
 if __name__ == "__main__":
     args = parse_args()
 
-    SCRIPT_DIR = Path(__file__).parent
+    SCRIPT_DIR = Path(__file__).resolve().parent
+    REPO_ROOT = _REPO_ROOT
+
+    weights_path = _resolve_path(args.weights, REPO_ROOT)
+    csv_path = _resolve_path(args.csv, REPO_ROOT)
+    data_root = _resolve_path(args.data_root, REPO_ROOT)
 
     # Setup device
     gpu = model_utils.setup_device()
 
     # Load model with threshold
-    print(f"Loading weights: {args.weights}")
-    detector = model_utils.load_model(args.weights, gpu, threshold=args.threshold)
+    print(f"Loading weights: {weights_path}")
+    detector = model_utils.load_model(str(weights_path), gpu, threshold=args.threshold)
 
     print("Model loaded")
 
     # Load CSV and sort by image path
-    csv_path = SCRIPT_DIR / args.csv
     print(f"Loading CSV: {csv_path}")
     image_paths, image_to_boxes = load_image_boxes_from_csv(str(csv_path))
     print(f"Loaded {len(image_paths)} unique images with annotations")
 
     # Setup window
     WINDOW = "BlazeEar Image Demo"
-    cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
+    if not args.headless:
+        cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
 
     # Navigation state
     current_idx = min(args.start_idx, len(image_paths) - 1)
+    if len(image_paths) == 0:
+        print("No images found in CSV; exiting.")
+        sys.exit(1)
+
+    if args.headless:
+        max_images = args.max_images if args.max_images > 0 else len(image_paths)
+        print(f"Headless mode active; processing {max_images} image(s).")
+    else:
+        max_images = None
 
     print("\nControls:")
     print("  A / Left Arrow  - Previous image")
@@ -117,7 +148,7 @@ if __name__ == "__main__":
         gt_boxes = image_to_boxes[image_path]
 
         # Construct full path
-        full_image_path = SCRIPT_DIR / args.data_root / image_path
+        full_image_path = data_root / image_path
 
         # Load image
         if not full_image_path.exists():
@@ -147,6 +178,9 @@ if __name__ == "__main__":
 
         # Create display image
         display_img = img.copy()
+
+        num_matched = 0
+        avg_iou = 0.0
 
         if args.detection_only:
             # Detection-only mode: show all detections, no ground truth
@@ -204,6 +238,17 @@ if __name__ == "__main__":
                 detection_only=False
             )
 
+        if args.headless:
+            print(
+                f"[{current_idx + 1}/{len(image_paths)}] det-only={args.detection_only} "
+                f"GT={len(gt_boxes)} dets={len(detections_np)} matched={num_matched} avgIoU={avg_iou:.3f}"
+            )
+            current_idx = (current_idx + 1) % len(image_paths)
+            max_images -= 1
+            if max_images <= 0:
+                break
+            continue
+
         # Display
         cv2.imshow(WINDOW, display_img)
 
@@ -219,5 +264,6 @@ if __name__ == "__main__":
             current_idx = (current_idx + 1) % len(image_paths)
             print(f"Next: {current_idx + 1}/{len(image_paths)}")
 
-    cv2.destroyAllWindows()
+    if not args.headless:
+        cv2.destroyAllWindows()
     sys.exit(0)
