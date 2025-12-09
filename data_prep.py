@@ -12,15 +12,53 @@ Creates a unified master CSV and train/val splits under data/splits.
 import argparse
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
+from PIL import Image
 from tqdm import tqdm
 
 from utils.data_decoder import find_all_annotations, decode_all_annotations
 from utils.data_utils import split_dataframe_by_images
 
 from ultralytics import YOLO
+
+
+def _bbox_is_normalized(bbox: List[float]) -> bool:
+    """Check if bbox coordinates are normalized between 0 and 1."""
+    if len(bbox) != 4:
+        return False
+    return all(isinstance(value, float) and 0.0 <= value <= 1.0 for value in bbox)
+
+
+def _get_image_size(image_path: Path, cache: Dict[Path, Optional[Tuple[int, int]]]) -> Optional[Tuple[int, int]]:
+    """Cache image dimensions to avoid reopening files repeatedly."""
+    if image_path in cache:
+        return cache[image_path]
+
+    if not image_path.exists():
+        cache[image_path] = None
+        return None
+
+    try:
+        with Image.open(image_path) as img:
+            cache[image_path] = img.size
+    except OSError:
+        cache[image_path] = None
+    return cache[image_path]
+
+
+def _maybe_denormalize_bbox(bbox: List[float], image_path: Path, cache: Dict[Path, Optional[Tuple[int, int]]]) -> List[float]:
+    if not _bbox_is_normalized(bbox):
+        return bbox
+
+    size = _get_image_size(image_path, cache)
+    if not size:
+        return bbox
+
+    width, height = size
+    x, y, w, h = bbox
+    return [x * width, y * height, w * width, h * height]
 
 
 def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
@@ -36,6 +74,7 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
 
     all_rows = []
     pose_model = YOLO('model_weights/yolo11x-pose.pt') 
+    image_size_cache: Dict[Path, Optional[Tuple[int, int]]] = {}
 
     for ann_file, ann_type, image_dir in tqdm(annotation_sources, desc="Processing sources"):
         if ann_type == 'images_only':
@@ -52,6 +91,7 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
                 if not bbox or len(bbox) != 4:
                     continue
 
+                bbox = _maybe_denormalize_bbox(bbox, Path(ann['image_path']), image_size_cache)
                 x, y, w, h = bbox
                 if w <= 0 or h <= 0:
                     continue
