@@ -6,7 +6,7 @@ This script mirrors the existing BlazeEar CSV metadata pipeline and performs thr
    contains ``images/{split}`` and ``labels/{split}`` trees.
 2. Generate a minimal dataset YAML file that Ultralytics expects.
 3. Launch a YOLOv11 fine-tuning run starting from a pretrained checkpoint
-   (``yolov11n.pt`` by default).
+   (``yolo11n.pt`` by default).
 
 Example:
     python finetune_yolov11.py \
@@ -32,7 +32,7 @@ from PIL import Image
 from tqdm import tqdm
 
 DEFAULT_OUTPUT_DIR = "data/yolo11_ears"
-DEFAULT_YOLO_WEIGHTS = "yolov11n.pt"
+DEFAULT_YOLO_WEIGHTS = "model_weights/yolo11n.pt"
 DEFAULT_PROJECT = "runs/yolo11"
 DEFAULT_RUN_NAME = "ear-detector"
 CLASS_NAME = "ear"
@@ -60,7 +60,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="Directory where YOLO-formatted images/labels will be written")
     parser.add_argument("--weights", default=DEFAULT_YOLO_WEIGHTS, help="Ultralytics pretrained weights to fine-tune (auto-downloaded if missing)")
     parser.add_argument("--img-size", type=int, default=640, help="Training image size for YOLO (square)")
-    parser.add_argument("--epochs", type=int, default=100, help="Number of fine-tuning epochs")
+    parser.add_argument("--epochs", type=int, default=500, help="Number of fine-tuning epochs")
     parser.add_argument("--batch-size", type=int, default=16, help="Mini-batch size")
     parser.add_argument("--workers", type=int, default=8, help="Number of dataloader workers used by Ultralytics")
     parser.add_argument("--device", default=("0" if torch.cuda.is_available() else "cpu"), help="Computation device string understood by Ultralytics (e.g., '0', '0,1', 'cpu')")
@@ -68,8 +68,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--name", default=DEFAULT_RUN_NAME, help="Name for the Ultralytics run (sub-directory under project)")
     parser.add_argument("--link-images", action="store_true", help="Attempt to hard-link images instead of copying when building the YOLO dataset")
     parser.add_argument("--skip-prep", action="store_true", help="Skip dataset preparation if the output directory already exists")
-    parser.add_argument("--resume", action="store_true", help="Resume the YOLO training run if checkpoints already exist")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Warm start from project/name checkpoints instead of default weights. "
+            "Starts a new Ultralytics run initialized with the previous best/last.pt."
+        )
+    )
     return parser.parse_args()
+
+
+def _locate_best_checkpoint(project: str, name: str) -> Path | None:
+    run_dir = Path(project) / name / "weights"
+    print(f"Looking for best checkpoint in {run_dir}")
+    best = run_dir / "best.pt"
+    if best.exists():
+        print(f"Found best checkpoint: {best}")
+        return best
+    last = run_dir / "last.pt"
+    return last if last.exists() else None
 
 
 def copy_or_link(src: Path, dst: Path, use_link: bool) -> None:
@@ -200,7 +218,24 @@ def run_training(args: argparse.Namespace, data_yaml: Path) -> None:
             "Ultralytics is required. Install it with 'pip install ultralytics' before running this script."
         ) from exc
 
-    model = YOLO(args.weights)
+    resume_arg = False
+    if args.resume:
+        best_ckpt = _locate_best_checkpoint(args.project, args.name)
+        if not best_ckpt:
+            raise SystemExit(
+                "--resume was specified but no checkpoint was found in project/name/weights. "
+                "Start a fresh run first or specify the correct project/name."
+            )
+        model_path = str(best_ckpt)
+        print(
+            f"Continuing training from checkpoint: {best_ckpt}\n"
+            "Ultralytics will start a *new* run initialized from these weights."
+        )
+    else:
+        model_path = args.weights
+
+    model = YOLO(model_path)
+
     results = model.train(
         data=str(data_yaml),
         epochs=args.epochs,
@@ -210,7 +245,7 @@ def run_training(args: argparse.Namespace, data_yaml: Path) -> None:
         device=args.device,
         project=args.project,
         name=args.name,
-        resume=args.resume
+        resume=resume_arg
     )
 
     best = getattr(results, "best", None)
