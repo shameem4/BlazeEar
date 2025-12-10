@@ -14,6 +14,7 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 from PIL import Image
 from tqdm import tqdm
@@ -74,8 +75,10 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
 
     all_rows = []
     missing_images = 0
-    pose_model = YOLO('model_weights/yolo11x-pose.pt') 
+    pose_model = YOLO('model_weights/yolo11x-pose.pt')
+    ear_detector = YOLO('model_weights/yolov11_ear_detector.pt')
     image_size_cache: Dict[Path, Optional[Tuple[int, int]]] = {}
+    ear_detection_cache: Dict[Path, Tuple[np.ndarray, np.ndarray]] = {}
 
     for ann_file, ann_type, image_dir in tqdm(annotation_sources, desc="Processing sources"):
         if ann_type == 'images_only':
@@ -102,21 +105,20 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
                     missing_images += 1
                     continue
 
-                # Make path relative to raw_dir
                 try:
                     rel_path = image_path.relative_to(raw_dir)
                 except ValueError:
                     rel_path = image_path
 
-                # Detect earside using yolo pose estimation
                 results = pose_model(image_path, verbose=False)
+                earside = ''
                 for r in results:
-                    if r.keypoints is None: continue
+                    if r.keypoints is None:
+                        continue
                     keypoints_data = r.keypoints.data.cpu().numpy()
                     boxes = r.boxes.xyxy.cpu().numpy()
-                    for i, (kp, box) in enumerate(zip(keypoints_data, boxes)):
-                        # Keypoints: 3:L_ear, 4:R_ear
-                        l_ear, r_ear = kp[3], kp[4] 
+                    for kp, box in zip(keypoints_data, boxes):
+                        l_ear, r_ear = kp[3], kp[4]
                         if box[0] <= x <= box[2] and box[1] <= y <= box[3]:
                             if l_ear[2] > 0 and r_ear[2] > 0:
                                 earside = 'left' if l_ear[0] < r_ear[0] else 'right'
@@ -126,9 +128,8 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
                                 earside = 'right'
                             else:
                                 earside = ''
-                            break               
-                
-                
+                            break
+
                 all_rows.append({
                     'image_path': rel_path.as_posix(),
                     'x1': int(round(x)),
@@ -138,6 +139,48 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
                     'earside': earside,
                     'source': source_name,
                 })
+
+                if image_path not in ear_detection_cache:
+                    ear_results = ear_detector.predict(
+                        source=str(image_path),
+                        imgsz=640,
+                        conf=0.25,
+                        verbose=False
+                    )
+
+                    if not ear_results:
+                        boxes_xyxy = np.empty((0, 4), dtype=np.float32)
+                        scores = np.empty((0,), dtype=np.float32)
+                    else:
+                        res = ear_results[0]
+                        if res.boxes is None or len(res.boxes) == 0:
+                            boxes_xyxy = np.empty((0, 4), dtype=np.float32)
+                            scores = np.empty((0,), dtype=np.float32)
+                        else:
+                            boxes_xyxy = res.boxes.xyxy.cpu().numpy()
+                            scores = res.boxes.conf.cpu().numpy()
+
+                    ear_detection_cache[image_path] = (boxes_xyxy, scores)
+
+                boxes_xyxy, scores = ear_detection_cache[image_path]
+
+                for det_box, score in zip(boxes_xyxy, scores):
+                    det_x1, det_y1, det_x2, det_y2 = det_box
+                    det_w = det_x2 - det_x1
+                    det_h = det_y2 - det_y1
+                    if det_w <= 0 or det_h <= 0:
+                        continue
+
+                    all_rows.append({
+                        'image_path': rel_path.as_posix(),
+                        'x1': int(round(det_x1)),
+                        'y1': int(round(det_y1)),
+                        'w': int(round(det_w)),
+                        'h': int(round(det_h)),
+                        'earside': 'unknown',
+                        'source': f"{source_name}_yolo11_aug",
+                        'confidence': float(score),
+                    })
 
             print(f"  {ann_type}: {Path(image_dir).relative_to(raw_dir)} -> {len(annotations)} annotations")
 
