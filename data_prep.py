@@ -331,6 +331,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    print(args.no_verify)
 
     script_dir = Path(__file__).parent
     raw_dir = script_dir / args.raw_dir
