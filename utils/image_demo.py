@@ -40,7 +40,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--weights", "-w",
         type=str,
-        default=config.DEFAULT_WEIGHTS_PATH,
+        # default=config.DEFAULT_WEIGHTS_PATH,
+        default = config.DEFAULT_BEST_CHECKPOINT,
         help="Path to weights file (.pth for MediaPipe, .ckpt for retrained)"
     )
     parser.add_argument(
