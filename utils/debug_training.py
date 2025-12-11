@@ -870,8 +870,8 @@ def main() -> None:
     run_csv_encode_decode_test(dataset)
 
     debug_image_dir = Path("runs/logs") / "debug_images"
-    if debug_image_dir.exists():
-        shutil.rmtree(debug_image_dir)
+    # if debug_image_dir.exists():
+    #     shutil.rmtree(debug_image_dir)
 
     device = model_utils.setup_device()
     loss_fn = BlazeEarDetectionLoss(**LOSS_DEBUG_KWARGS).to(device)
