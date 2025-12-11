@@ -75,7 +75,8 @@ def draw_ground_truth_boxes(
     ious: list[float] | None = None,
     color: tuple[int, int, int] = (255, 0, 0),
     thickness: int = 2,
-    label: str = "GT"
+    label: str = "GT",
+    labels: list[str] | None = None
 ) -> None:
     """Draw ground truth bounding boxes from CSV annotations.
 
@@ -85,7 +86,8 @@ def draw_ground_truth_boxes(
         ious: Optional list of IoU values for each box
         color: BGR color tuple (default: blue for ground truth)
         thickness: Line thickness
-        label: Label text to show above boxes
+        label: Label text to show above boxes when labels are not provided
+        labels: Optional list of per-box labels overriding the default text
     """
     for i, (x1, y1, w, h) in enumerate(boxes):
         # Convert (x1, y1, w, h) to (x1, y1, x2, y2)
@@ -95,8 +97,10 @@ def draw_ground_truth_boxes(
         # Draw bounding box
         cv2.rectangle(img, (x1, y1), (x2, y2), color, thickness)
 
-        # Draw label above box with IoU if available
-        if ious is not None and i < len(ious):
+        # Draw label above box with IoU/annotation info if available
+        if labels is not None and i < len(labels):
+            label_text = str(labels[i])
+        elif ious is not None and i < len(ious):
             label_text = f"{label} {i+1} (IoU: {ious[i]:.2f})"
         else:
             label_text = f"{label} {i+1}"

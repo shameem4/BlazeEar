@@ -105,6 +105,11 @@ def _format_summary_lines(group: pd.DataFrame | None) -> List[str]:
         summary = ", ".join(f"{name} ({count})" for name, count in source_counts.items())
         lines.append(f"Sources: {summary}")
 
+    if "annotation_source" in group.columns:
+        annot_counts = group["annotation_source"].fillna("unknown").value_counts().head(4)
+        annot_summary = ", ".join(f"{name} ({count})" for name, count in annot_counts.items())
+        lines.append(f"Annotation src: {annot_summary}")
+
     if "confidence" in group.columns:
         numeric_conf = pd.to_numeric(group["confidence"], errors="coerce")
         if not isinstance(numeric_conf, pd.Series):
@@ -149,7 +154,23 @@ def _headless_iteration(
     while processed < count and image_paths:
         image_path = image_paths[idx]
         full_path = data_root / image_path
-        boxes = image_to_boxes.get(image_path, [])
+        group = metadata.get(image_path)
+        boxes: list[Box] = []
+        labels: list[str] | None = None
+        if group is not None and not group.empty:
+            rows = group.to_dict("records")
+            labels = []
+            for row in rows:
+                x1 = int(row.get("x1", 0))
+                y1 = int(row.get("y1", 0))
+                w = int(row.get("w", 0))
+                h = int(row.get("h", 0))
+                boxes.append((x1, y1, w, h))
+                label_value = row.get("annotation_source") or row.get("source") or "Ann"
+                labels.append(str(label_value))
+        else:
+            boxes = image_to_boxes.get(image_path, [])
+            labels = None
         _log_image_summary(idx, len(image_paths), image_path, metadata.get(image_path))
         print(f"    Exists: {'yes' if full_path.exists() else 'no'} | Boxes: {len(boxes)}")
         idx = (idx + 1) % len(image_paths)
@@ -201,7 +222,13 @@ def main() -> None:
             continue
 
         display = image.copy()
-        drawing.draw_ground_truth_boxes(display, boxes, color=(0, 165, 255), label="Ann")
+        drawing.draw_ground_truth_boxes(
+            display,
+            boxes,
+            color=(0, 165, 255),
+            label="Ann",
+            labels=labels,
+        )
         drawing.draw_info_text(
             display,
             current_idx,

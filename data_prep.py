@@ -8,6 +8,9 @@ Parses all annotation formats under data/raw using existing utils:
 - LFPW TXT format
 
 Creates a unified master CSV and train/val splits under data/splits.
+Adds provenance metadata via `annotation_source` to flag whether boxes
+derive from human GT labels, YOLO ear detector, pose detector, or a
+combination of automated sources.
 """
 import argparse
 import re
@@ -33,6 +36,11 @@ EAR_BOX_WIDTH_RATIO = 0.12
 EAR_BOX_HEIGHT_RATIO = 0.14
 EAR_BOX_MIN_SIZE = 10
 YOLO_DETECTION_POINT_PAD = 5.0
+
+ANNOT_SRC_ORIGINAL = "GT"
+ANNOT_SRC_YOLO_EAR = "EAR"
+ANNOT_SRC_YOLO_POSE = "POSE"
+ANNOT_SRC_COMBO = "COMBO"
 
 PoseEntry = Tuple[np.ndarray, np.ndarray]
 
@@ -244,6 +252,7 @@ def _maybe_add_pose_boxes_for_image(
                 'h': bbox[3],
                 'earside': side,
                 'source': f"{source_name}_pose_aug",
+                'annotation_source': ANNOT_SRC_YOLO_POSE,
                 'confidence': 1.0,
             })
             gt_boxes[rel_path].append(bbox)
@@ -256,7 +265,8 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
     Find and parse all annotation files under data/raw using utils.data_decoder.
 
     Returns:
-        DataFrame with columns: image_path, x1, y1, w, h, earside, source
+        DataFrame with columns: image_path, x1, y1, w, h, earside,
+        source, annotation_source, confidence
     """
     # Find all annotation sources
     annotation_sources = find_all_annotations(str(raw_dir))
@@ -339,6 +349,7 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
                     'h': int(round(h)),
                     'earside': earside,
                     'source': source_name,
+                    'annotation_source': ANNOT_SRC_ORIGINAL,
                     'confidence': 1.0,
                 })
 
@@ -407,6 +418,7 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
                         'h': int(round(det_h)),
                         'earside': 'unknown',
                         'source': f"{source_name}_yolo11_aug",
+                        'annotation_source': ANNOT_SRC_COMBO,
                         'confidence': float(score),
                     })
 
@@ -437,7 +449,17 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
         print(f"Skipped {missing_images} annotations referencing missing images")
 
     if not all_rows:
-        columns = pd.Index(['image_path', 'x1', 'y1', 'w', 'h', 'earside', 'source', 'confidence'])
+        columns = pd.Index([
+            'image_path',
+            'x1',
+            'y1',
+            'w',
+            'h',
+            'earside',
+            'source',
+            'annotation_source',
+            'confidence'
+        ])
         return pd.DataFrame([], columns=columns)
 
     df = pd.DataFrame(all_rows)
@@ -495,6 +517,11 @@ def print_statistics(df: pd.DataFrame, split_name: str = "Dataset") -> None:
             img_paths = cast(PandasSeries, df.loc[df['source'] == source, 'image_path'])
             img_count = int(img_paths.nunique())
             print(f"  {source}: {count:,} ears from {img_count:,} images")
+
+    if 'annotation_source' in df.columns:
+        print("\nAnnotation source breakdown:")
+        for source, count in df['annotation_source'].value_counts().items():
+            print(f"  {source}: {count:,}")
 
     # Box size statistics
     print(f"\nBounding box statistics:")
