@@ -157,6 +157,24 @@ def _point_in_xyxy(point: Tuple[float, float], box: np.ndarray, pad: float = 0.0
     return (x1 - pad) <= x <= (x2 + pad) and (y1 - pad) <= y <= (y2 + pad)
 
 
+def _is_contained_in_existing(candidate: Dict[str, Any], boxes: List[Tuple[int, int, int, int]], pad: int = 0) -> bool:
+    """Check whether candidate box is entirely inside an existing box."""
+    if not boxes:
+        return False
+
+    x1_c, y1_c, w_c, h_c = candidate['x1'], candidate['y1'], candidate['w'], candidate['h']
+    x2_c = x1_c + w_c
+    y2_c = y1_c + h_c
+
+    for box in boxes:
+        x1_b, y1_b, w_b, h_b = box
+        x2_b = x1_b + w_b
+        y2_b = y1_b + h_b
+        if (x1_b - pad) <= x1_c and (y1_b - pad) <= y1_c and (x2_b + pad) >= x2_c and (y2_b + pad) >= y2_c:
+            return True
+    return False
+
+
 def _detection_has_pose_support(
     det_box: np.ndarray,
     pose_entries: List[PoseEntry],
@@ -252,7 +270,7 @@ def _maybe_add_pose_boxes_for_image(
             bbox = _build_pose_bbox(coords, face_box, image_path, cache)
             if bbox is None:
                 continue
-            all_rows.append({
+            candidate = {
                 'image_path': rel_path,
                 'x1': bbox[0],
                 'y1': bbox[1],
@@ -262,7 +280,11 @@ def _maybe_add_pose_boxes_for_image(
                 'source': f"{source_name}_pose_aug",
                 'annotation_source': _format_annotation_label([ANNOT_LABEL_POSE]),
                 'confidence': 1.0,
-            })
+            }
+            existing = gt_boxes[rel_path]
+            if _is_contained_in_existing(candidate, existing):
+                continue
+            all_rows.append(candidate)
             gt_boxes[rel_path].append(bbox)
             new_boxes += 1
 
@@ -280,7 +302,7 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
     annotation_sources = find_all_annotations(str(raw_dir))
     print(f"Found {len(annotation_sources)} annotation sources")
 
-    all_rows = []
+    all_rows: List[Dict[str, Any]] = []
     missing_images = 0
     pose_model = YOLO('model_weights/yolo11x-pose.pt')
     ear_detector = YOLO('model_weights/yolov11_ear_detector.pt')
@@ -349,7 +371,7 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
                             earside = ''
                         break
 
-                all_rows.append({
+                candidate = {
                     'image_path': rel_path_str,
                     'x1': int(round(x)),
                     'y1': int(round(y)),
@@ -359,10 +381,15 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
                     'source': source_name,
                     'annotation_source': _format_annotation_label([ANNOT_LABEL_GT]),
                     'confidence': 1.0,
-                })
+                }
+
+                if _is_contained_in_existing(candidate, gt_boxes_by_image[rel_path_str]):
+                    continue
+
+                all_rows.append(candidate)
 
                 gt_boxes_by_image[rel_path_str].append(
-                    (int(round(x)), int(round(y)), int(round(w)), int(round(h)))
+                    (candidate['x1'], candidate['y1'], candidate['w'], candidate['h'])
                 )
 
                 if image_path not in ear_detection_cache:
@@ -418,7 +445,7 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
                     if not _detection_has_pose_support(det_box, pose_entries):
                         continue
 
-                    all_rows.append({
+                    candidate_aug = {
                         'image_path': rel_path_str,
                         'x1': int(round(det_x1)),
                         'y1': int(round(det_y1)),
@@ -431,7 +458,12 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
                             ANNOT_LABEL_EAR
                         ]),
                         'confidence': float(score),
-                    })
+                    }
+
+                    if _is_contained_in_existing(candidate_aug, gt_boxes_by_image[rel_path_str]):
+                        continue
+
+                    all_rows.append(candidate_aug)
 
                 processed_counts[image_key] += 1
                 if processed_counts[image_key] == annotation_counts[image_key]:
