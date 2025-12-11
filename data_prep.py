@@ -13,7 +13,7 @@ import argparse
 import re
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, DefaultDict, Dict, List, Optional, Tuple, cast
+from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, cast
 
 import numpy as np
 import pandas as pd
@@ -28,6 +28,13 @@ from utils.iou import compute_iou_np
 from ultralytics import YOLO
 
 YOLO_DUPLICATE_IOU_THRESHOLD = 0.6
+EAR_KEYPOINT_MIN_CONF = 0.35
+EAR_BOX_WIDTH_RATIO = 0.25
+EAR_BOX_HEIGHT_RATIO = 0.35
+EAR_BOX_MIN_SIZE = 16
+YOLO_DETECTION_POINT_PAD = 5.0
+
+PoseEntry = Tuple[np.ndarray, np.ndarray]
 
 
 def _to_numpy(array_like: Any) -> np.ndarray:
@@ -90,6 +97,137 @@ def _maybe_denormalize_bbox(bbox: List[float], image_path: Path, cache: Dict[Pat
     return [x * width, y * height, w * width, h * height]
 
 
+def _get_pose_entries(image_path: Path, pose_model: YOLO, cache: Dict[str, List[PoseEntry]]) -> List[PoseEntry]:
+    image_key = image_path.as_posix()
+    if image_key in cache:
+        return cache[image_key]
+
+    detections: List[PoseEntry] = []
+    results = pose_model(image_path, verbose=False)
+    for result in results:
+        keypoints_raw = getattr(result.keypoints, 'data', None) if result.keypoints is not None else None
+        boxes_raw = getattr(result.boxes, 'xyxy', None) if result.boxes is not None else None
+        if boxes_raw is None and result.boxes is not None:
+            boxes_raw = result.boxes
+        if keypoints_raw is None or boxes_raw is None:
+            continue
+
+        keypoints_data = _to_numpy(keypoints_raw)
+        boxes = _to_numpy(boxes_raw)
+
+        if keypoints_data.ndim == 2:
+            keypoints_data = np.expand_dims(keypoints_data, axis=0)
+        if boxes.ndim == 1:
+            boxes = np.expand_dims(boxes, axis=0)
+
+        for keypoints, box in zip(keypoints_data, boxes):
+            detections.append((keypoints, box))
+
+    cache[image_key] = detections
+    return detections
+
+
+def _point_in_xywh(point: Tuple[float, float], box: Tuple[int, int, int, int], pad: float = 0.0) -> bool:
+    x, y = point
+    x1, y1, w, h = box
+    x2 = x1 + w
+    y2 = y1 + h
+    return (x1 - pad) <= x <= (x2 + pad) and (y1 - pad) <= y <= (y2 + pad)
+
+
+def _point_in_xyxy(point: Tuple[float, float], box: np.ndarray, pad: float = 0.0) -> bool:
+    x, y = point
+    x1, y1, x2, y2 = float(box[0]), float(box[1]), float(box[2]), float(box[3])
+    return (x1 - pad) <= x <= (x2 + pad) and (y1 - pad) <= y <= (y2 + pad)
+
+
+def _build_pose_bbox(
+    point: Tuple[float, float],
+    face_box: np.ndarray,
+    image_path: Path,
+    cache: Dict[Path, Optional[Tuple[int, int]]]
+) -> Optional[Tuple[int, int, int, int]]:
+    face_width = max(1.0, float(face_box[2] - face_box[0]))
+    face_height = max(1.0, float(face_box[3] - face_box[1]))
+    box_width = max(EAR_BOX_MIN_SIZE, face_width * EAR_BOX_WIDTH_RATIO)
+    box_height = max(EAR_BOX_MIN_SIZE, face_height * EAR_BOX_HEIGHT_RATIO)
+
+    x = float(point[0]) - box_width / 2.0
+    y = float(point[1]) - box_height / 2.0
+
+    size = _get_image_size(image_path, cache)
+    if size:
+        img_w, img_h = size
+        if img_w <= 0 or img_h <= 0:
+            return None
+        x = max(0.0, min(x, img_w - 1.0))
+        y = max(0.0, min(y, img_h - 1.0))
+        available_w = img_w - x
+        available_h = img_h - y
+        if available_w <= 0 or available_h <= 0:
+            return None
+        box_width = min(box_width, available_w)
+        box_height = min(box_height, available_h)
+
+    width_int = max(1, int(round(box_width)))
+    height_int = max(1, int(round(box_height)))
+    x_int = int(round(x))
+    y_int = int(round(y))
+    return (x_int, y_int, width_int, height_int)
+
+
+def _maybe_add_pose_boxes_for_image(
+    image_key: str,
+    rel_path: str,
+    image_path: Path,
+    pose_entries: List[PoseEntry],
+    detection_boxes: np.ndarray,
+    gt_boxes: DefaultDict[str, List[Tuple[int, int, int, int]]],
+    cache: Dict[Path, Optional[Tuple[int, int]]],
+    all_rows: List[Dict[str, Any]],
+    source_name: str,
+    pose_augmented: Set[str]
+) -> None:
+    if image_key in pose_augmented or not pose_entries:
+        pose_augmented.add(image_key)
+        return
+
+    pose_augmented.add(image_key)
+    detections = detection_boxes if detection_boxes.size else np.empty((0, 4), dtype=np.float32)
+    new_boxes = 0
+
+    for keypoints, face_box in pose_entries:
+        if keypoints.shape[0] < 5:
+            continue
+        left_point = keypoints[3]
+        right_point = keypoints[4]
+        for point, side in ((left_point, 'left'), (right_point, 'right')):
+            confidence = float(point[2]) if point.shape[0] >= 3 else 0.0
+            if confidence < EAR_KEYPOINT_MIN_CONF:
+                continue
+            coords = (float(point[0]), float(point[1]))
+            if any(_point_in_xywh(coords, box) for box in gt_boxes[rel_path]):
+                continue
+            if any(_point_in_xyxy(coords, det_box, YOLO_DETECTION_POINT_PAD) for det_box in detections):
+                continue
+            bbox = _build_pose_bbox(coords, face_box, image_path, cache)
+            if bbox is None:
+                continue
+            all_rows.append({
+                'image_path': rel_path,
+                'x1': bbox[0],
+                'y1': bbox[1],
+                'w': bbox[2],
+                'h': bbox[3],
+                'earside': side,
+                'source': f"{source_name}_pose_aug",
+                'confidence': 1.0,
+            })
+            gt_boxes[rel_path].append(bbox)
+            new_boxes += 1
+
+    if new_boxes > 0:
+        print(f"    Added {new_boxes} pose-derived box(es) for {rel_path}")
 def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
     """
     Find and parse all annotation files under data/raw using utils.data_decoder.
@@ -108,6 +246,10 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
     image_size_cache: Dict[Path, Optional[Tuple[int, int]]] = {}
     ear_detection_cache: Dict[Path, Tuple[np.ndarray, np.ndarray]] = {}
     gt_boxes_by_image: DefaultDict[str, List[Tuple[int, int, int, int]]] = defaultdict(list)
+    pose_results_cache: Dict[str, List[PoseEntry]] = {}
+    rel_path_cache: Dict[str, str] = {}
+    image_source_map: Dict[str, str] = {}
+    pose_augmented_images: Set[str] = set()
 
     for ann_file, ann_type, image_dir in tqdm(annotation_sources, desc="Processing sources"):
         if ann_type == 'images_only':
@@ -118,6 +260,11 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
 
         try:
             annotations = decode_all_annotations(ann_file, ann_type, image_dir)
+            annotation_counts: DefaultDict[str, int] = defaultdict(int)
+            for ann in annotations:
+                annotation_counts[Path(ann['image_path']).as_posix()] += 1
+
+            processed_counts: DefaultDict[str, int] = defaultdict(int)
 
             for ann in annotations:
                 bbox = ann.get('bbox')
@@ -130,6 +277,7 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
                     continue
 
                 image_path = Path(ann['image_path'])
+                image_key = image_path.as_posix()
                 if not image_path.exists():
                     missing_images += 1
                     continue
@@ -139,29 +287,26 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
                 except ValueError:
                     rel_path = image_path
 
-                results = pose_model(image_path, verbose=False)
-                earside = ''
-                for r in results:
-                    if r.keypoints is None:
-                        continue
-                    kp_source = r.keypoints.data if hasattr(r.keypoints, 'data') else r.keypoints
-                    keypoints_data = _to_numpy(kp_source)
-                    box_source = r.boxes.xyxy if hasattr(r.boxes, 'xyxy') else r.boxes
-                    boxes = _to_numpy(box_source)
-                    for kp, box in zip(keypoints_data, boxes):
-                        l_ear, r_ear = kp[3], kp[4]
-                        if box[0] <= x <= box[2] and box[1] <= y <= box[3]:
-                            if l_ear[2] > 0 and r_ear[2] > 0:
-                                earside = 'left' if l_ear[0] < r_ear[0] else 'right'
-                            elif l_ear[2] > 0:
-                                earside = 'left'
-                            elif r_ear[2] > 0:
-                                earside = 'right'
-                            else:
-                                earside = ''
-                            break
-
                 rel_path_str = rel_path.as_posix()
+                rel_path_cache.setdefault(image_key, rel_path_str)
+                image_source_map.setdefault(image_key, source_name)
+
+                pose_entries = _get_pose_entries(image_path, pose_model, pose_results_cache)
+                earside = ''
+                for keypoints, box in pose_entries:
+                    if keypoints.shape[0] <= 4:
+                        continue
+                    l_ear, r_ear = keypoints[3], keypoints[4]
+                    if box[0] <= x <= box[2] and box[1] <= y <= box[3]:
+                        if l_ear[2] > 0 and r_ear[2] > 0:
+                            earside = 'left' if l_ear[0] < r_ear[0] else 'right'
+                        elif l_ear[2] > 0:
+                            earside = 'left'
+                        elif r_ear[2] > 0:
+                            earside = 'right'
+                        else:
+                            earside = ''
+                        break
 
                 all_rows.append({
                     'image_path': rel_path_str,
@@ -234,6 +379,24 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
                         'source': f"{source_name}_yolo11_aug",
                         'confidence': float(score),
                     })
+
+                processed_counts[image_key] += 1
+                if processed_counts[image_key] == annotation_counts[image_key]:
+                    rel_for_image = rel_path_cache.get(image_key, rel_path_str)
+                    pose_entries_for_image = pose_results_cache.get(image_key, [])
+                    source_label = image_source_map.get(image_key, source_name)
+                    _maybe_add_pose_boxes_for_image(
+                        image_key,
+                        rel_for_image,
+                        image_path,
+                        pose_entries_for_image,
+                        boxes_xyxy,
+                        gt_boxes_by_image,
+                        image_size_cache,
+                        all_rows,
+                        source_label,
+                        pose_augmented_images,
+                    )
 
             print(f"  {ann_type}: {Path(image_dir).relative_to(raw_dir)} -> {len(annotations)} annotations")
 
