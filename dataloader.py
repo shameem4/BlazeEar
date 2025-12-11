@@ -115,16 +115,22 @@ class CSVDetectorDataset(Dataset):
             image = augmentation.augment_brightness(image)
         if np.random.random() > 0.5:
             image = augmentation.augment_color_jitter(image)
+        if np.random.random() > 0.5:
+            image = augmentation.augment_photometric_jitter(image)
         
         # Geometric augmentations
         if np.random.random() > 0.5 and len(bboxes) > 0:
             image, bboxes = augmentation.augment_horizontal_flip(image, bboxes)
         if np.random.random() > 0.5 and len(bboxes) > 0:
-            image, bboxes = augmentation.augment_scale(image, bboxes, scale_range=(0.85, 1.15))
+            image, bboxes = augmentation.augment_scale(image, bboxes, scale_range=(0.75, 1.25))
         if np.random.random() > 0.5 and len(bboxes) > 0:
-            image, bboxes = augmentation.augment_rotation(image, bboxes, angle_range=(-10, 10))
+            image, bboxes = augmentation.augment_rotation(image, bboxes, angle_range=(-20, 20))
         
         # Occlusion augmentations (less frequent)
+        if np.random.random() > 0.6 and len(bboxes) > 0:
+            image = augmentation.augment_face_cutout(image, bboxes)
+        if np.random.random() > 0.6 and len(bboxes) > 0:
+            image = augmentation.augment_targeted_ear_occlusion(image, bboxes)
         if np.random.random() > 0.7:
             image = augmentation.augment_synthetic_occlusion(image, num_occlusions=1)
         if np.random.random() > 0.7:

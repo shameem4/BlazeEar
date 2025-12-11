@@ -684,8 +684,10 @@ class BlazeEarTrainer:
             
             # Print epoch summary
             print(f'  Train | Loss: {train_results["total"]:.5f} | '
-                  f'Pos Acc: {train_results["positive_acc"]:.4f} | '
-                  f'Bg Acc: {train_results["background_acc"]:.4f}')
+                f'Pos Acc: {train_results["positive_acc"]:.4f} | '
+                f'Bg Acc: {train_results["background_acc"]:.4f} | '
+                f'IoU: {train_results["mean_iou"]:.4f} | '
+                f'mAP: {train_results["map_50"]:.4f}')
             
             # Validate (use subset for speed - ~200 samples)
             if self.val_loader and (epoch + 1) % validate_every == 0:
@@ -693,8 +695,10 @@ class BlazeEarTrainer:
                 val_max_batches = max(1, 200 // batch_size)
                 val_results = self.validate(compute_map=val_compute_map, max_batches=val_max_batches)
                 print(f'  Val   | Loss: {val_results["total"]:.5f} | '
-                      f'Pos Acc: {val_results["positive_acc"]:.4f} | '
-                      f'Bg Acc: {val_results["background_acc"]:.4f}'
+                        f'Pos Acc: {val_results["positive_acc"]:.4f} | '
+                        f'Bg Acc: {val_results["background_acc"]:.4f} | '
+                        f'IoU: {val_results["mean_iou"]:.4f} | '
+                        f'mAP: {val_results["map_50"]:.4f}'
                       )
                 
                 # Check for best model

@@ -416,7 +416,7 @@ def create_debug_visualization(
 
     summary_lines = [
         f"GT: {gt_box_orig.shape[0]}",
-        f"{comparison_label}: {mediapipe_count}",
+        # f"{comparison_label}: {mediapipe_count}",
         f"{averaged_label}: {averaged_count}"
     ]
     for idx, line in enumerate(summary_lines):
@@ -773,13 +773,13 @@ def main() -> None:
     parser.add_argument(
         "--compare-threshold",
         type=float,
-        default=None,#DEFAULT_COMPARE_THRESHOLD,
+        default=DEFAULT_COMPARE_THRESHOLD,
         help="Detection threshold for the secondary detector"
     )
     parser.add_argument(
         "--compare-label",
         type=str,
-        default=None,#DEFAULT_COMPARE_LABEL,
+        default=DEFAULT_COMPARE_LABEL,
         help="Label prefix for the secondary detector annotations"
     )
     parser.add_argument(

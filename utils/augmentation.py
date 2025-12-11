@@ -35,6 +35,44 @@ def augment_brightness(image: np.ndarray, delta_range: tuple[float, float] = (-0
     return np.clip(image.astype(np.float32) + brightness_delta, 0, 255).astype(np.uint8)
 
 
+def augment_photometric_jitter(
+    image: np.ndarray,
+    brightness_range: tuple[float, float] = (-0.25, 0.25),
+    contrast_range: tuple[float, float] = (0.75, 1.25),
+    saturation_range: tuple[float, float] = (0.7, 1.3),
+    hue_range: tuple[float, float] = (-0.08, 0.08),
+    noise_std_range: tuple[float, float] = (0.0, 8.0)
+) -> np.ndarray:
+    """Comprehensive photometric jitter that mimics varied lighting.
+
+    Randomly applies brightness/contrast shifts, hue and saturation tweaks,
+    and light gaussian noise so fine-tuned weights experience failure-case
+    illumination similar to the provided samples.
+    """
+    jittered = image.astype(np.float32)
+
+    brightness_delta = np.random.uniform(*brightness_range) * 255
+    jittered = np.clip(jittered + brightness_delta, 0, 255)
+
+    mean = np.mean(jittered, axis=(0, 1), keepdims=True)
+    contrast = np.random.uniform(*contrast_range)
+    jittered = np.clip((jittered - mean) * contrast + mean, 0, 255)
+
+    hsv = cv2.cvtColor(jittered.astype(np.uint8), cv2.COLOR_RGB2HSV).astype(np.float32)
+    hue_shift = np.random.uniform(*hue_range) * 180
+    hsv[:, :, 0] = (hsv[:, :, 0] + hue_shift) % 180
+    saturation_factor = np.random.uniform(*saturation_range)
+    hsv[:, :, 1] = np.clip(hsv[:, :, 1] * saturation_factor, 0, 255)
+    jittered = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB).astype(np.float32)
+
+    noise_std = np.random.uniform(*noise_std_range)
+    if noise_std > 0:
+        noise = np.random.normal(0.0, noise_std, size=jittered.shape)
+        jittered = np.clip(jittered + noise, 0, 255)
+
+    return jittered.astype(np.uint8)
+
+
 def augment_horizontal_flip(
     image: np.ndarray,
     bboxes: np.ndarray
@@ -264,3 +302,92 @@ def augment_cutout(
         image[hole_y:hole_y + hole_h, hole_x:hole_x + hole_w] = fill_value
     
     return image
+
+
+    def augment_face_cutout(
+        image: np.ndarray,
+        bboxes: np.ndarray,
+        context_scale_range: tuple[float, float] = (1.3, 1.9),
+        drop_probability: float = 0.6,
+        max_regions: int = 2
+    ) -> np.ndarray:
+        """Apply cutout over expanded bbox regions to emulate facial occlusions."""
+        if len(bboxes) == 0:
+            return image
+
+        h, w = image.shape[:2]
+        output = image.copy()
+        regions = min(max_regions, len(bboxes))
+        if regions <= 0:
+            return image
+        selected = np.random.choice(len(bboxes), size=regions, replace=False)
+
+        for idx in selected:
+            if np.random.random() > drop_probability:
+                continue
+            ymin, xmin, ymax, xmax = bboxes[idx]
+            cy = (ymin + ymax) * 0.5 * h
+            cx = (xmin + xmax) * 0.5 * w
+            box_h = max(1.0, (ymax - ymin) * h)
+            box_w = max(1.0, (xmax - xmin) * w)
+            scale = np.random.uniform(*context_scale_range)
+            half_h = box_h * scale * 0.5
+            half_w = box_w * scale * 0.5
+
+            y1 = int(np.clip(cy - half_h, 0, h))
+            y2 = int(np.clip(cy + half_h, 0, h))
+            x1 = int(np.clip(cx - half_w, 0, w))
+            x2 = int(np.clip(cx + half_w, 0, w))
+            if y2 <= y1 or x2 <= x1:
+                continue
+
+            fill_color = np.random.randint(0, 256, size=(1, 1, 3), dtype=np.uint8)
+            output[y1:y2, x1:x2] = fill_color
+
+        return output
+
+
+    def augment_targeted_ear_occlusion(
+        image: np.ndarray,
+        bboxes: np.ndarray,
+        occlusion_fraction: tuple[float, float] = (0.25, 0.6),
+        max_regions: int = 3
+    ) -> np.ndarray:
+        """Hide random slices inside ear boxes to mimic hair/hands covering the ear."""
+        if len(bboxes) == 0:
+            return image
+
+        h, w = image.shape[:2]
+        output = image.copy()
+        regions = min(max_regions, len(bboxes))
+        if regions <= 0:
+            return image
+        selected = np.random.choice(len(bboxes), size=regions, replace=False)
+
+        for idx in selected:
+            ymin, xmin, ymax, xmax = bboxes[idx]
+            y1 = int(np.clip(ymin * h, 0, h - 1))
+            y2 = int(np.clip(ymax * h, y1 + 1, h))
+            x1 = int(np.clip(xmin * w, 0, w - 1))
+            x2 = int(np.clip(xmax * w, x1 + 1, w))
+            ear_h = max(1, y2 - y1)
+            ear_w = max(1, x2 - x1)
+
+            frac = np.random.uniform(*occlusion_fraction)
+            occ_h = max(1, int(ear_h * frac))
+            occ_w = max(1, int(ear_w * frac * np.random.uniform(0.4, 1.0)))
+            if occ_h >= ear_h:
+                occ_h = ear_h - 1 if ear_h > 1 else ear_h
+            if occ_w >= ear_w:
+                occ_w = ear_w - 1 if ear_w > 1 else ear_w
+            if occ_h <= 0 or occ_w <= 0:
+                continue
+
+            max_y = max(y1 + 1, y2 - occ_h + 1)
+            max_x = max(x1 + 1, x2 - occ_w + 1)
+            start_y = np.random.randint(y1, max_y)
+            start_x = np.random.randint(x1, max_x)
+            fill_color = np.random.randint(0, 80, size=(1, 1, 3), dtype=np.uint8)
+            output[start_y:start_y + occ_h, start_x:start_x + occ_w] = fill_color
+
+        return output
