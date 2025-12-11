@@ -90,7 +90,11 @@ class BlazeEarTrainer:
         log_dir: str = 'logs',
         model_name: str = 'BlazeEar',
         scale: int = 128,
-        compute_train_map: bool = False
+        compute_train_map: bool = False,
+        eval_score_threshold: float = 0.1,
+        nms_iou_threshold: float = DEFAULT_NMS_IOU_THRESHOLD,
+        max_eval_detections: int = 75,
+        metric_threshold: float = 0.45
     ):
         """
         Args:
@@ -154,11 +158,11 @@ class BlazeEarTrainer:
             'background_correct': 0,
             'background_total': 0
         }
-        self.eval_score_threshold = 0.15
-        self.nms_iou_threshold = DEFAULT_NMS_IOU_THRESHOLD
-        self.max_eval_detections = 50
+        self.eval_score_threshold = eval_score_threshold
+        self.nms_iou_threshold = nms_iou_threshold
+        self.max_eval_detections = max_eval_detections
         self.max_map_candidates = 200
-        self.metric_threshold = 0.45
+        self.metric_threshold = metric_threshold
     
     def _get_training_outputs(self, images: torch.Tensor) -> tuple:
         """
@@ -446,8 +450,7 @@ class BlazeEarTrainer:
             
             self.optimizer.step()
             
-            # Compute metrics only every 10 batches to speed up training
-            # IoU is skipped during training (computed only during validation)
+            # Compute metrics every 10 batches to reduce overhead
             compute_metrics_this_batch = (batch_idx % 10 == 0 or batch_idx == len(self.train_loader) - 1)
             if compute_metrics_this_batch:
                 with torch.no_grad():
@@ -459,7 +462,7 @@ class BlazeEarTrainer:
                         gt_box_counts,
                         threshold=self.metric_threshold,
                         compute_map_flag=self.compute_train_map,
-                        compute_iou_flag=False  # Skip IoU during training for speed
+                        compute_iou_flag=True
                     )
             else:
                 # Skip metrics computation for this batch
@@ -567,7 +570,7 @@ class BlazeEarTrainer:
                     gt_box_counts,
                     threshold=self.metric_threshold,
                     compute_map_flag=compute_map,
-                    compute_iou_flag=False
+                    compute_iou_flag=True
                 )
                 
                 for key, value in losses.items():
@@ -798,6 +801,14 @@ def main():
                         help='Learning rate')
     parser.add_argument('--weight-decay', type=float, default=DEFAULT_WEIGHT_DECAY,
                         help='Weight decay')
+    parser.add_argument('--metric-threshold', type=float, default=0.4,
+                        help='Score threshold used when measuring train-time metrics (lower increases recall)')
+    parser.add_argument('--eval-score-threshold', type=float, default=0.08,
+                        help='Minimum score for a detection to be considered during evaluation')
+    parser.add_argument('--eval-nms-threshold', type=float, default=0.5,
+                        help='IoU threshold for NMS when computing mAP/IoU')
+    parser.add_argument('--max-eval-detections', type=int, default=75,
+                        help='Maximum number of candidate detections kept per image before scoring metrics')
     parser.add_argument('--train-map', action='store_true',
                         help='Compute mAP during training (slower)')
     
@@ -810,14 +821,14 @@ def main():
                         help='Focal loss alpha parameter')
     parser.add_argument('--focal-gamma', type=float, default=1.5,
                         help='Focal loss gamma parameter')
-    parser.add_argument('--detection-weight', type=float, default=150.0,
-                        help='Weight for detection/regression loss')
-    parser.add_argument('--classification-weight', type=float, default=60.0,
+    parser.add_argument('--detection-weight', type=float, default=200.0,
+                        help='Weight for detection/regression loss (higher favors box quality)')
+    parser.add_argument('--classification-weight', type=float, default=40.0,
                         help='Weight for background classification loss')
-    parser.add_argument('--positive-classification-weight', type=float, default=90.0,
-                        help='Weight for positive classification loss (encourages higher foreground scores)')
-    parser.add_argument('--hard-negative-ratio', type=float, default=2.0,
-                        help='Ratio of negatives to positives in hard mining')
+    parser.add_argument('--positive-classification-weight', type=float, default=80.0,
+                        help='Weight for positive classification loss (encourages confident positives)')
+    parser.add_argument('--hard-negative-ratio', type=float, default=1.25,
+                        help='Ratio of negatives to positives in hard mining (lower keeps more positives)')
     parser.set_defaults(use_focal_loss=True)
     
     # System arguments
@@ -1009,7 +1020,11 @@ def main():
         log_dir=args.log_dir,
         model_name='BlazeEar',
         scale=scale,
-        compute_train_map=args.train_map
+        compute_train_map=args.train_map,
+        eval_score_threshold=args.eval_score_threshold,
+        nms_iou_threshold=args.eval_nms_threshold,
+        max_eval_detections=args.max_eval_detections,
+        metric_threshold=args.metric_threshold
     )
     
     # Resume from checkpoint if provided

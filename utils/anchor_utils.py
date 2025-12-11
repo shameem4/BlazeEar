@@ -119,7 +119,9 @@ def _assign_box_to_grid(
     anchor_size: float,
     anchor_tensor: np.ndarray,
     occupied_ious: np.ndarray,
-    input_size: int
+    input_size: int,
+    min_iou: float,
+    max_matches: int
 ) -> None:
     """
     Assign a single box to the best available anchor cell (vectorized).
@@ -160,29 +162,40 @@ def _assign_box_to_grid(
 
     flat_indices = np.argsort(iou_grid.ravel())[::-1]
 
+    assigned = 0
+    min_iou = max(0.0, float(min_iou))
+    max_matches = max(1, int(max_matches))
+
     for flat_idx in flat_indices:
         iou = iou_grid.ravel()[flat_idx]
         if iou <= 0:
             break
+        if assigned > 0 and iou < min_iou:
+            break
         y_idx, x_idx = divmod(flat_idx, grid_size)
-        if occupied_ious[y_idx, x_idx] == 0:
+        if occupied_ious[y_idx, x_idx] == 0 or iou > occupied_ious[y_idx, x_idx]:
             anchor_tensor[y_idx, x_idx] = encoded_box
             occupied_ious[y_idx, x_idx] = iou
-            return
+            assigned += 1
+            if assigned >= max_matches:
+                return
 
-    # No free slot with IoU>0, optionally replace if better
-    best_flat = flat_indices[0]
-    best_iou = iou_grid.ravel()[best_flat]
-    if best_iou > 0:
-        y_idx, x_idx = divmod(best_flat, grid_size)
-        if best_iou > occupied_ious[y_idx, x_idx]:
-            anchor_tensor[y_idx, x_idx] = encoded_box
-            occupied_ious[y_idx, x_idx] = best_iou
+    if assigned == 0 and flat_indices.size > 0:
+        best_flat = flat_indices[0]
+        best_iou = iou_grid.ravel()[best_flat]
+        if best_iou > 0:
+            y_idx, x_idx = divmod(best_flat, grid_size)
+            if best_iou > occupied_ious[y_idx, x_idx]:
+                anchor_tensor[y_idx, x_idx] = encoded_box
+                occupied_ious[y_idx, x_idx] = best_iou
 
 
 def encode_boxes_to_anchors(
     boxes: np.ndarray,
-    input_size: int = 128
+    input_size: int = 128,
+    min_iou: float = 0.2,
+    max_small_matches: int = 3,
+    max_big_matches: int = 2
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Encode normalized boxes into MediaPipe anchor grids.
@@ -210,8 +223,28 @@ def encode_boxes_to_anchors(
     for box in boxes:
         # box format: [ymin, xmin, ymax, xmax]
         encoded = np.array([1.0, box[0], box[1], box[2], box[3]], dtype=np.float32)
-        _assign_box_to_grid(box, encoded, small_coords, small_size, small_anchor, small_ious, input_size)
-        _assign_box_to_grid(box, encoded, big_coords, big_size, big_anchor, big_ious, input_size)
+        _assign_box_to_grid(
+            box,
+            encoded,
+            small_coords,
+            small_size,
+            small_anchor,
+            small_ious,
+            input_size,
+            min_iou,
+            max_small_matches
+        )
+        _assign_box_to_grid(
+            box,
+            encoded,
+            big_coords,
+            big_size,
+            big_anchor,
+            big_ious,
+            input_size,
+            min_iou,
+            max_big_matches
+        )
 
     return small_anchor, big_anchor
 
