@@ -83,6 +83,30 @@ def _group_metadata_by_image(csv_path: Path) -> MetadataMap:
     return groups
 
 
+def _extract_boxes_and_labels(
+    image_path: str,
+    metadata: MetadataMap,
+    fallback_boxes: Dict[str, List[Box]],
+) -> tuple[list[Box], list[str] | None]:
+    group = metadata.get(image_path)
+    if group is not None and not group.empty:
+        rows = group.to_dict("records")
+        boxes: list[Box] = []
+        labels: list[str] = []
+        for row in rows:
+            x1 = int(row.get("x1", 0))
+            y1 = int(row.get("y1", 0))
+            w = int(row.get("w", 0))
+            h = int(row.get("h", 0))
+            boxes.append((x1, y1, w, h))
+            label_value = row.get("annotation_source") or row.get("source") or "Ann"
+            labels.append(str(label_value))
+        return boxes, labels
+
+    fallback = fallback_boxes.get(image_path, [])
+    return list(fallback), None
+
+
 def _format_summary_lines(group: pd.DataFrame | None) -> List[str]:
     if group is None or group.empty:
         return ["Annotations: 0"]
@@ -154,23 +178,7 @@ def _headless_iteration(
     while processed < count and image_paths:
         image_path = image_paths[idx]
         full_path = data_root / image_path
-        group = metadata.get(image_path)
-        boxes: list[Box] = []
-        labels: list[str] | None = None
-        if group is not None and not group.empty:
-            rows = group.to_dict("records")
-            labels = []
-            for row in rows:
-                x1 = int(row.get("x1", 0))
-                y1 = int(row.get("y1", 0))
-                w = int(row.get("w", 0))
-                h = int(row.get("h", 0))
-                boxes.append((x1, y1, w, h))
-                label_value = row.get("annotation_source") or row.get("source") or "Ann"
-                labels.append(str(label_value))
-        else:
-            boxes = image_to_boxes.get(image_path, [])
-            labels = None
+        boxes, labels = _extract_boxes_and_labels(image_path, metadata, image_to_boxes)
         _log_image_summary(idx, len(image_paths), image_path, metadata.get(image_path))
         print(f"    Exists: {'yes' if full_path.exists() else 'no'} | Boxes: {len(boxes)}")
         idx = (idx + 1) % len(image_paths)
@@ -207,7 +215,7 @@ def main() -> None:
 
     while True:
         image_path = image_paths[current_idx]
-        boxes = image_to_boxes.get(image_path, [])
+        boxes, labels = _extract_boxes_and_labels(image_path, metadata, image_to_boxes)
         full_image_path = data_root / image_path
 
         if not full_image_path.exists():

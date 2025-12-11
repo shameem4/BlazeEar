@@ -37,10 +37,18 @@ EAR_BOX_HEIGHT_RATIO = 0.14
 EAR_BOX_MIN_SIZE = 10
 YOLO_DETECTION_POINT_PAD = 5.0
 
-ANNOT_SRC_ORIGINAL = "GT"
-ANNOT_SRC_YOLO_EAR = "EAR"
-ANNOT_SRC_YOLO_POSE = "POSE"
-ANNOT_SRC_COMBO = "COMBO"
+ANNOT_LABEL_GT = "GT"
+ANNOT_LABEL_EAR = "EAR"
+ANNOT_LABEL_POSE = "POSE"
+
+
+def _format_annotation_label(parts: List[str]) -> str:
+    """Return a canonical label string for a combination of annotation sources."""
+    ordered: List[str] = []
+    for part in parts:
+        if part and part not in ordered:
+            ordered.append(part)
+    return "+".join(ordered) if ordered else "unknown"
 
 PoseEntry = Tuple[np.ndarray, np.ndarray]
 
@@ -252,7 +260,7 @@ def _maybe_add_pose_boxes_for_image(
                 'h': bbox[3],
                 'earside': side,
                 'source': f"{source_name}_pose_aug",
-                'annotation_source': ANNOT_SRC_YOLO_POSE,
+                'annotation_source': _format_annotation_label([ANNOT_LABEL_POSE]),
                 'confidence': 1.0,
             })
             gt_boxes[rel_path].append(bbox)
@@ -349,7 +357,7 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
                     'h': int(round(h)),
                     'earside': earside,
                     'source': source_name,
-                    'annotation_source': ANNOT_SRC_ORIGINAL,
+                    'annotation_source': _format_annotation_label([ANNOT_LABEL_GT]),
                     'confidence': 1.0,
                 })
 
@@ -418,7 +426,10 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
                         'h': int(round(det_h)),
                         'earside': 'unknown',
                         'source': f"{source_name}_yolo11_aug",
-                        'annotation_source': ANNOT_SRC_COMBO,
+                        'annotation_source': _format_annotation_label([
+                            ANNOT_LABEL_GT,
+                            ANNOT_LABEL_EAR
+                        ]),
                         'confidence': float(score),
                     })
 
