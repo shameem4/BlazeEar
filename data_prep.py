@@ -141,6 +141,29 @@ def _point_in_xyxy(point: Tuple[float, float], box: np.ndarray, pad: float = 0.0
     return (x1 - pad) <= x <= (x2 + pad) and (y1 - pad) <= y <= (y2 + pad)
 
 
+def _detection_has_pose_support(
+    det_box: np.ndarray,
+    pose_entries: List[PoseEntry],
+    pad: float = YOLO_DETECTION_POINT_PAD
+) -> bool:
+    """Return True when any confident pose ear keypoint falls inside det_box."""
+    if not pose_entries:
+        return False
+
+    for keypoints, _ in pose_entries:
+        if keypoints.shape[0] < 5:
+            continue
+        for idx in (3, 4):  # left/right ear indices in BlazePose
+            point = keypoints[idx]
+            confidence = float(point[2]) if point.shape[0] >= 3 else 0.0
+            if confidence < EAR_KEYPOINT_MIN_CONF:
+                continue
+            coords = (float(point[0]), float(point[1]))
+            if _point_in_xyxy(coords, det_box, pad):
+                return True
+    return False
+
+
 def _build_pose_bbox(
     point: Tuple[float, float],
     face_box: np.ndarray,
@@ -349,6 +372,7 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
 
                 boxes_xyxy, scores = ear_detection_cache[image_path]
                 gt_boxes_for_image = gt_boxes_by_image[rel_path_str]
+                has_gt_reference = len(gt_boxes_for_image) > 0
 
                 for det_box, score in zip(boxes_xyxy, scores):
                     det_x1, det_y1, det_x2, det_y2 = det_box
@@ -367,6 +391,12 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
                             break
 
                     if overlaps_gt:
+                        continue
+
+                    # Treat YOLO-only detections without GT or pose support as false positives
+                    if not has_gt_reference:
+                        continue
+                    if not _detection_has_pose_support(det_box, pose_entries):
                         continue
 
                     all_rows.append({
