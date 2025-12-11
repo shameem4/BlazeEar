@@ -11,8 +11,9 @@ Creates a unified master CSV and train/val splits under data/splits.
 """
 import argparse
 import re
+from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Any, DefaultDict, Dict, List, Optional, Tuple, cast
 
 import numpy as np
 import pandas as pd
@@ -22,8 +23,11 @@ from tqdm import tqdm
 
 from utils.data_decoder import find_all_annotations, decode_all_annotations
 from utils.data_utils import split_dataframe_by_images
+from utils.iou import compute_iou_np
 
 from ultralytics import YOLO
+
+YOLO_DUPLICATE_IOU_THRESHOLD = 0.6
 
 
 def _to_numpy(array_like: Any) -> np.ndarray:
@@ -103,6 +107,7 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
     ear_detector = YOLO('model_weights/yolov11_ear_detector.pt')
     image_size_cache: Dict[Path, Optional[Tuple[int, int]]] = {}
     ear_detection_cache: Dict[Path, Tuple[np.ndarray, np.ndarray]] = {}
+    gt_boxes_by_image: DefaultDict[str, List[Tuple[int, int, int, int]]] = defaultdict(list)
 
     for ann_file, ann_type, image_dir in tqdm(annotation_sources, desc="Processing sources"):
         if ann_type == 'images_only':
@@ -156,8 +161,10 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
                                 earside = ''
                             break
 
+                rel_path_str = rel_path.as_posix()
+
                 all_rows.append({
-                    'image_path': rel_path.as_posix(),
+                    'image_path': rel_path_str,
                     'x1': int(round(x)),
                     'y1': int(round(y)),
                     'w': int(round(w)),
@@ -166,6 +173,10 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
                     'source': source_name,
                     'confidence': 1.0,
                 })
+
+                gt_boxes_by_image[rel_path_str].append(
+                    (int(round(x)), int(round(y)), int(round(w)), int(round(h)))
+                )
 
                 if image_path not in ear_detection_cache:
                     ear_results = ear_detector.predict(
@@ -192,6 +203,7 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
                     ear_detection_cache[image_path] = (boxes_xyxy, scores)
 
                 boxes_xyxy, scores = ear_detection_cache[image_path]
+                gt_boxes_for_image = gt_boxes_by_image[rel_path_str]
 
                 for det_box, score in zip(boxes_xyxy, scores):
                     det_x1, det_y1, det_x2, det_y2 = det_box
@@ -200,8 +212,20 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
                     if det_w <= 0 or det_h <= 0:
                         continue
 
+                    det_xywh = np.array([det_x1, det_y1, det_w, det_h], dtype=np.float32)
+                    overlaps_gt = False
+                    for gt_box in gt_boxes_for_image:
+                        gt_array = np.array(gt_box, dtype=np.float32)
+                        iou = compute_iou_np(gt_array, det_xywh, box1_format="xywh", box2_format="xywh")
+                        if iou >= YOLO_DUPLICATE_IOU_THRESHOLD:
+                            overlaps_gt = True
+                            break
+
+                    if overlaps_gt:
+                        continue
+
                     all_rows.append({
-                        'image_path': rel_path.as_posix(),
+                        'image_path': rel_path_str,
                         'x1': int(round(det_x1)),
                         'y1': int(round(det_y1)),
                         'w': int(round(det_w)),
@@ -328,6 +352,7 @@ def main() -> None:
 
     # Verify images exist
     if not args.no_verify:
+        print("Verifying that image files exist...")
         df = verify_images_exist(df, raw_dir)
 
     if df.empty:
