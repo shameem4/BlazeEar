@@ -49,6 +49,36 @@ LOSS_DEBUG_KWARGS = {
     "positive_classification_weight": 70.0
 }
 
+LOG_LINE = "=" * 70
+
+
+def _log_heading(title: str, char: str = "=") -> None:
+    line = (char * len(title)) if len(title) >= len(LOG_LINE) else LOG_LINE
+    print(f"\n{line}\n{title}\n{line}")
+
+
+def _log_subheading(title: str) -> None:
+    print(f"\n-- {title} --")
+
+
+LogValue = Union[str, int, float, List[str], List[int], List[float]]
+
+
+def _log_kv(label: str, value: LogValue) -> None:
+    if isinstance(value, list):
+        printable = ", ".join(str(item) for item in value)
+    else:
+        printable = str(value)
+    print(f"  {label}: {printable}")
+
+
+def _log_info(message: str) -> None:
+    print(f"[INFO] {message}")
+
+
+def _log_warn(message: str) -> None:
+    print(f"[WARN] {message}")
+
 
 def describe_tensor(name: str, tensor: torch.Tensor) -> None:
     tensor = tensor.detach().cpu()
@@ -95,7 +125,7 @@ def aligned_iou(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
 
 
 def run_anchor_unit_tests() -> None:
-    print("\nRunning anchor sanity checks...")
+    _log_subheading("Anchor sanity checks")
     # Single box centered perfectly
     box = np.array([[0.4, 0.4, 0.6, 0.6]], dtype=np.float32)
     small, big = encode_boxes_to_anchors(box, input_size=128)
@@ -104,7 +134,10 @@ def run_anchor_unit_tests() -> None:
     if positives.size == 0:
         raise AssertionError("No anchors assigned to centered box")
     np.testing.assert_allclose(targets[positives[0], 1:], box[0], atol=1e-3)
-    print(f"  PASS single box assigned to anchor #{positives[0]} with coords {targets[positives[0], 1:]}")
+    _log_kv(
+        "Centered box",
+        f"PASS anchor #{positives[0]} coords {targets[positives[0], 1:]}"
+    )
 
     # Multiple boxes shouldn't overwrite each other
     multi_boxes = np.array([
@@ -116,11 +149,11 @@ def run_anchor_unit_tests() -> None:
     assigned = np.where(targets[:, 0] == 1)[0]
     if assigned.size < 2:
         raise AssertionError("Not all boxes were assigned to anchors")
-    print(f"  PASS multiple boxes mapped to anchors {assigned.tolist()}")
+    _log_kv("Multiple boxes", f"PASS anchors {assigned.tolist()}")
 
 
 def run_decode_unit_test(loss_fn: BlazeEarDetectionLoss) -> None:
-    print("Running decode sanity check...")
+    _log_subheading("Decode sanity check")
     reference_anchors, _, _ = generate_reference_anchors()
     gt = torch.tensor([[0.1, 0.2, 0.3, 0.4]])
     preds = torch.zeros((1, 1, 4))
@@ -133,7 +166,7 @@ def run_decode_unit_test(loss_fn: BlazeEarDetectionLoss) -> None:
     decoded_xyxy = convert_ymin_xmin_to_xyxy(decoded[0].cpu().numpy())
     expected_xyxy = convert_ymin_xmin_to_xyxy(gt[0].cpu().numpy())
     torch.testing.assert_close(torch.from_numpy(decoded_xyxy), torch.from_numpy(expected_xyxy), atol=1e-3)
-    print("  PASS decode matches ground truth for synthetic box")
+    _log_kv("Decode", "PASS synthetic box round-trip")
 
 
 def run_csv_encode_decode_test(
@@ -141,7 +174,7 @@ def run_csv_encode_decode_test(
     max_samples: int = 3
 ) -> None:
     """Ensure encode/decode math is consistent with CSV-derived GT boxes."""
-    print("\nRunning CSV encode/decode consistency test...")
+    _log_subheading("CSV encode/decode consistency test")
     reference_anchors, _, _ = generate_reference_anchors()
     loss_fn = BlazeEarDetectionLoss(**LOSS_DEBUG_KWARGS)
     sample_indices = list(range(min(max_samples, len(dataset))))
@@ -151,7 +184,7 @@ def run_csv_encode_decode_test(
         anchor_targets = sample["anchor_targets"]
         positive_mask = anchor_targets[:, 0] == 1
         if not bool(positive_mask.any()):
-            print(f"  Sample {sample_idx}: no positives, skipping")
+            _log_kv(f"Sample {sample_idx}", "no positives – skipping")
             continue
 
         pos_indices = torch.nonzero(positive_mask).squeeze(1)
@@ -178,9 +211,9 @@ def run_csv_encode_decode_test(
         decoded_pos = decoded[pos_indices]
         max_error = (decoded_pos - true_boxes).abs().max().item()
         mean_iou = compute_mean_iou(decoded_pos, true_boxes).item()
-        print(
-            f"  Sample {sample_idx}: positives={len(pos_indices)}, "
-            f"max_abs_error={max_error:.6f}, mean_iou={mean_iou:.4f}"
+        _log_kv(
+            f"Sample {sample_idx}",
+            f"positives={len(pos_indices)} max_err={max_error:.6f} mean_iou={mean_iou:.4f}"
         )
 
 
@@ -231,9 +264,9 @@ def analyze_scoring_process(
     pos_indices = positive_indices.to(dtype=torch.long)
     pos_count = int(pos_indices.numel())
 
-    print("\nScoring diagnostics:")
+    _log_subheading("Scoring diagnostics")
     if pos_count == 0:
-        print("  No positive anchors available for scoring analysis.")
+        _log_kv("Status", "No positive anchors available")
         return
 
     pos_scores = scores.index_select(0, pos_indices)
@@ -263,22 +296,22 @@ def analyze_scoring_process(
     highest_iou = aligned_iou(decoded[highest_idx].unsqueeze(0), targets[highest_idx, 1:].unsqueeze(0)).item() \
         if targets[highest_idx, 0] == 1 else 0.0
 
-    print(
-        f"  positives={pos_count}, mean_score={mean_score:.3f}, "
-        f"mean_iou={mean_iou:.3f}, score/iou corr={corr:.3f}"
+    _log_kv(
+        "Positive anchors",
+        f"{pos_count} | mean_score={mean_score:.3f} mean_iou={mean_iou:.3f} corr={corr:.3f}"
     )
-    print(
-        f"  best IoU anchor #{best_iou_anchor} -> IoU={best_iou_value:.3f}, "
-        f"score={best_iou_score:.3f}, score rank={best_iou_rank}"
+    _log_kv(
+        "Best IoU",
+        f"anchor #{best_iou_anchor} IoU={best_iou_value:.3f} score={best_iou_score:.3f} rank={best_iou_rank}"
     )
-    print(
-        f"  best score anchor #{best_score_anchor} -> score={best_score_value:.3f}, "
-        f"IoU={best_score_iou:.3f}, score rank={best_score_rank}"
+    _log_kv(
+        "Best score",
+        f"anchor #{best_score_anchor} score={best_score_value:.3f} IoU={best_score_iou:.3f} rank={best_score_rank}"
     )
-    print(
-        f"  global top score anchor #{highest_idx} "
-        f"{'(positive)' if targets[highest_idx,0]==1 else '(background)'} "
-        f"IoU={highest_iou:.3f}, score={sorted_scores[0].item():.3f}"
+    _log_kv(
+        "Global top score",
+        f"anchor #{highest_idx} {'(pos)' if targets[highest_idx,0]==1 else '(bg)'} "
+        f"IoU={highest_iou:.3f} score={sorted_scores[0].item():.3f}"
     )
 
     for k in top_k:
@@ -286,7 +319,7 @@ def analyze_scoring_process(
         selected = sorted_indices[:window]
         selected_targets = targets.index_select(0, selected.long())
         positive_hits = int(selected_targets[:, 0].sum().item())
-        print(f"  positives within top-{window} scores: {positive_hits}/{window}")
+        _log_kv(f"Positives top-{window}", f"{positive_hits}/{window}")
 
 
 def create_debug_visualization(
@@ -355,9 +388,9 @@ def create_debug_visualization(
             if detections is not None and detections.numel() > 0:
                 comparison_np = detections.detach().cpu().numpy()
                 mediapipe_count = len(comparison_np)
-                print(f"{comparison_label}: {len(comparison_np)} detections")
+                _log_info(f"{comparison_label}: {len(comparison_np)} detections")
         except Exception as exc:  # pragma: no cover - debug helper
-            print(f"Secondary detector failed on sample {sample_idx}: {exc}")
+            _log_warn(f"Secondary detector failed on sample {sample_idx}: {exc}")
 
     for box in gt_box_orig:
         draw_box(debug_image, box, (0, 255, 0), "GT original")
@@ -580,7 +613,7 @@ def generate_readme_screenshots(
     """Generate README screenshots via the standard debug visualization pipeline."""
     candidate_indices = _select_multiface_indices(dataset, min_faces, max_candidates)
     if not candidate_indices:
-        print("No images met the multi-face criteria for screenshots.")
+        _log_warn("No images met the multi-face criteria for screenshots")
         return []
 
     saved_paths: List[Path] = []
@@ -638,7 +671,7 @@ def evaluate_dataset_performance(
     df = pd.read_csv(csv_path)
     grouped = df.groupby("image_path", sort=False)
     image_groups = list(grouped)[:max_images]
-    print(f"Evaluating on {len(image_groups)} images...")
+    _log_info(f"Evaluating on {len(image_groups)} images")
 
     total_tp = 0
     total_fp = 0
@@ -651,7 +684,7 @@ def evaluate_dataset_performance(
         full_path = data_root / image_rel_path
         img_bgr = cv2.imread(str(full_path))
         if img_bgr is None:
-            print(f"Warning: failed to load {full_path} during evaluation")
+            _log_warn(f"Failed to load {full_path} during evaluation")
             continue
 
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
@@ -739,16 +772,16 @@ def evaluate_dataset_performance(
 
 def _print_evaluation_summary(label: str, stats: Dict[str, float]) -> None:
     """Pretty-print evaluation metrics in README-friendly format."""
-    print(f"\n=== {label} Evaluation ===")
-    print(f"Images evaluated: {int(stats['images'])}")
-    print(f"Total GT boxes: {int(stats['gt_boxes'])}")
-    print(f"Total detections: {int(stats['detections'])}")
-    print(f"True Positives: {int(stats['tp'])}")
-    print(f"False Positives: {int(stats['fp'])}")
-    print(f"False Negatives: {int(stats['fn'])}")
-    print(f"Precision: {stats['precision']:.4f}")
-    print(f"Recall: {stats['recall']:.4f}")
-    print(f"F1 Score: {stats['f1']:.4f}")
+    _log_heading(f"{label} Evaluation")
+    _log_kv("Images", int(stats['images']))
+    _log_kv("GT boxes", int(stats['gt_boxes']))
+    _log_kv("Detections", int(stats['detections']))
+    _log_kv("True Positives", int(stats['tp']))
+    _log_kv("False Positives", int(stats['fp']))
+    _log_kv("False Negatives", int(stats['fn']))
+    _log_kv("Precision", f"{stats['precision']:.4f}")
+    _log_kv("Recall", f"{stats['recall']:.4f}")
+    _log_kv("F1 Score", f"{stats['f1']:.4f}")
 
 
 def main() -> None:
@@ -874,6 +907,13 @@ def main() -> None:
     #     shutil.rmtree(debug_image_dir)
 
     device = model_utils.setup_device()
+
+    _log_heading("Debug training configuration")
+    _log_kv("CSV", str(csv_path))
+    _log_kv("Data root", args.data_root)
+    _log_kv("Weights", args.weights)
+    _log_kv("Device", str(device))
+    _log_kv("Dataset samples", len(dataset))
     loss_fn = BlazeEarDetectionLoss(**LOSS_DEBUG_KWARGS).to(device)
     reference_anchors, _, _ = generate_reference_anchors()
     reference_anchors = reference_anchors.to(device)
@@ -886,11 +926,11 @@ def main() -> None:
                 device=device,
                 threshold=args.compare_threshold
             )
-            print(f"Loaded comparison detector from {compare_path}")
+            _log_info(f"Loaded comparison detector from {compare_path}")
         except FileNotFoundError:
-            print(f"Warning: comparison weights not found at {compare_path}; skipping overlay")
+            _log_warn(f"Comparison weights not found at {compare_path}; skipping overlay")
     else:
-        print("Comparison overlay disabled (no --compare-weights path provided).")
+        _log_info("Comparison overlay disabled (no --compare-weights path provided)")
 
     model = model_utils.load_model(
         args.weights,
@@ -911,7 +951,7 @@ def main() -> None:
 
     if args.screenshot_output:
         if comparison_detector is None:
-            print("Skipping screenshot export because no comparison detector was provided.")
+            _log_warn("Skipping screenshot export because no comparison detector was provided")
         else:
             screenshot_paths = generate_readme_screenshots(
                 dataset=dataset,
@@ -929,11 +969,11 @@ def main() -> None:
                 averaged_detector=averaged_detector,
                 averaged_threshold=args.averaged_threshold
             )
-            print(f"Generated {len(screenshot_paths)} screenshot(s) in {args.screenshot_output}")
+            _log_info(f"Generated {len(screenshot_paths)} screenshot(s) in {args.screenshot_output}")
 
     if args.run_eval:
         total_params = sum(p.numel() for p in model.parameters())
-        print(f"Total parameters: {total_params:,}")
+        _log_info(f"Total parameters: {total_params:,}")
         eval_stats = evaluate_dataset_performance(
             model=model,
             csv_path=csv_path,
@@ -966,14 +1006,17 @@ def main() -> None:
         top_scores = sample_data["top_scores"]
         top_indices = sample_data["top_indices"]
 
-        print(f"\nLoaded sample {idx} from {csv_path}")
+        sample_meta = dataset.samples[idx]
+        image_rel = sample_meta.get("image_path", "<unknown>")
+        _log_heading(f"Sample {idx}")
+        _log_kv("Image", image_rel)
         describe_tensor("image", image)
 
         positives = anchor_targets[:, 0].sum().item()
-        print(f"Positive anchors: {positives}/896")
+        _log_kv("Positive anchors", f"{positives}/896")
         if positives > 0:
             first_pos = anchor_targets[anchor_targets[:, 0] == 1][:3]
-            print("First positive targets (class, ymin, xmin, ymax, xmax):")
+            _log_subheading("Example positive targets")
             print(first_pos)
 
         describe_tensor("class_predictions", class_predictions)
@@ -982,9 +1025,9 @@ def main() -> None:
         selected_indices, selected_scores = _select_top_indices(
             anchor_targets, class_predictions.squeeze(-1), top_indices, top_scores, top_k=5
         )
-        print("Top-10 anchor scores:")
+        _log_subheading("Top anchor scores")
         for score, anchor_idx in zip(top_scores, top_indices):
-            print(f"  idx={anchor_idx.item():4d} score={score.item():.4f}")
+            _log_kv(f"idx {anchor_idx.item():4d}", f"score={score.item():.4f}")
 
         analyze_scoring_process(
             anchor_targets=anchor_targets,
@@ -1000,34 +1043,37 @@ def main() -> None:
                 decoded_boxes[positive_mask],
                 gt_boxes[positive_mask]
             )
-            print(f"Mean IoU on positive anchors: {mean_iou.item():.4f}")
+            _log_kv("Mean IoU (positives)", f"{mean_iou.item():.4f}")
 
             first_gt = gt_boxes[positive_mask][0]
-            print(f"GT box (first positive): {first_gt}")
+            _log_kv("First GT box", first_gt.tolist())
 
             positive_indices = torch.nonzero(positive_mask).squeeze(1)
-            print("Positive anchor indices:", positive_indices.tolist())
+            _log_kv("Positive anchors idx", positive_indices.tolist())
 
             pos_boxes = decoded_boxes[positive_indices]
             gt_iou = box_iou(first_gt, pos_boxes)
             for anchor_idx, (box, iou) in zip(positive_indices.tolist(), zip(pos_boxes.tolist(), gt_iou.tolist())):
-                print(f"  Anchor {anchor_idx}: box={box}, IoU={iou:.4f}")
+                _log_kv(f"Anchor {anchor_idx}", f"IoU={iou:.4f} box={box}")
 
             displayed_indices = torch.tensor(selected_indices, dtype=torch.long, device=decoded_boxes.device)
             top_iou = box_iou(first_gt, decoded_boxes[displayed_indices])
             top_iou_list = top_iou.tolist()
             if isinstance(top_iou_list, float):
                 top_iou_list = [top_iou_list]
-            print("IoU of displayed anchors relative to first GT:")
+            _log_subheading("Displayed anchor IoU vs first GT")
             for anchor_idx, score, box, iou in zip(
                 displayed_indices.tolist(),
                 selected_scores,
                 decoded_boxes[displayed_indices].tolist(),
                 top_iou_list
             ):
-                print(f"  idx={anchor_idx:4d} score={score:.4f} box={box} IoU={iou:.4f}")
+                _log_kv(
+                    f"idx {anchor_idx:4d}",
+                    f"score={score:.4f} IoU={iou:.4f} box={box}"
+                )
         else:
-            print("No positive anchors in this sample.")
+            _log_info("No positive anchors in this sample")
 
         debug_path = create_debug_visualization(
             dataset=dataset,
@@ -1044,7 +1090,7 @@ def main() -> None:
             averaged_detector=averaged_detector,
             averaged_threshold=args.averaged_threshold
         )
-        print(f"Saved debug visualization to {debug_path}")
+        _log_info(f"Saved debug visualization to {debug_path}")
 
 
 if __name__ == "__main__":
