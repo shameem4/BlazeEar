@@ -645,7 +645,8 @@ class BlazeEarTrainer:
         self,
         num_epochs: int,
         save_every: int = 10,
-        validate_every: int = 1
+        validate_every: int = 1,
+        val_compute_map: bool = True
     ):
         """
         Run full training loop.
@@ -654,6 +655,7 @@ class BlazeEarTrainer:
             num_epochs: Number of epochs to train
             save_every: Save checkpoint every N epochs
             validate_every: Run validation every N epochs
+            val_compute_map: Whether to compute mAP during validation passes
         """
         print(f'\nStarting training for {num_epochs} epochs')
         print(f'Device: {self.device}')
@@ -689,7 +691,7 @@ class BlazeEarTrainer:
             if self.val_loader and (epoch + 1) % validate_every == 0:
                 batch_size = self.val_loader.batch_size or 32
                 val_max_batches = max(1, 200 // batch_size)
-                val_results = self.validate(compute_map=False, max_batches=val_max_batches)
+                val_results = self.validate(compute_map=val_compute_map, max_batches=val_max_batches)
                 print(f'  Val   | Loss: {val_results["total"]:.5f} | '
                       f'Pos Acc: {val_results["positive_acc"]:.4f} | '
                       f'Bg Acc: {val_results["background_acc"]:.4f}'
@@ -710,7 +712,7 @@ class BlazeEarTrainer:
             # Use ~500 samples for final validation (500 / batch_size batches)
             batch_size = self.val_loader.batch_size or 32
             max_batches = max(1, 500 // batch_size)
-            final_val_metrics = self.validate(compute_map=True, max_batches=max_batches)
+            final_val_metrics = self.validate(compute_map=val_compute_map, max_batches=max_batches)
         
         # Save final checkpoint
         self.save_checkpoint(f'{self.model_name}_final.pth')
@@ -801,9 +803,9 @@ def main():
                         help='Learning rate')
     parser.add_argument('--weight-decay', type=float, default=DEFAULT_WEIGHT_DECAY,
                         help='Weight decay')
-    parser.add_argument('--metric-threshold', type=float, default=0.4,
-                        help='Score threshold used when measuring train-time metrics (lower increases recall)')
-    parser.add_argument('--eval-score-threshold', type=float, default=0.08,
+    parser.add_argument('--metric-threshold', type=float, default=0.5,
+                        help='Score threshold used when measuring train-time metrics (balances precision/recall)')
+    parser.add_argument('--eval-score-threshold', type=float, default=0.1,
                         help='Minimum score for a detection to be considered during evaluation')
     parser.add_argument('--eval-nms-threshold', type=float, default=0.5,
                         help='IoU threshold for NMS when computing mAP/IoU')
@@ -811,6 +813,8 @@ def main():
                         help='Maximum number of candidate detections kept per image before scoring metrics')
     parser.add_argument('--train-map', action='store_true',
                         help='Compute mAP during training (slower)')
+    parser.add_argument('--no-val-map', action='store_true',
+                        help='Skip computing mAP during validation to save time')
     
     # Loss arguments
     parser.add_argument('--use-focal-loss', dest='use_focal_loss', action='store_true', 
@@ -821,14 +825,14 @@ def main():
                         help='Focal loss alpha parameter')
     parser.add_argument('--focal-gamma', type=float, default=1.5,
                         help='Focal loss gamma parameter')
-    parser.add_argument('--detection-weight', type=float, default=200.0,
+    parser.add_argument('--detection-weight', type=float, default=180.0,
                         help='Weight for detection/regression loss (higher favors box quality)')
-    parser.add_argument('--classification-weight', type=float, default=40.0,
+    parser.add_argument('--classification-weight', type=float, default=55.0,
                         help='Weight for background classification loss')
-    parser.add_argument('--positive-classification-weight', type=float, default=80.0,
+    parser.add_argument('--positive-classification-weight', type=float, default=70.0,
                         help='Weight for positive classification loss (encourages confident positives)')
-    parser.add_argument('--hard-negative-ratio', type=float, default=1.25,
-                        help='Ratio of negatives to positives in hard mining (lower keeps more positives)')
+    parser.add_argument('--hard-negative-ratio', type=float, default=1.5,
+                        help='Ratio of negatives to positives in hard mining')
     parser.set_defaults(use_focal_loss=True)
     
     # System arguments
@@ -858,6 +862,7 @@ def main():
                         help='Learning rate when backbone2 is unfrozen')
     
     args = parser.parse_args()
+    val_compute_map = not args.no_val_map
     
     # Check device
     if args.device == 'cuda' and not torch.cuda.is_available():
@@ -883,6 +888,7 @@ def main():
         f'cls_positive={args.positive_classification_weight}'
     )
     print(f'Hard negative ratio: {args.hard_negative_ratio}:1 (neg:pos)')
+    print(f'Validation mAP logging: {"on" if val_compute_map else "off"}')
     print('=' * 60)
     
     # Create model with requested initialization
@@ -1053,7 +1059,8 @@ def main():
 
         trainer.train(
             num_epochs=phase['epochs'],
-            save_every=args.save_every
+            save_every=args.save_every,
+            val_compute_map=val_compute_map
         )
 
 
