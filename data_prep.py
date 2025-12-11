@@ -12,10 +12,11 @@ Creates a unified master CSV and train/val splits under data/splits.
 import argparse
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 import numpy as np
 import pandas as pd
+from pandas import Series as PandasSeries
 from PIL import Image
 from tqdm import tqdm
 
@@ -23,6 +24,29 @@ from utils.data_decoder import find_all_annotations, decode_all_annotations
 from utils.data_utils import split_dataframe_by_images
 
 from ultralytics import YOLO
+
+
+def _to_numpy(array_like: Any) -> np.ndarray:
+    """Convert various Ultralytics/torch objects to numpy arrays."""
+    obj: Any = array_like
+
+    data_attr = getattr(obj, "data", None)
+    if data_attr is not None and not isinstance(obj, (np.ndarray, list, tuple)):
+        obj = data_attr
+
+    detach_fn = getattr(obj, "detach", None)
+    if callable(detach_fn):
+        obj = detach_fn()
+
+    cpu_fn = getattr(obj, "cpu", None)
+    if callable(cpu_fn):
+        obj = cpu_fn()
+
+    numpy_fn = getattr(obj, "numpy", None)
+    if callable(numpy_fn):
+        return np.asarray(numpy_fn())
+
+    return np.asarray(obj)
 
 
 def _bbox_is_normalized(bbox: List[float]) -> bool:
@@ -115,8 +139,10 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
                 for r in results:
                     if r.keypoints is None:
                         continue
-                    keypoints_data = r.keypoints.data.cpu().numpy()
-                    boxes = r.boxes.xyxy.cpu().numpy()
+                    kp_source = r.keypoints.data if hasattr(r.keypoints, 'data') else r.keypoints
+                    keypoints_data = _to_numpy(kp_source)
+                    box_source = r.boxes.xyxy if hasattr(r.boxes, 'xyxy') else r.boxes
+                    boxes = _to_numpy(box_source)
                     for kp, box in zip(keypoints_data, boxes):
                         l_ear, r_ear = kp[3], kp[4]
                         if box[0] <= x <= box[2] and box[1] <= y <= box[3]:
@@ -138,6 +164,7 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
                     'h': int(round(h)),
                     'earside': earside,
                     'source': source_name,
+                    'confidence': 1.0,
                 })
 
                 if image_path not in ear_detection_cache:
@@ -157,8 +184,10 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
                             boxes_xyxy = np.empty((0, 4), dtype=np.float32)
                             scores = np.empty((0,), dtype=np.float32)
                         else:
-                            boxes_xyxy = res.boxes.xyxy.cpu().numpy()
-                            scores = res.boxes.conf.cpu().numpy()
+                            boxes_tensor = res.boxes.xyxy if hasattr(res.boxes, 'xyxy') else res.boxes
+                            scores_tensor = res.boxes.conf if hasattr(res.boxes, 'conf') else res.boxes
+                            boxes_xyxy = _to_numpy(boxes_tensor)
+                            scores = _to_numpy(scores_tensor)
 
                     ear_detection_cache[image_path] = (boxes_xyxy, scores)
 
@@ -191,7 +220,8 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
         print(f"Skipped {missing_images} annotations referencing missing images")
 
     if not all_rows:
-        return pd.DataFrame(columns=['image_path', 'x1', 'y1', 'w', 'h', 'earside', 'source'])
+        columns = pd.Index(['image_path', 'x1', 'y1', 'w', 'h', 'earside', 'source', 'confidence'])
+        return pd.DataFrame([], columns=columns)
 
     df = pd.DataFrame(all_rows)
     df = df.drop_duplicates(subset=['image_path', 'x1', 'y1', 'w', 'h']).reset_index(drop=True)
@@ -223,8 +253,9 @@ def print_statistics(df: pd.DataFrame, split_name: str = "Dataset") -> None:
     print(f"{split_name} Statistics")
     print(f"{'='*60}")
 
-    num_images = df['image_path'].nunique()
-    num_ears = len(df)
+    column = cast(PandasSeries, df['image_path'])
+    num_images = int(column.nunique())
+    num_ears = int(len(df))
 
     print(f"Total images: {num_images:,}")
     print(f"Total ear annotations: {num_ears:,}")
@@ -244,7 +275,8 @@ def print_statistics(df: pd.DataFrame, split_name: str = "Dataset") -> None:
     if 'source' in df.columns:
         print(f"\nSource breakdown:")
         for source, count in df['source'].value_counts().items():
-            img_count = df[df['source'] == source]['image_path'].nunique()
+            img_paths = cast(PandasSeries, df.loc[df['source'] == source, 'image_path'])
+            img_count = int(img_paths.nunique())
             print(f"  {source}: {count:,} ears from {img_count:,} images")
 
     # Box size statistics
