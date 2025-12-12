@@ -208,6 +208,37 @@ def _boxes_are_near(
     return center_close and area_ratio >= min_area_ratio
 
 
+def _box_covers_target(
+    candidate: Tuple[float, float, float, float],
+    target: Tuple[float, float, float, float],
+    min_coverage: float = 0.8
+) -> bool:
+    """Return True if candidate covers at least min_coverage of target area."""
+    cx, cy, cw, ch = candidate
+    tx, ty, tw, th = target
+    if cw <= 0 or ch <= 0 or tw <= 0 or th <= 0:
+        return False
+
+    cx2 = cx + cw
+    cy2 = cy + ch
+    tx2 = tx + tw
+    ty2 = ty + th
+
+    inter_w = min(cx2, tx2) - max(cx, tx)
+    if inter_w <= 0:
+        return False
+    inter_h = min(cy2, ty2) - max(cy, ty)
+    if inter_h <= 0:
+        return False
+
+    inter_area = inter_w * inter_h
+    target_area = tw * th
+    if target_area <= 0:
+        return False
+
+    return (inter_area / target_area) >= min_coverage
+
+
 def _detection_has_pose_support(
     det_box: np.ndarray,
     pose_entries: List[PoseEntry],
@@ -323,12 +354,25 @@ def _maybe_add_pose_boxes_for_image(
                 float(candidate['w']),
                 float(candidate['h'])
             )
-            if any(
-                _boxes_are_near(
+            skip_candidate = False
+            for box in existing:
+                existing_box_tuple = (
+                    float(box[0]),
+                    float(box[1]),
+                    float(box[2]),
+                    float(box[3])
+                )
+                if _box_covers_target(candidate_box_tuple, existing_box_tuple):
+                    skip_candidate = True
+                    break
+                if _boxes_are_near(
                     candidate_box_tuple,
-                    (float(box[0]), float(box[1]), float(box[2]), float(box[3]))
-                ) for box in existing
-            ):
+                    existing_box_tuple,
+                    max_center_distance_frac=0.55
+                ):
+                    skip_candidate = True
+                    break
+            if skip_candidate:
                 continue
             all_rows.append(candidate)
             gt_boxes[rel_path].append(bbox)
