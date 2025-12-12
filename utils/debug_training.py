@@ -473,6 +473,102 @@ def create_debug_visualization(
     return debug_path
 
 
+def _boxes_are_near_xyxy_np(
+    candidate: np.ndarray,
+    boxes: np.ndarray,
+    max_center_distance_frac: float = 0.55,
+    min_area_ratio: float = 0.35
+) -> np.ndarray:
+    """Return mask of boxes whose centers/areas closely match the candidate."""
+    if boxes.size == 0:
+        return np.zeros((0,), dtype=bool)
+
+    candidate = candidate.astype(np.float32, copy=False)
+    boxes = boxes.astype(np.float32, copy=False)
+
+    cand_h = max(1e-6, candidate[2] - candidate[0])
+    cand_w = max(1e-6, candidate[3] - candidate[1])
+    cand_area = cand_h * cand_w
+    cand_center_y = (candidate[0] + candidate[2]) / 2.0
+    cand_center_x = (candidate[1] + candidate[3]) / 2.0
+
+    box_h = np.clip(boxes[:, 2] - boxes[:, 0], 1e-6, None)
+    box_w = np.clip(boxes[:, 3] - boxes[:, 1], 1e-6, None)
+    box_area = box_h * box_w
+    box_center_y = (boxes[:, 0] + boxes[:, 2]) / 2.0
+    box_center_x = (boxes[:, 1] + boxes[:, 3]) / 2.0
+
+    center_distance = np.sqrt(
+        (cand_center_y - box_center_y) ** 2 + (cand_center_x - box_center_x) ** 2
+    )
+    other_max_dim = np.maximum(box_h, box_w)
+    max_dim = np.maximum(np.maximum(cand_h, cand_w), other_max_dim)
+    center_close = center_distance <= (max_center_distance_frac * max_dim)
+
+    area_ratio = np.minimum(cand_area, box_area) / np.maximum(cand_area, box_area)
+    return center_close & (area_ratio >= min_area_ratio)
+
+
+def _box_covers_target_xyxy_np(
+    candidate: np.ndarray,
+    boxes: np.ndarray,
+    min_coverage: float = 0.8
+) -> np.ndarray:
+    """Return mask for boxes that are mostly covered by candidate."""
+    if boxes.size == 0:
+        return np.zeros((0,), dtype=bool)
+
+    candidate = candidate.astype(np.float32, copy=False)
+    boxes = boxes.astype(np.float32, copy=False)
+
+    y_min = np.maximum(candidate[0], boxes[:, 0])
+    x_min = np.maximum(candidate[1], boxes[:, 1])
+    y_max = np.minimum(candidate[2], boxes[:, 2])
+    x_max = np.minimum(candidate[3], boxes[:, 3])
+
+    inter_h = np.clip(y_max - y_min, 0.0, None)
+    inter_w = np.clip(x_max - x_min, 0.0, None)
+    inter_area = inter_h * inter_w
+    target_area = np.clip((boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1]), 1e-6, None)
+    coverage = inter_area / target_area
+    return coverage >= min_coverage
+
+
+def _filter_duplicate_boxes(
+    boxes: np.ndarray,
+    scores: np.ndarray,
+    center_distance_frac: float = 0.55,
+    min_area_ratio: float = 0.35,
+    min_coverage: float = 0.8
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Suppress duplicate predictions that differ mainly by scale."""
+    if boxes.shape[0] <= 1:
+        return boxes, scores
+
+    order = np.argsort(scores)[::-1]
+    keep: List[int] = []
+
+    for idx in order:
+        candidate = boxes[idx]
+        duplicate = False
+        for kept_idx in keep:
+            kept_box = boxes[kept_idx]
+            if _box_covers_target_xyxy_np(kept_box, candidate[np.newaxis, :], min_coverage)[0]:
+                duplicate = True
+                break
+            if _boxes_are_near_xyxy_np(kept_box, candidate[np.newaxis, :], center_distance_frac, min_area_ratio)[0]:
+                duplicate = True
+                break
+        if not duplicate:
+            keep.append(idx)
+
+    if not keep:
+        return boxes[:0], scores[:0]
+
+    keep_array = np.array(keep, dtype=np.int64)
+    return boxes[keep_array], scores[keep_array]
+
+
 def _prepare_inference_tensor(
     image_rgb: np.ndarray,
     target_size: Tuple[int, int] = (128, 128)
@@ -536,7 +632,11 @@ def _run_detector_on_image(
         pad_top,
         pad_left
     )
-    return mapped, scores.astype(np.float32)
+    filtered_boxes, filtered_scores = _filter_duplicate_boxes(
+        mapped.astype(np.float32, copy=False),
+        scores.astype(np.float32, copy=False)
+    )
+    return filtered_boxes, filtered_scores
 
 
 def _select_multiface_indices(

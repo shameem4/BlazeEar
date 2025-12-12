@@ -60,6 +60,10 @@ from utils.config import (
     DEFAULT_WEIGHT_DECAY
 )
 
+NEAR_CENTER_DISTANCE_FRAC = 0.55
+NEAR_MIN_AREA_RATIO = 0.35
+NEAR_MIN_COVERAGE = 0.8
+
 
 def _dataset_length(loader: DataLoader) -> int:
     """Return the size of a DataLoader's underlying dataset."""
@@ -163,6 +167,9 @@ class BlazeEarTrainer:
         self.max_eval_detections = max_eval_detections
         self.max_map_candidates = 200
         self.metric_threshold = metric_threshold
+        self.duplicate_center_distance_frac = NEAR_CENTER_DISTANCE_FRAC
+        self.duplicate_min_area_ratio = NEAR_MIN_AREA_RATIO
+        self.duplicate_min_coverage = NEAR_MIN_COVERAGE
     
     def _get_training_outputs(self, images: torch.Tensor) -> tuple:
         """
@@ -225,6 +232,67 @@ class BlazeEarTrainer:
         union = area1[:, None] + area2[None, :] - intersection
         return intersection / (union + 1e-6)
 
+    @staticmethod
+    def _boxes_are_near_xyxy(
+        candidate: torch.Tensor,
+        boxes: torch.Tensor,
+        max_center_distance_frac: float,
+        min_area_ratio: float
+    ) -> torch.Tensor:
+        """Return mask for boxes whose centers and areas nearly match candidate."""
+        if boxes.numel() == 0:
+            return torch.zeros((0,), dtype=torch.bool, device=candidate.device)
+
+        cand_h = torch.clamp(candidate[2] - candidate[0], min=1e-6)
+        cand_w = torch.clamp(candidate[3] - candidate[1], min=1e-6)
+        cand_area = cand_h * cand_w
+        cand_center_y = (candidate[0] + candidate[2]) / 2.0
+        cand_center_x = (candidate[1] + candidate[3]) / 2.0
+
+        box_h = torch.clamp(boxes[:, 2] - boxes[:, 0], min=1e-6)
+        box_w = torch.clamp(boxes[:, 3] - boxes[:, 1], min=1e-6)
+        box_area = box_h * box_w
+        box_center_y = (boxes[:, 0] + boxes[:, 2]) / 2.0
+        box_center_x = (boxes[:, 1] + boxes[:, 3]) / 2.0
+
+        center_distance = torch.sqrt(
+            (cand_center_y - box_center_y) ** 2 + (cand_center_x - box_center_x) ** 2
+        )
+        max_dim = torch.maximum(
+            torch.maximum(cand_h, cand_w),
+            torch.maximum(box_h, box_w)
+        )
+        center_close = center_distance <= (max_center_distance_frac * max_dim)
+
+        min_area = torch.minimum(cand_area, box_area)
+        max_area = torch.maximum(cand_area, box_area)
+        area_ratio = min_area / (max_area + 1e-6)
+
+        return center_close & (area_ratio >= min_area_ratio)
+
+    @staticmethod
+    def _box_covers_target_xyxy(
+        candidate: torch.Tensor,
+        boxes: torch.Tensor,
+        min_coverage: float
+    ) -> torch.Tensor:
+        """Return mask for boxes where candidate covers most of the target area."""
+        if boxes.numel() == 0:
+            return torch.zeros((0,), dtype=torch.bool, device=candidate.device)
+
+        y_min = torch.maximum(candidate[0], boxes[:, 0])
+        x_min = torch.maximum(candidate[1], boxes[:, 1])
+        y_max = torch.minimum(candidate[2], boxes[:, 2])
+        x_max = torch.minimum(candidate[3], boxes[:, 3])
+
+        inter_h = torch.clamp(y_max - y_min, min=0)
+        inter_w = torch.clamp(x_max - x_min, min=0)
+        inter_area = inter_h * inter_w
+
+        target_area = torch.clamp((boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1]), min=1e-6)
+        coverage = inter_area / target_area
+        return coverage >= min_coverage
+
     def _nms(
         self,
         boxes: torch.Tensor,
@@ -248,11 +316,27 @@ class BlazeEarTrainer:
                 break
 
             remaining = order[1:]
+            current_box = boxes[current]
+            remaining_boxes = boxes[remaining]
             ious = self._pairwise_iou(
-                boxes[current].unsqueeze(0),
-                boxes[remaining]
+                current_box.unsqueeze(0),
+                remaining_boxes
             ).squeeze(0)
-            mask = ious <= iou_threshold
+
+            coverage_mask = self._box_covers_target_xyxy(
+                current_box,
+                remaining_boxes,
+                self.duplicate_min_coverage
+            )
+            near_mask = self._boxes_are_near_xyxy(
+                current_box,
+                remaining_boxes,
+                self.duplicate_center_distance_frac,
+                self.duplicate_min_area_ratio
+            )
+
+            suppress_mask = (ious > iou_threshold) | coverage_mask | near_mask
+            mask = ~suppress_mask
             order = remaining[mask]
 
         return torch.stack(keep) if keep else torch.empty(0, dtype=torch.long, device=boxes.device)
