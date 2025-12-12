@@ -29,7 +29,7 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 import time
 from pathlib import Path
 from collections.abc import Sized
-from typing import Dict, List, Optional, cast
+from typing import Callable, Dict, List, Optional, TypedDict, cast
 
 import torch
 import torch.nn as nn
@@ -83,7 +83,7 @@ class BlazeEarTrainer:
 
     def __init__(
         self,
-        model: BlazeEar,
+        model: nn.Module,
         train_loader: DataLoader,
         val_loader: Optional[DataLoader] = None,
         loss_fn: Optional[BlazeEarDetectionLoss] = None,
@@ -115,7 +115,7 @@ class BlazeEarTrainer:
             model_name: Name for saving checkpoints
             scale: Image scale for decoding (128 for front, 256 for back)
         """
-        self.model = model.to(device)
+        self.model: nn.Module = model.to(device)
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.device = device
@@ -176,7 +176,7 @@ class BlazeEarTrainer:
         self.duplicate_min_area_ratio = NEAR_MIN_AREA_RATIO
         self.duplicate_min_coverage = NEAR_MIN_COVERAGE
     
-    def _get_training_outputs(self, images: torch.Tensor) -> tuple:
+    def _get_training_outputs(self, images: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Get raw training outputs from BlazeEar model.
 
@@ -191,8 +191,12 @@ class BlazeEarTrainer:
             anchor_predictions: [B, 896, 4] box predictions
         """
         # Use training output method that bypasses NMS
-        if hasattr(self.model, 'get_training_outputs'):
-            raw_boxes, raw_scores = self.model.get_training_outputs(images)
+        get_outputs = getattr(self.model, "get_training_outputs", None)
+        if callable(get_outputs):
+            raw_boxes, raw_scores = cast(
+                Callable[[torch.Tensor], tuple[torch.Tensor, torch.Tensor]],
+                get_outputs,
+            )(images)
             # raw_boxes: [B, 896, 16] or [B, 896, 4]
             # raw_scores: [B, 896, 1] - raw logits
 
@@ -425,7 +429,7 @@ class BlazeEarTrainer:
 
             if compute_map_flag:
                 batch_size = class_predictions.shape[0]
-                map_scores = []
+                map_scores: List[float] = []
 
                 fallback_gt = None
                 if gt_boxes_tensor is None or gt_box_counts is None:
@@ -497,11 +501,21 @@ class BlazeEarTrainer:
             Dictionary of average losses and metrics for the epoch
         """
         self.model.train()
-        epoch_losses = {}
-        epoch_metrics = {'positive_acc': 0.0, 'background_acc': 0.0, 'mean_iou': 0.0, 'map_50': 0.0}
+        epoch_losses: Dict[str, float] = {}
+        epoch_metrics: Dict[str, float] = {
+            'positive_acc': 0.0,
+            'background_acc': 0.0,
+            'mean_iou': 0.0,
+            'map_50': 0.0
+        }
         num_batches = 0
         num_metric_batches = 0
-        last_metrics = {'positive_acc': 0.0, 'background_acc': 0.0, 'mean_iou': 0.0, 'map_50': 0.0}
+        last_metrics: Dict[str, float] = {
+            'positive_acc': 0.0,
+            'background_acc': 0.0,
+            'mean_iou': 0.0,
+            'map_50': 0.0
+        }
         
         batch_time = time.time()
         
@@ -1021,16 +1035,20 @@ def main():
         init_weights=args.init_weights,
         weights_path=args.weights_path
     )
-    if args.use_compile:
+    compile_fn = getattr(torch, "compile", None)
+    if args.use_compile and callable(compile_fn):
         try:
-            model = torch.compile(model)
+            model = cast(Callable[[nn.Module], nn.Module], compile_fn)(model)
             print("torch.compile enabled.")
         except Exception as exc:
             print(f"Warning: torch.compile failed, continuing uncompiled: {exc}")
+    elif args.use_compile:
+        print("Warning: torch.compile not available; skipping.")
     print(f'Model parameters: {sum(p.numel() for p in model.parameters()):,}')
     freeze_kp = not args.no_freeze_keypoint_heads
-    if freeze_kp and hasattr(model, "freeze_keypoint_regressors"):
-        model.freeze_keypoint_regressors()
+    freeze_kp_fn = getattr(model, "freeze_keypoint_regressors", None)
+    if freeze_kp and callable(freeze_kp_fn):
+        cast(Callable[[], None], freeze_kp_fn)()
         print("Keypoint regressors frozen (no grad / weight decay).")
 
     def apply_freeze_state(backbone1_grad: bool, backbone2_grad: bool, heads_grad: bool) -> None:
@@ -1042,8 +1060,8 @@ def main():
                 param.requires_grad_(backbone2_grad)
             else:
                 param.requires_grad_(heads_grad)
-        if freeze_kp and hasattr(model, "freeze_keypoint_regressors"):
-            model.freeze_keypoint_regressors()
+        if freeze_kp and callable(freeze_kp_fn):
+            cast(Callable[[], None], freeze_kp_fn)()
 
     def build_optimizer_for_lr(lr_value: float) -> optim.Optimizer:
         params = [p for p in model.parameters() if p.requires_grad]
@@ -1098,8 +1116,14 @@ def main():
     )
     
     # Build freeze-thaw phases
+    class TrainPhase(TypedDict):
+        name: str
+        epochs: int
+        lr: float
+        grads: tuple[bool, bool, bool]
+
     remaining_epochs = args.epochs
-    phases: List[dict] = []
+    phases: List[TrainPhase] = []
 
     def add_phase(name: str, requested_epochs: int, lr_value: float, grads: tuple[bool, bool, bool]) -> None:
         nonlocal remaining_epochs
