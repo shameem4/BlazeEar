@@ -174,7 +174,6 @@ def _is_contained_in_existing(candidate: Dict[str, Any], boxes: List[Tuple[int, 
             return True
     return False
 
-
 def _boxes_are_near(
     box_a: Tuple[float, float, float, float],
     box_b: Tuple[float, float, float, float],
