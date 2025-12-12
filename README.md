@@ -266,9 +266,17 @@ Qualitative samples are exported to `runs/logs/debug_images/`. These PNGs show p
 
 Examples (from this run):
 
-![Qualitative example 1](assets/qual_example_1.png)
+![Qualitative example](assets/frontal.png)
 
-![Qualitative example 2](assets/qual_example_2.png)
+![Qualitative example](assets/profile.png)
+
+![Qualitative example](assets/multi_face.png)
+
+![Qualitative example](assets/crowd_small.png)
+
+![Qualitative example](assets/qual_example_1.png)
+
+![Qualitative example](assets/qual_example_2.png)
 
 ---
 
