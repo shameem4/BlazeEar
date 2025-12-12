@@ -55,6 +55,100 @@ LOG_LINE = "=" * 70
 
 def _log_heading(title: str, char: str = "=") -> None:
     line = (char * len(title)) if len(title) >= len(LOG_LINE) else LOG_LINE
+    print(f"\n{line}\n{title}\n{line}")
+
+
+def _log_subheading(title: str) -> None:
+    print(f"\n-- {title} --")
+
+
+LogValue = Union[str, int, float, List[str], List[int], List[float]]
+
+
+def _log_kv(label: str, value: LogValue) -> None:
+    if isinstance(value, list):
+        printable = ", ".join(str(item) for item in value)
+    else:
+        printable = str(value)
+    print(f"  {label}: {printable}")
+
+
+def _log_info(message: str) -> None:
+    print(f"[INFO] {message}")
+
+
+def _log_warn(message: str) -> None:
+    print(f"[WARN] {message}")
+
+
+def describe_tensor(name: str, tensor: torch.Tensor) -> None:
+    tensor = tensor.detach().cpu()
+    print(
+        f"{name}: shape={tuple(tensor.shape)}, "
+        f"min={tensor.min().item():.4f}, max={tensor.max().item():.4f}, "
+        f"mean={tensor.mean().item():.4f}, std={tensor.std().item():.4f}"
+    )
+
+
+def box_iou(gt: torch.Tensor, pred: torch.Tensor) -> torch.Tensor:
+    """Compute IoU between one GT box and N predicted boxes."""
+    gt = gt.unsqueeze(0)
+    ymin = torch.maximum(gt[:, 0], pred[:, 0])
+    xmin = torch.maximum(gt[:, 1], pred[:, 1])
+    ymax = torch.minimum(gt[:, 2], pred[:, 2])
+    xmax = torch.minimum(gt[:, 3], pred[:, 3])
+
+    inter_h = torch.clamp(ymax - ymin, min=0)
+    inter_w = torch.clamp(xmax - xmin, min=0)
+    intersection = inter_h * inter_w
+
+    gt_area = (gt[:, 2] - gt[:, 0]) * (gt[:, 3] - gt[:, 1])
+    pred_area = (pred[:, 2] - pred[:, 0]) * (pred[:, 3] - pred[:, 1])
+    union = gt_area + pred_area - intersection + 1e-6
+    return (intersection / union).squeeze(0)
+
+
+def aligned_iou(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """Compute IoU for aligned [N,4] tensors."""
+    ymin = torch.maximum(pred[:, 0], target[:, 0])
+    xmin = torch.maximum(pred[:, 1], target[:, 1])
+    ymax = torch.minimum(pred[:, 2], target[:, 2])
+    xmax = torch.minimum(pred[:, 3], target[:, 3])
+
+    inter_h = torch.clamp(ymax - ymin, min=0)
+    inter_w = torch.clamp(xmax - xmin, min=0)
+    intersection = inter_h * inter_w
+
+    pred_area = torch.clamp(pred[:, 2] - pred[:, 0], min=0) * torch.clamp(pred[:, 3] - pred[:, 1], min=0)
+    target_area = torch.clamp(target[:, 2] - target[:, 0], min=0) * torch.clamp(target[:, 3] - target[:, 1], min=0)
+    union = pred_area + target_area - intersection + 1e-6
+    return intersection / union
+
+
+def run_anchor_unit_tests() -> None:
+    _log_subheading("Anchor sanity checks")
+    box = np.array([[0.4, 0.4, 0.6, 0.6]], dtype=np.float32)
+    small, big = encode_boxes_to_anchors(box, input_size=128)
+    targets = flatten_anchor_targets(small, big)
+    positives = np.where(targets[:, 0] == 1)[0]
+    if positives.size == 0:
+        raise AssertionError("No anchors assigned to centered box")
+    np.testing.assert_allclose(targets[positives[0], 1:], box[0], atol=1e-3)
+    _log_kv(
+        "Centered box",
+        f"PASS anchor #{positives[0]} coords {targets[positives[0], 1:]}"
+    )
+
+    multi_boxes = np.array([
+        [0.1, 0.1, 0.2, 0.2],
+        [0.7, 0.7, 0.85, 0.85]
+    ], dtype=np.float32)
+    small, big = encode_boxes_to_anchors(multi_boxes, input_size=128)
+    targets = flatten_anchor_targets(small, big)
+    assigned = np.where(targets[:, 0] == 1)[0]
+    if assigned.size < 2:
+        raise AssertionError("Not all boxes were assigned to anchors")
+    _log_kv("Multiple boxes", f"PASS anchors {assigned.tolist()}")
 
 
 def run_decode_unit_test(loss_fn: BlazeEarDetectionLoss) -> None:
