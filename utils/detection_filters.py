@@ -5,9 +5,11 @@ from typing import Tuple
 
 import numpy as np
 
-NEAR_CENTER_DISTANCE_FRAC = 0.55
-NEAR_MIN_AREA_RATIO = 0.35
-NEAR_MIN_COVERAGE = 0.8
+from utils.config import (
+    NEAR_CENTER_DISTANCE_FRAC,
+    NEAR_MIN_AREA_RATIO,
+    NEAR_MIN_COVERAGE,
+)
 
 
 def boxes_are_near_xyxy_np(

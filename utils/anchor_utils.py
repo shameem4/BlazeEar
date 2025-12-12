@@ -42,6 +42,11 @@ def generate_reference_anchors(
         small_anchors: [512, 4] tensor for 16x16 grid
         big_anchors: [384, 4] tensor for 8x8 grid
     """
+    if not fixed_anchor_size:
+        raise NotImplementedError(
+            "Variable-size anchors are not implemented; set fixed_anchor_size=True."
+        )
+
     # Small anchors: 16x16 grid, size 0.0625 (1/16)
     # Centers at 0.03125, 0.09375, ..., 0.96875
     small_boxes = torch.linspace(0.03125, 0.96875, 16)

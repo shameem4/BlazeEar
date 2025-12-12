@@ -6,6 +6,7 @@ import cv2
 
 from blazebase import BlazeBase
 from utils.iou import intersect_torch, jaccard_torch, overlap_similarity_torch
+from utils.box_utils import decode_boxes_with_keypoints
 
 class BlazeDetector(BlazeBase):
     """ Base class for detector models.
@@ -343,41 +344,16 @@ class BlazeDetector(BlazeBase):
         raw_boxes: torch.Tensor,
         anchors: torch.Tensor
     ) -> torch.Tensor:
-        """Converts the predictions into actual coordinates using
-        the anchor boxes. Processes the entire batch at once.
-
-        Following vincent1bt/blazeface-tensorflow decoding (no anchor w/h scaling):
-        - x_center = anchor_x + (pred_x / scale)
-        - y_center = anchor_y + (pred_y / scale)
-        - w = pred_w / scale
-        - h = pred_h / scale
-
-        Output format: [ymin, xmin, ymax, xmax] (MediaPipe box convention)
-        """
-        boxes = torch.zeros_like(raw_boxes)
-
-        # Decode center and size (raw layout = [dx, dy, w, h])
-        x_center = raw_boxes[..., 0] / self.x_scale * anchors[:, 2] + anchors[:, 0]
-        y_center = raw_boxes[..., 1] / self.y_scale * anchors[:, 3] + anchors[:, 1]
-
-        w = raw_boxes[..., 2] / self.w_scale * anchors[:, 2]
-        h = raw_boxes[..., 3] / self.h_scale * anchors[:, 3]
-
-        boxes[..., 0] = y_center - h / 2.  # ymin
-        boxes[..., 1] = x_center - w / 2.  # xmin
-        boxes[..., 2] = y_center + h / 2.  # ymax
-        boxes[..., 3] = x_center + w / 2.  # xmax
-
-        # Decode keypoint coordinates (vectorized)
-        # MediaPipe stores x,y pairs after the box coords
-        if hasattr(self, "num_keypoints") and self.num_keypoints > 0:
-            kp_end = 4 + self.num_keypoints * 2
-            # x coordinates are at indices 4, 6, 8, ... (even offsets from 4)
-            # y coordinates are at indices 5, 7, 9, ... (odd offsets from 4)
-            boxes[..., 4:kp_end:2] = raw_boxes[..., 4:kp_end:2] / self.x_scale * anchors[:, 2:3] + anchors[:, 0:1]
-            boxes[..., 5:kp_end:2] = raw_boxes[..., 5:kp_end:2] / self.y_scale * anchors[:, 3:4] + anchors[:, 1:2]
-
-        return boxes
+        """Decode raw predictions to normalized boxes with keypoints."""
+        return decode_boxes_with_keypoints(
+            raw_boxes=raw_boxes,
+            anchors=anchors,
+            x_scale=self.x_scale,
+            y_scale=self.y_scale,
+            w_scale=self.w_scale,
+            h_scale=self.h_scale,
+            num_keypoints=getattr(self, "num_keypoints", 0),
+        )
 
     def _weighted_non_max_suppression(self, detections: torch.Tensor) -> list[torch.Tensor]:
         """The alternative NMS method as mentioned in the BlazeFace/BlazeEar paper:

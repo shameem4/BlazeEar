@@ -80,7 +80,7 @@ def _bbox_is_normalized(bbox: List[float]) -> bool:
     """Check if bbox coordinates are normalized between 0 and 1."""
     if len(bbox) != 4:
         return False
-    return all(isinstance(value, float) and 0.0 <= value <= 1.0 for value in bbox)
+    return all(isinstance(value, (int, float)) and 0.0 <= float(value) <= 1.0 for value in bbox)
 
 
 def _get_image_size(image_path: Path, cache: Dict[Path, Optional[Tuple[int, int]]]) -> Optional[Tuple[int, int]]:
@@ -693,7 +693,6 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    print(args.no_verify)
 
     script_dir = Path(__file__).parent
     raw_dir = script_dir / args.raw_dir
