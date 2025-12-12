@@ -24,6 +24,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from utils import model_utils, drawing, metrics, config
+from utils.detection_filters import filter_duplicate_detections
 from utils.data_utils import load_image_boxes_from_csv
 
 
@@ -174,6 +175,7 @@ if __name__ == "__main__":
                 detections.cpu().numpy() if hasattr(detections, 'cpu') else np.asarray(detections)
             )
         detections_np = np.asarray(detections_np)
+        detections_np = filter_duplicate_detections(detections_np)
 
         # Create display image
         display_img = img.copy()
