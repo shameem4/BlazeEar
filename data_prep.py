@@ -317,6 +317,19 @@ def _maybe_add_pose_boxes_for_image(
             existing = gt_boxes[rel_path]
             if _is_contained_in_existing(candidate, existing):
                 continue
+            candidate_box_tuple = (
+                float(candidate['x1']),
+                float(candidate['y1']),
+                float(candidate['w']),
+                float(candidate['h'])
+            )
+            if any(
+                _boxes_are_near(
+                    candidate_box_tuple,
+                    (float(box[0]), float(box[1]), float(box[2]), float(box[3]))
+                ) for box in existing
+            ):
+                continue
             all_rows.append(candidate)
             gt_boxes[rel_path].append(bbox)
             new_boxes += 1
