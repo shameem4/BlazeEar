@@ -31,7 +31,7 @@ from utils.iou import compute_iou_np
 from ultralytics import YOLO
 
 YOLO_DUPLICATE_IOU_THRESHOLD = 0.45
-EAR_KEYPOINT_MIN_CONF = 0.35
+EAR_KEYPOINT_MIN_CONF = 0.55
 EAR_BOX_WIDTH_RATIO = 0.12
 EAR_BOX_HEIGHT_RATIO = 0.14
 EAR_BOX_MIN_SIZE = 10
@@ -175,6 +175,39 @@ def _is_contained_in_existing(candidate: Dict[str, Any], boxes: List[Tuple[int, 
     return False
 
 
+def _boxes_are_near(
+    box_a: Tuple[float, float, float, float],
+    box_b: Tuple[float, float, float, float],
+    max_center_distance_frac: float = 0.35,
+    min_area_ratio: float = 0.35
+) -> bool:
+    """Return True when boxes are close in position and reasonably similar in size."""
+    ax, ay, aw, ah = box_a
+    bx, by, bw, bh = box_b
+    if aw <= 0 or ah <= 0 or bw <= 0 or bh <= 0:
+        return False
+
+    acx = ax + aw / 2.0
+    acy = ay + ah / 2.0
+    bcx = bx + bw / 2.0
+    bcy = by + bh / 2.0
+
+    center_distance = float(np.hypot(acx - bcx, acy - bcy))
+    max_dim = max(aw, ah, bw, bh)
+    if max_dim <= 0:
+        return False
+    center_close = center_distance <= max_center_distance_frac * max_dim
+
+    area_a = aw * ah
+    area_b = bw * bh
+    area_max = max(area_a, area_b)
+    if area_max <= 0:
+        return False
+    area_ratio = min(area_a, area_b) / area_max
+
+    return center_close and area_ratio >= min_area_ratio
+
+
 def _detection_has_pose_support(
     det_box: np.ndarray,
     pose_entries: List[PoseEntry],
@@ -288,8 +321,8 @@ def _maybe_add_pose_boxes_for_image(
             gt_boxes[rel_path].append(bbox)
             new_boxes += 1
 
-    if new_boxes > 0:
-        print(f"    Added {new_boxes} pose-derived box(es) for {rel_path}")
+    # if new_boxes > 0:
+    #     print(f"    Added {new_boxes} pose-derived box(es) for {rel_path}")
 def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
     """
     Find and parse all annotation files under data/raw using utils.data_decoder.
@@ -428,11 +461,21 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
                         continue
 
                     det_xywh = np.array([det_x1, det_y1, det_w, det_h], dtype=np.float32)
+                    det_box_tuple = (float(det_x1), float(det_y1), float(det_w), float(det_h))
                     overlaps_gt = False
                     for gt_box in gt_boxes_for_image:
                         gt_array = np.array(gt_box, dtype=np.float32)
                         iou = compute_iou_np(gt_array, det_xywh, box1_format="xywh", box2_format="xywh")
                         if iou >= YOLO_DUPLICATE_IOU_THRESHOLD:
+                            overlaps_gt = True
+                            break
+                        gt_box_tuple = (
+                            float(gt_box[0]),
+                            float(gt_box[1]),
+                            float(gt_box[2]),
+                            float(gt_box[3])
+                        )
+                        if _boxes_are_near(det_box_tuple, gt_box_tuple):
                             overlaps_gt = True
                             break
 
