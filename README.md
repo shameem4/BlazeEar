@@ -22,6 +22,28 @@ The project started as an experiment to reuse BlazeFace’s anchor layout and tr
 
 ---
 
+## Lineage: Trainable BlazeFace → BlazeEar
+
+This repository is a direct descendant of the sibling project `trainable_blazeface/` (one folder above this repo). That earlier work solved a specific technical problem: MediaPipe’s published BlazeFace weights are “inference‑only”. BatchNorm statistics are folded into convolution weights and the TensorFlow Lite graph cannot backpropagate. `trainable_blazeface` reintroduced trainable BatchNorm into the BlazeBlocks, unfolded the pretrained parameters into those layers, and verified that the PyTorch model produces the same outputs as MediaPipe at initialization.
+
+Once BlazeFace was trainable end‑to‑end, it became a stable platform for adapting the detector to other small, roughly face‑adjacent targets. Ears are similar enough to faces to benefit from the same anchor pyramid and receptive fields, but different enough to expose the limitations of existing ear datasets and off‑the‑shelf detectors.
+
+What carried over unchanged:
+
+- The front‑detector backbone (`BlazeBlock_WT` stack), two‑scale heads, and 896‑anchor layout.  
+- The training recipe from `vincent1bt/blazeface‑tensorflow`: anchor target encoding, hard negative mining, and SmoothL1 regression.  
+- Weight initialization via `load_mediapipe_weights()` and the same preprocessing/NMS conventions.
+
+What changed to become BlazeEar:
+
+- `blazeface.py` became `blazeear.py` with identical topology but a new task label.  
+- `data_prep.py` expanded from “single‑format face boxes” to a multi‑source ear annotation merger with provenance and optional pseudo‑labeling.  
+- Training defaults and debug tooling shifted to ear‑specific thresholds and failure modes.
+
+In short: `trainable_blazeface` made BlazeFace trainable; BlazeEar uses that foundation to address ear localization with a purpose‑built dataset pipeline and training run.
+
+---
+
 ## Repository Structure
 
 - `blazebase.py`  
@@ -44,6 +66,115 @@ The project started as an experiment to reuse BlazeFace’s anchor layout and tr
   Anchor helpers, augmentations, visualization, metric utilities, debug scripts, and tests.
 - `runs/`  
   Training artifacts. `runs/checkpoints/` contains saved `.pth` weights, and `runs/logs/` holds TensorBoard events and debug screenshots.
+
+---
+
+## Architecture
+
+BlazeEar matches the MediaPipe BlazeFace front detector topology. The network is a small two‑stage BlazeBlock backbone followed by two detection heads operating at different strides.
+
+```text
+Input RGB image (H×W×3)
+        │
+        ▼
+Resize + pad to square
+Resize to 128×128
+        │
+        ▼
+Conv 5×5 s=2, 24ch
+        │
+        ▼
+Backbone1: BlazeBlock_WT stack
+  → feature map 16×16×88
+        │
+   ┌────┴─────────────┐
+   │                  │
+   ▼                  ▼
+Classifier_8          Regressor_8
+16×16 grid            16×16 grid
+2 anchors/cell        2 anchors/cell
+512 scores            512 box+kp preds
+   │                  │
+   └──────┬───────────┘
+          │
+          ▼
+Backbone2: BlazeBlock_WT stack
+  → feature map 8×8×96
+          │
+   ┌────┴─────────────┐
+   │                  │
+   ▼                  ▼
+Classifier_16         Regressor_16
+8×8 grid              8×8 grid
+6 anchors/cell        6 anchors/cell
+384 scores            384 box+kp preds
+   │                  │
+   └──────┬───────────┘
+          │
+          ▼
+Concat across scales
+  scores: (896, 1) logits
+  boxes:  (896, 16) raw coords
+          │
+          ▼
+Decode + sigmoid + NMS
+→ final ear detections
+```
+
+Anchor pyramid:
+
+- Small scale: 16×16 grid with 2 anchors per cell (512 anchors).  
+- Large scale: 8×8 grid with 6 anchors per cell (384 anchors).  
+- Total: 896 anchors, each predicting 1 class score and 16 regression values (4 box + 12 keypoint coords).
+
+---
+
+## Pipeline Dataflow
+
+End‑to‑end flow from raw data to a trained model:
+
+```text
+Raw datasets under data/raw/
+  COCO / CSV / PTS / LFPW
+        │
+        ▼
+data_prep.py
+  - decode annotations
+  - optional YOLO ear boxes
+  - optional pose ear keypoints
+  - merge + de‑duplicate
+        │
+        ▼
+master.csv (with annotation_source)
+        │
+        ├───────────────┐
+        ▼               ▼
+train.csv           val.csv
+        │               │
+        ▼               ▼
+CSVDetectorDataset (dataloader.py)
+  - load image
+  - resize/pad to 128×128
+  - augment (color + geometry + occlusion)
+  - normalize boxes
+  - encode to anchors (utils/anchor_utils.py)
+        │
+        ▼
+train_blazeear.py
+  - get_training_outputs()
+  - BlazeEarDetectionLoss
+  - hard negative mining
+  - AMP / freeze‑thaw optional
+        │
+        ▼
+runs/checkpoints/*.pth
+runs/logs/BlazeEar/*
+        │
+        ▼
+utils/debug_training.py
+  - qualitative screenshots
+  - metric sweeps / comparisons
+```
 
 ---
 
