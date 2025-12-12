@@ -1,5 +1,7 @@
 # BlazeEar
 
+![BlazeEar cover](assets/linkedin_cover_blazeear.png)
+
 BlazeEar is a lightweight ear detector built on the MediaPipe BlazeFace family of models. The goal is practical ear localization in unconstrained images (profiles, partial occlusions, mixed lighting) with a compact architecture that can run in real time on consumer GPUs and edge devices.
 
 The project started as an experiment to reuse BlazeFace’s anchor layout and training recipe for a different small target (ears). Early versions relied on external detectors to generate pseudo‑labels; the current codebase supports a full pipeline from heterogeneous annotations to a trained BlazeEar model, with optional staged fine‑tuning and tooling for qualitative inspection.
@@ -261,6 +263,12 @@ From `runs/logs/BlazeEar/events.out.tfevents.*`:
 - Final validation snapshot: mAP@0.5 ≈ **0.25**, mean IoU ≈ **0.33**.  
 
 Qualitative samples are exported to `runs/logs/debug_images/`. These PNGs show predicted boxes over diverse poses and occlusions and are useful for spotting failure modes (small ears, heavy occlusion, extreme profiles).
+
+Examples (from this run):
+
+![Qualitative example 1](assets/qual_example_1.png)
+
+![Qualitative example 2](assets/qual_example_2.png)
 
 ---
 
