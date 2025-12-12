@@ -59,6 +59,13 @@ class CSVDetectorDataset(Dataset):
         augment: bool = True,
         max_samples: Optional[int] = None
     ):
+        # Avoid oversubscribing CPU threads in DataLoader workers.
+        try:
+            cv2.setNumThreads(0)
+            cv2.ocl.setUseOpenCL(False)
+        except Exception:
+            pass
+
         self.csv_path = Path(csv_path)
         self.root_dir = Path(root_dir)
         self.target_size = target_size
@@ -255,7 +262,9 @@ def create_dataloader(
     target_size: Tuple[int, int] = (128, 128),
     augment: bool = True,
     max_samples: Optional[int] = None,
-    persistent_workers: bool = False
+    persistent_workers: bool = False,
+    prefetch_factor: int = 2,
+    pin_memory: bool = True
 ) -> DataLoader:
     dataset = CSVDetectorDataset(
         csv_path=csv_path,
@@ -264,14 +273,20 @@ def create_dataloader(
         augment=augment,
         max_samples=max_samples
     )
+    effective_prefetch: Optional[int]
+    if num_workers > 0:
+        effective_prefetch = max(1, int(prefetch_factor))
+    else:
+        effective_prefetch = None
     return DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
         num_workers=num_workers,
         collate_fn=collate_detector_fn,
-        pin_memory=True,
-        persistent_workers=persistent_workers and num_workers > 0
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers and num_workers > 0,
+        prefetch_factor=effective_prefetch
     )
 
 

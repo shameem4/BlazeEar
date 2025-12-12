@@ -20,6 +20,90 @@ import torch
 # Reference Anchor Generation
 # =============================================================================
 
+def _calculate_scale(
+    min_scale: float,
+    max_scale: float,
+    stride_index: int,
+    num_strides: int
+) -> float:
+    if num_strides <= 1:
+        return (min_scale + max_scale) / 2.0
+    return min_scale + (max_scale - min_scale) * stride_index / (num_strides - 1.0)
+
+
+def _generate_variable_anchors_from_options(options: dict) -> torch.Tensor:
+    """Generate variable-size anchors following MediaPipe BlazeFace options."""
+    strides = options["strides"]
+    num_layers = options["num_layers"]
+    assert num_layers == len(strides)
+
+    anchors: list[list[float]] = []
+    layer_id = 0
+    strides_size = len(strides)
+
+    while layer_id < strides_size:
+        anchor_height: list[float] = []
+        anchor_width: list[float] = []
+        aspect_ratios: list[float] = []
+        scales: list[float] = []
+
+        last_same_stride_layer = layer_id
+        while (
+            last_same_stride_layer < strides_size
+            and strides[last_same_stride_layer] == strides[layer_id]
+        ):
+            scale = _calculate_scale(
+                options["min_scale"],
+                options["max_scale"],
+                last_same_stride_layer,
+                strides_size,
+            )
+
+            if last_same_stride_layer == 0 and options.get("reduce_boxes_in_lowest_layer", False):
+                aspect_ratios.extend([1.0, 2.0, 0.5])
+                scales.extend([0.1, scale, scale])
+            else:
+                for aspect_ratio in options["aspect_ratios"]:
+                    aspect_ratios.append(float(aspect_ratio))
+                    scales.append(float(scale))
+
+                interpolated = float(options.get("interpolated_scale_aspect_ratio", 0.0))
+                if interpolated > 0.0:
+                    if last_same_stride_layer == strides_size - 1:
+                        scale_next = 1.0
+                    else:
+                        scale_next = _calculate_scale(
+                            options["min_scale"],
+                            options["max_scale"],
+                            last_same_stride_layer + 1,
+                            strides_size,
+                        )
+                    scales.append(float(np.sqrt(scale * scale_next)))
+                    aspect_ratios.append(interpolated)
+
+            last_same_stride_layer += 1
+
+        for i in range(len(aspect_ratios)):
+            ratio_sqrt = float(np.sqrt(aspect_ratios[i]))
+            anchor_height.append(scales[i] / ratio_sqrt)
+            anchor_width.append(scales[i] * ratio_sqrt)
+
+        stride = strides[layer_id]
+        feature_map_height = int(np.ceil(options["input_size_height"] / stride))
+        feature_map_width = int(np.ceil(options["input_size_width"] / stride))
+
+        for y in range(feature_map_height):
+            for x in range(feature_map_width):
+                x_center = (x + options["anchor_offset_x"]) / feature_map_width
+                y_center = (y + options["anchor_offset_y"]) / feature_map_height
+                for aw, ah in zip(anchor_width, anchor_height):
+                    anchors.append([x_center, y_center, aw, ah])
+
+        layer_id = last_same_stride_layer
+
+    return torch.tensor(anchors, dtype=torch.float32)
+
+
 def generate_reference_anchors(
     input_size: int = 128,
     fixed_anchor_size: bool = True
@@ -35,49 +119,47 @@ def generate_reference_anchors(
     Args:
         input_size: Input image size (default 128)
         fixed_anchor_size: If True, all anchors have w=h=1.0 (default).
-                          If False, could support variable anchor sizes in future.
+                          If False, anchor w/h are derived from MediaPipe
+                          `anchor_options` (variable-size anchors).
         
     Returns:
         reference_anchors: [896, 4] tensor of (x_center, y_center, width, height)
         small_anchors: [512, 4] tensor for 16x16 grid
         big_anchors: [384, 4] tensor for 8x8 grid
     """
-    if not fixed_anchor_size:
-        raise NotImplementedError(
-            "Variable-size anchors are not implemented; set fixed_anchor_size=True."
-        )
+    if fixed_anchor_size:
+        # Small anchors: 16x16 grid, size 0.0625 (1/16)
+        # Centers at 0.03125, 0.09375, ..., 0.96875
+        small_boxes = torch.linspace(0.03125, 0.96875, 16)
 
-    # Small anchors: 16x16 grid, size 0.0625 (1/16)
-    # Centers at 0.03125, 0.09375, ..., 0.96875
-    small_boxes = torch.linspace(0.03125, 0.96875, 16)
-    
-    # Big anchors: 8x8 grid, size 0.125 (1/8)  
-    # Centers at 0.0625, 0.1875, ..., 0.9375
-    big_boxes = torch.linspace(0.0625, 0.9375, 8)
-    
-    # Create grid for small anchors (16x16 with 2 anchors per cell = 512)
-    # x coordinates: repeat each x 2 times, then tile 16 times
-    small_x = small_boxes.repeat_interleave(2).repeat(16)  # 512
-    # y coordinates: repeat each y 32 times (2 anchors * 16 x positions)
-    small_y = small_boxes.repeat_interleave(32)  # 512
-    # Width and height: 1.0 for fixed_anchor_size=True
-    small_w = torch.ones_like(small_x)
-    small_h = torch.ones_like(small_x)
-    small_anchors = torch.stack([small_x, small_y, small_w, small_h], dim=1)  # [512, 4]
-    
-    # Create grid for big anchors (8x8 with 6 anchors per cell = 384)
-    # x coordinates: repeat each x 6 times, then tile 8 times
-    big_x = big_boxes.repeat_interleave(6).repeat(8)  # 384
-    # y coordinates: repeat each y 48 times (6 anchors * 8 x positions)
-    big_y = big_boxes.repeat_interleave(48)  # 384
-    # Width and height: 1.0 for fixed_anchor_size=True
-    big_w = torch.ones_like(big_x)
-    big_h = torch.ones_like(big_x)
-    big_anchors = torch.stack([big_x, big_y, big_w, big_h], dim=1)  # [384, 4]
-    
-    # Combine: small first, then big (matching model output order)
-    reference_anchors = torch.cat([small_anchors, big_anchors], dim=0)  # [896, 4]
-    
+        # Big anchors: 8x8 grid, size 0.125 (1/8)
+        # Centers at 0.0625, 0.1875, ..., 0.9375
+        big_boxes = torch.linspace(0.0625, 0.9375, 8)
+
+        small_x = small_boxes.repeat_interleave(2).repeat(16)  # 512
+        small_y = small_boxes.repeat_interleave(32)  # 512
+        small_w = torch.ones_like(small_x)
+        small_h = torch.ones_like(small_x)
+        small_anchors = torch.stack([small_x, small_y, small_w, small_h], dim=1)
+
+        big_x = big_boxes.repeat_interleave(6).repeat(8)  # 384
+        big_y = big_boxes.repeat_interleave(48)  # 384
+        big_w = torch.ones_like(big_x)
+        big_h = torch.ones_like(big_x)
+        big_anchors = torch.stack([big_x, big_y, big_w, big_h], dim=1)
+
+        reference_anchors = torch.cat([small_anchors, big_anchors], dim=0)
+        return reference_anchors, small_anchors, big_anchors
+
+    options = dict(anchor_options)
+    options["input_size_height"] = input_size
+    options["input_size_width"] = input_size
+    options["fixed_anchor_size"] = False
+
+    reference_anchors = _generate_variable_anchors_from_options(options)
+    small_count = 16 * 16 * 2
+    small_anchors = reference_anchors[:small_count]
+    big_anchors = reference_anchors[small_count:]
     return reference_anchors, small_anchors, big_anchors
 
 

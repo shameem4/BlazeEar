@@ -37,6 +37,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torch.optim.lr_scheduler import LRScheduler
+from torch.cuda.amp import autocast, GradScaler
 
 from blazeear import BlazeEar
 from blazebase import generate_reference_anchors, load_mediapipe_weights
@@ -97,7 +98,8 @@ class BlazeEarTrainer:
         eval_score_threshold: float = 0.1,
         nms_iou_threshold: float = DEFAULT_NMS_IOU_THRESHOLD,
         max_eval_detections: int = 75,
-        metric_threshold: float = 0.45
+        metric_threshold: float = 0.45,
+        use_amp: bool = True
     ):
         """
         Args:
@@ -120,6 +122,10 @@ class BlazeEarTrainer:
         self.model_name = model_name
         self.scale = scale
         self.compute_train_map = compute_train_map
+
+        # Mixed precision (only meaningful on CUDA)
+        self.use_amp = bool(use_amp and str(device).startswith("cuda") and torch.cuda.is_available())
+        self.scaler = GradScaler(enabled=self.use_amp)
         
         # Generate reference anchors for loss computation
         # generate_reference_anchors returns (reference_anchors, small, big) tuple
@@ -513,25 +519,28 @@ class BlazeEarTrainer:
                 gt_box_counts = None
             
             # Forward pass
-            self.optimizer.zero_grad()
-            
-            class_predictions, anchor_predictions = self._get_training_outputs(images)
-            
-            # Compute loss
-            losses = self.loss_fn(
-                class_predictions,
-                anchor_predictions,
-                anchor_targets,
-                self.reference_anchors
-            )
-            
-            # Backward pass
-            losses['total'].backward()
-            
-            # Gradient clipping
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-            
-            self.optimizer.step()
+            self.optimizer.zero_grad(set_to_none=True)
+
+            with autocast(enabled=self.use_amp):
+                class_predictions, anchor_predictions = self._get_training_outputs(images)
+                losses = self.loss_fn(
+                    class_predictions,
+                    anchor_predictions,
+                    anchor_targets,
+                    self.reference_anchors
+                )
+
+            total_loss = losses["total"]
+            if self.use_amp:
+                self.scaler.scale(total_loss).backward()
+                self.scaler.unscale_(self.optimizer)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                total_loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                self.optimizer.step()
             
             # Compute metrics every 10 batches to reduce overhead
             compute_metrics_this_batch = (batch_idx % 10 == 0 or batch_idx == len(self.train_loader) - 1)
@@ -636,14 +645,14 @@ class BlazeEarTrainer:
                     gt_boxes_tensor = None
                     gt_box_counts = None
                 
-                class_predictions, anchor_predictions = self._get_training_outputs(images)
-                
-                losses = self.loss_fn(
-                    class_predictions,
-                    anchor_predictions,
-                    anchor_targets,
-                    self.reference_anchors
-                )
+                with autocast(enabled=self.use_amp):
+                    class_predictions, anchor_predictions = self._get_training_outputs(images)
+                    losses = self.loss_fn(
+                        class_predictions,
+                        anchor_predictions,
+                        anchor_targets,
+                        self.reference_anchors
+                    )
                 
                 metrics = self._compute_metrics(
                     class_predictions,
@@ -691,6 +700,8 @@ class BlazeEarTrainer:
             'optimizer_state_dict': self.optimizer.state_dict(),
             'best_val_loss': self.best_val_loss
         }
+        if self.use_amp:
+            checkpoint["scaler_state_dict"] = self.scaler.state_dict()
         
         if self.scheduler:
             checkpoint['scheduler_state_dict'] = self.scheduler.state_dict()
@@ -718,6 +729,12 @@ class BlazeEarTrainer:
         self.epoch = checkpoint['epoch']
         self.global_step = checkpoint['global_step']
         self.best_val_loss = checkpoint.get('best_val_loss', float('inf'))
+
+        if self.use_amp and "scaler_state_dict" in checkpoint:
+            try:
+                self.scaler.load_state_dict(checkpoint["scaler_state_dict"])
+            except Exception as exc:
+                print(f"Warning: failed to load GradScaler state: {exc}")
         
         if self.scheduler and 'scheduler_state_dict' in checkpoint:
             self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
@@ -947,7 +964,21 @@ def main():
                         help='Learning rate when only detection heads are trainable')
     parser.add_argument('--freeze-lr-mid', type=float, default=3e-4,
                         help='Learning rate when backbone2 is unfrozen')
-    
+
+    # Performance flags
+    parser.add_argument('--amp', dest='use_amp', action='store_true',
+                        help='Enable mixed precision training on CUDA')
+    parser.add_argument('--no-amp', dest='use_amp', action='store_false',
+                        help='Disable mixed precision')
+    parser.set_defaults(use_amp=True)
+    parser.add_argument('--compile', dest='use_compile', action='store_true',
+                        help='Use torch.compile for training (torch>=2.0)')
+    parser.add_argument('--no-compile', dest='use_compile', action='store_false',
+                        help='Disable torch.compile')
+    parser.set_defaults(use_compile=False)
+    parser.add_argument('--prefetch-factor', type=int, default=2,
+                        help='DataLoader prefetch_factor (workers only)')
+
     args = parser.parse_args()
     val_compute_map = not args.no_val_map
     
@@ -955,6 +986,13 @@ def main():
     if args.device == 'cuda' and not torch.cuda.is_available():
         print('CUDA not available, using CPU')
         args.device = 'cpu'
+
+    if str(args.device).startswith("cuda"):
+        torch.backends.cudnn.benchmark = True
+        try:
+            torch.set_float32_matmul_precision("high")
+        except Exception:
+            pass
     
     # Input size (fixed at 128x128 for front model)
     target_size = (DEFAULT_INPUT_SIZE, DEFAULT_INPUT_SIZE)
@@ -983,6 +1021,12 @@ def main():
         init_weights=args.init_weights,
         weights_path=args.weights_path
     )
+    if args.use_compile:
+        try:
+            model = torch.compile(model)
+            print("torch.compile enabled.")
+        except Exception as exc:
+            print(f"Warning: torch.compile failed, continuing uncompiled: {exc}")
     print(f'Model parameters: {sum(p.numel() for p in model.parameters()):,}')
     freeze_kp = not args.no_freeze_keypoint_heads
     if freeze_kp and hasattr(model, "freeze_keypoint_regressors"):
@@ -1021,7 +1065,8 @@ def main():
         num_workers=args.num_workers,
         target_size=target_size,
         augment=True,
-        persistent_workers=persistent_workers
+        persistent_workers=persistent_workers,
+        prefetch_factor=args.prefetch_factor
     )
     print(f'Training samples: {_dataset_length(train_loader)}')
 
@@ -1035,7 +1080,8 @@ def main():
             num_workers=args.num_workers,
             target_size=target_size,
             augment=False,
-            persistent_workers=persistent_workers
+            persistent_workers=persistent_workers,
+            prefetch_factor=args.prefetch_factor
         )
         print(f'Validation samples: {_dataset_length(val_loader)}')
     
@@ -1117,7 +1163,8 @@ def main():
         eval_score_threshold=args.eval_score_threshold,
         nms_iou_threshold=args.eval_nms_threshold,
         max_eval_detections=args.max_eval_detections,
-        metric_threshold=args.metric_threshold
+        metric_threshold=args.metric_threshold,
+        use_amp=args.use_amp
     )
     
     # Resume from checkpoint if provided
