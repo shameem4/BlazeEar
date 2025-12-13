@@ -554,9 +554,13 @@ class BlazeEarInference(nn.Module):
         opset_version: int = 17,
         include_postprocessing: bool = True,
         end_to_end: bool = False,
+        for_web: bool = False,
     ) -> None:
         """
         Export model to ONNX for web deployment.
+        
+        NOTE: Set for_web=True for ONNX Runtime Web compatibility.
+              This avoids int64 operations that aren't supported in the browser.
         
         Args:
             output_path: Path to save the .onnx file
@@ -598,13 +602,41 @@ class BlazeEarInference(nn.Module):
         3. include_postprocessing=False:
            Input: (1, 3, 128, 128) preprocessed image in [0, 255]  
            Output: raw_boxes (1, 896, 16), raw_scores (1, 896, 1)
+           
+        4. for_web=True: Web-optimized export (avoids int64 ops like TopK, NMS)
+           Input: (1, 3, 128, 128) preprocessed image in [0, 255]
+                  + scale, pad_y, pad_x as preprocessing params
+           Output: boxes (896, 4) decoded boxes in original coords
+                   scores (896,) confidence scores (after sigmoid)
+           JavaScript must do filtering and NMS on these outputs.
         """
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         
         device = self.anchors.device
         
-        if end_to_end:
+        if for_web:
+            # Web-friendly export: no TopK/NMS (these use int64)
+            # Returns decoded boxes + scores, JS does NMS
+            exportable = BlazeEarWebExportable(
+                model=self.model,
+                anchors=self.anchors,
+                input_size=self.input_size,
+                score_clipping_thresh=self.score_clipping_thresh,
+            )
+            output_names = ["boxes", "scores"]
+            input_names = ["image", "scale", "pad_y", "pad_x"]
+            dynamic_axes = {}  # Fixed sizes for web
+            
+            # Dummy inputs
+            dummy_image = torch.randn(1, 3, self.input_size, self.input_size, device=device) * 255
+            dummy_scale = torch.tensor(2.5, device=device)
+            dummy_pad_y = torch.tensor(0.0, device=device)
+            dummy_pad_x = torch.tensor(60.0, device=device)
+            dummy = (dummy_image, dummy_scale, dummy_pad_y, dummy_pad_x)
+            mode_str = "web-optimized"
+            
+        elif end_to_end:
             # Model with denormalization - takes preprocessing params
             exportable = BlazeEarEndToEndExportable(
                 model=self.model,
@@ -625,6 +657,7 @@ class BlazeEarInference(nn.Module):
             dummy_pad_y = torch.tensor(0.0, device=device)
             dummy_pad_x = torch.tensor(60.0, device=device)  # Example padding
             dummy = (dummy_image, dummy_scale, dummy_pad_y, dummy_pad_x)
+            mode_str = "end-to-end"
             
         elif include_postprocessing:
             # Just post-processing (expects 128x128 preprocessed input)
@@ -641,6 +674,7 @@ class BlazeEarInference(nn.Module):
             input_names = ["image"]
             dynamic_axes = {"image": {0: "batch"}, "detections": {0: "num_detections"}}
             dummy = (torch.randn(1, 3, self.input_size, self.input_size, device=device) * 255,)
+            mode_str = "with post-processing"
         else:
             # Raw output only
             exportable = BlazeEarRawExportable(self.model)
@@ -652,6 +686,7 @@ class BlazeEarInference(nn.Module):
                 "raw_scores": {0: "batch"},
             }
             dummy = (torch.randn(1, 3, self.input_size, self.input_size, device=device) * 255,)
+            mode_str = "raw"
         
         exportable.eval()
         
@@ -666,7 +701,6 @@ class BlazeEarInference(nn.Module):
             do_constant_folding=True,
         )
         
-        mode_str = "end-to-end" if end_to_end else ("with post-processing" if include_postprocessing else "raw")
         print(f"Exported ONNX model ({mode_str}) to: {output_path}")
 
 
@@ -795,6 +829,110 @@ class BlazeEarRawExportable(nn.Module):
         """
         x = image / 127.5 - 1.0
         return self.model(x)
+
+
+class BlazeEarWebExportable(nn.Module):
+    """
+    Web-optimized exportable model for ONNX Runtime Web.
+    
+    This version avoids int64-producing operations (TopK, NMS, NonZero)
+    that cause "int64 is not supported" errors in the browser.
+    
+    Returns all 896 decoded boxes + scores. JavaScript should:
+    1. Filter by confidence threshold
+    2. Apply NMS in JavaScript
+    
+    Input: 
+        image: (1, 3, 128, 128) preprocessed image in [0, 255]
+        scale: scalar - the scale factor used during resize
+        pad_y: scalar - y-axis padding in original image space
+        pad_x: scalar - x-axis padding in original image space
+    
+    Output:
+        boxes: (896, 4) decoded boxes [ymin, xmin, ymax, xmax] in original image coords
+        scores: (896,) confidence scores (after sigmoid)
+    """
+    # Type hints for registered buffers
+    anchors: torch.Tensor
+    
+    def __init__(
+        self,
+        model: nn.Module,
+        anchors: torch.Tensor,
+        input_size: int = 128,
+        score_clipping_thresh: float = 100.0,
+    ):
+        super().__init__()
+        self.model = model
+        self.register_buffer("anchors", anchors)
+        self.input_size = input_size
+        self.score_clipping_thresh = score_clipping_thresh
+    
+    def forward(
+        self, 
+        image: torch.Tensor, 
+        scale: torch.Tensor, 
+        pad_y: torch.Tensor, 
+        pad_x: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Inference returning decoded boxes + scores.
+        
+        Args:
+            image: Preprocessed image tensor (1, 3, 128, 128) in range [0, 255]
+            scale: Scale factor used during resize (scalar tensor)
+            pad_y: Y-axis padding in original image space (scalar tensor)
+            pad_x: X-axis padding in original image space (scalar tensor)
+        
+        Returns:
+            boxes: (896, 4) with [ymin, xmin, ymax, xmax] in original image coords
+            scores: (896,) confidence scores (after sigmoid)
+        """
+        # Run model
+        x = image / 127.5 - 1.0
+        raw_boxes, raw_scores = self.model(x)
+        
+        # Decode boxes
+        model_scale = float(self.input_size)
+        anchors = self.anchors
+        
+        x_center = raw_boxes[..., 0] / model_scale * anchors[:, 2] + anchors[:, 0]
+        y_center = raw_boxes[..., 1] / model_scale * anchors[:, 3] + anchors[:, 1]
+        w = raw_boxes[..., 2] / model_scale * anchors[:, 2]
+        h = raw_boxes[..., 3] / model_scale * anchors[:, 3]
+        
+        y_min = y_center - h / 2.0
+        x_min = x_center - w / 2.0
+        y_max = y_center + h / 2.0
+        x_max = x_center + w / 2.0
+        
+        boxes = torch.stack([y_min, x_min, y_max, x_max], dim=-1)
+        
+        # Ensure proper ordering [min, min, max, max]
+        boxes = torch.stack([
+            torch.minimum(boxes[..., 0], boxes[..., 2]),
+            torch.minimum(boxes[..., 1], boxes[..., 3]),
+            torch.maximum(boxes[..., 0], boxes[..., 2]),
+            torch.maximum(boxes[..., 1], boxes[..., 3]),
+        ], dim=-1)
+        
+        # Scores
+        scores = raw_scores.clamp(-self.score_clipping_thresh, self.score_clipping_thresh)
+        scores = scores.sigmoid().squeeze(-1)
+        
+        # Extract batch 0
+        boxes = boxes[0]  # (896, 4)
+        scores = scores[0]  # (896,)
+        
+        # Denormalize to original image coordinates
+        # Boxes are in normalized [0, 1] coords relative to 256x256 padded image
+        denorm_boxes = torch.zeros_like(boxes)
+        denorm_boxes[:, 0] = boxes[:, 0] * scale * 256 - pad_y  # ymin
+        denorm_boxes[:, 1] = boxes[:, 1] * scale * 256 - pad_x  # xmin
+        denorm_boxes[:, 2] = boxes[:, 2] * scale * 256 - pad_y  # ymax
+        denorm_boxes[:, 3] = boxes[:, 3] * scale * 256 - pad_x  # xmax
+        
+        return denorm_boxes, scores
 
 
 class BlazeEarEndToEndExportable(nn.Module):

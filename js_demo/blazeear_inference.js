@@ -8,15 +8,14 @@
  *   import { BlazeEarInference } from './blazeear_inference.js';
  *   
  *   const detector = new BlazeEarInference();
- *   await detector.load('path/to/BlazeEar_e2e.onnx');
+ *   await detector.load('path/to/BlazeEar_web.onnx');
  *   
  *   // From video element, canvas, or ImageData
  *   const detections = await detector.detect(imageSource);
  *   // Returns: Array of { ymin, xmin, ymax, xmax, confidence }
  * 
  * ONNX Model Options:
- *   1. End-to-End model (BlazeEar_e2e.onnx): Returns coords in original image space
- *   2. Simple model (BlazeEar_inference.onnx): Returns normalized [0,1] coords
+ *   - BlazeEar_web.onnx: Web-optimized (avoids int64, NMS done in JS)
  */
 
 // Check for ONNX Runtime
@@ -33,15 +32,14 @@ class BlazeEarInference {
      * @param {Object} options - Configuration options
      * @param {number} options.confidenceThreshold - Minimum confidence for detections (default: 0.75)
      * @param {number} options.iouThreshold - IoU threshold for NMS (default: 0.3)
-     * @param {boolean} options.useEndToEnd - Use end-to-end model with denormalization (default: true)
      */
     constructor(options = {}) {
         this.confidenceThreshold = options.confidenceThreshold ?? 0.75;
         this.iouThreshold = options.iouThreshold ?? 0.3;
-        this.useEndToEnd = options.useEndToEnd ?? true;
         this.inputSize = 128;
         this.session = null;
         this.isLoaded = false;
+        this.modelType = null; // 'web' or 'e2e' or 'simple'
     }
 
     /**
@@ -55,7 +53,8 @@ class BlazeEarInference {
         }
 
         const defaultOptions = {
-            executionProviders: ['webgl', 'wasm'],
+            // Prefer WASM for better int64 support, fallback to WebGL
+            executionProviders: ['wasm', 'webgl'],
             graphOptimizationLevel: 'all',
         };
 
@@ -69,8 +68,17 @@ class BlazeEarInference {
         console.log('Input names:', this.session.inputNames);
         console.log('Output names:', this.session.outputNames);
 
-        // Detect if this is an end-to-end model (has scale, pad_y, pad_x inputs)
-        this.useEndToEnd = this.session.inputNames.includes('scale');
+        // Detect model type based on outputs
+        if (this.session.outputNames.includes('boxes') && this.session.outputNames.includes('scores')) {
+            this.modelType = 'web';  // Web-optimized: boxes + scores output
+            console.log('Detected web-optimized model (NMS in JavaScript)');
+        } else if (this.session.inputNames.includes('scale')) {
+            this.modelType = 'e2e';  // End-to-end with denormalization
+            console.log('Detected end-to-end model');
+        } else {
+            this.modelType = 'simple';  // Simple postprocessed model
+            console.log('Detected simple model');
+        }
     }
 
     /**
@@ -211,7 +219,7 @@ class BlazeEarInference {
 
         // Prepare feeds based on model type
         let feeds;
-        if (this.useEndToEnd) {
+        if (this.modelType === 'web' || this.modelType === 'e2e') {
             feeds = {
                 'image': imageTensor,
                 'scale': new ort.Tensor('float32', [scale], []),
@@ -225,11 +233,85 @@ class BlazeEarInference {
         // Run inference
         const results = await this.session.run(feeds);
 
-        // Parse detections
-        const detectionsData = results.detections.data;
-        const numDetections = results.detections.dims[0];
+        let detections;
+        if (this.modelType === 'web') {
+            // Web model outputs boxes (896, 4) and scores (896,)
+            // We need to filter and apply NMS in JavaScript
+            detections = this._processWebModelOutput(
+                results.boxes.data,
+                results.scores.data,
+                originalWidth,
+                originalHeight
+            );
+        } else {
+            // E2E or simple model outputs detections directly
+            detections = this._processDetectionsOutput(
+                results.detections.data,
+                results.detections.dims[0],
+                scale,
+                padY,
+                padX,
+                originalWidth,
+                originalHeight
+            );
+        }
 
+        return detections;
+    }
+
+    /**
+     * Process web model output (boxes + scores) with JS NMS
+     * @private
+     */
+    _processWebModelOutput(boxesData, scoresData, originalWidth, originalHeight) {
+        const numAnchors = 896;
+        const candidates = [];
+
+        // Filter by confidence threshold
+        for (let i = 0; i < numAnchors; i++) {
+            const score = scoresData[i];
+            if (score >= this.confidenceThreshold) {
+                candidates.push({
+                    ymin: boxesData[i * 4 + 0],
+                    xmin: boxesData[i * 4 + 1],
+                    ymax: boxesData[i * 4 + 2],
+                    xmax: boxesData[i * 4 + 3],
+                    confidence: score,
+                    index: i
+                });
+            }
+        }
+
+        // Sort by confidence (descending)
+        candidates.sort((a, b) => b.confidence - a.confidence);
+
+        // Apply NMS
+        const detections = this._nms(candidates, this.iouThreshold);
+
+        // Clamp to image bounds and add convenience properties
+        for (const det of detections) {
+            det.ymin = Math.max(0, Math.min(det.ymin, originalHeight));
+            det.xmin = Math.max(0, Math.min(det.xmin, originalWidth));
+            det.ymax = Math.max(0, Math.min(det.ymax, originalHeight));
+            det.xmax = Math.max(0, Math.min(det.xmax, originalWidth));
+            det.x = det.xmin;
+            det.y = det.ymin;
+            det.width = det.xmax - det.xmin;
+            det.height = det.ymax - det.ymin;
+            delete det.index;  // Remove internal property
+        }
+
+        return detections;
+    }
+
+    /**
+     * Process detections output from e2e or simple model
+     * @private
+     */
+    _processDetectionsOutput(detectionsData, numDetections, scale, padY, padX, originalWidth, originalHeight) {
         const detections = [];
+        const isE2E = this.modelType === 'e2e';
+
         for (let i = 0; i < numDetections; i++) {
             let ymin = detectionsData[i * 5 + 0];
             let xmin = detectionsData[i * 5 + 1];
@@ -238,7 +320,7 @@ class BlazeEarInference {
             const confidence = detectionsData[i * 5 + 4];
 
             // If not end-to-end, denormalize coordinates here
-            if (!this.useEndToEnd) {
+            if (!isE2E) {
                 ymin = ymin * scale * 256 - padY;
                 xmin = xmin * scale * 256 - padX;
                 ymax = ymax * scale * 256 - padY;
@@ -257,7 +339,6 @@ class BlazeEarInference {
                 ymax,
                 xmax,
                 confidence,
-                // Convenience properties
                 x: xmin,
                 y: ymin,
                 width: xmax - xmin,
@@ -266,6 +347,57 @@ class BlazeEarInference {
         }
 
         return detections;
+    }
+
+    /**
+     * Non-Maximum Suppression
+     * @private
+     */
+    _nms(candidates, iouThreshold) {
+        const selected = [];
+        const suppressed = new Set();
+
+        for (let i = 0; i < candidates.length; i++) {
+            if (suppressed.has(i)) continue;
+
+            const current = candidates[i];
+            selected.push(current);
+
+            for (let j = i + 1; j < candidates.length; j++) {
+                if (suppressed.has(j)) continue;
+
+                const other = candidates[j];
+                const iou = this._computeIoU(current, other);
+
+                if (iou > iouThreshold) {
+                    suppressed.add(j);
+                }
+            }
+        }
+
+        return selected;
+    }
+
+    /**
+     * Compute Intersection over Union
+     * @private
+     */
+    _computeIoU(boxA, boxB) {
+        const xA = Math.max(boxA.xmin, boxB.xmin);
+        const yA = Math.max(boxA.ymin, boxB.ymin);
+        const xB = Math.min(boxA.xmax, boxB.xmax);
+        const yB = Math.min(boxA.ymax, boxB.ymax);
+
+        const interWidth = Math.max(0, xB - xA);
+        const interHeight = Math.max(0, yB - yA);
+        const interArea = interWidth * interHeight;
+
+        const areaA = (boxA.xmax - boxA.xmin) * (boxA.ymax - boxA.ymin);
+        const areaB = (boxB.xmax - boxB.xmin) * (boxB.ymax - boxB.ymin);
+
+        const unionArea = areaA + areaB - interArea;
+
+        return unionArea > 0 ? interArea / unionArea : 0;
     }
 
     /**

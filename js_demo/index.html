@@ -171,22 +171,21 @@
             </div>
             <div class="slider-container">
                 <label>Model Path:</label>
-                <input type="text" id="modelPath" value="../runs/checkpoints/BlazeEar_e2e.onnx" 
+                <input type="text" id="modelPath" value="BlazeEar_web.onnx" 
                        style="width: 100%; padding: 8px; border-radius: 5px; border: none; background: #0f0f23; color: #eee;">
             </div>
             <button id="reloadModel">Reload Model</button>
             <div style="margin-top: 15px; font-size: 12px; color: #888;">
                 <p><strong>Model Types:</strong></p>
                 <ul>
-                    <li><code>BlazeEar_e2e.onnx</code> - End-to-end (recommended)</li>
-                    <li><code>BlazeEar_inference.onnx</code> - Normalized output</li>
+                    <li><code>BlazeEar_web.onnx</code> - Web-optimized (recommended)</li>
                 </ul>
             </div>
         </div>
     </div>
 
-    <!-- ONNX Runtime Web -->
-    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.16.0/dist/ort.min.js"></script>
+    <!-- ONNX Runtime Web (latest with better int64 support) -->
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
     
     <!-- BlazeEar Inference Module -->
     <script type="module">

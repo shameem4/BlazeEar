@@ -9,10 +9,10 @@ pipeline = BlazeEarInference(
     device='cuda'
 )
 
-# Export end-to-end ONNX
-pipeline.to_onnx('runs/checkpoints/BlazeEar_e2e.onnx', end_to_end=True)
-
-# Also export to js_demo
-pipeline.to_onnx('js_demo/BlazeEar_e2e.onnx', end_to_end=True)
+# Export web-optimized ONNX (avoids int64 ops)
+pipeline.to_onnx('js_demo/BlazeEar_web.onnx', for_web=True)
 
 print('Done!')
+print()
+print('The web model outputs decoded boxes (896, 4) and scores (896,)')
+print('JavaScript must filter by confidence and apply NMS.')
