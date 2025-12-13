@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BlazeEar - Ear Detection Demo</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1a1a2e;
+            color: #eee;
+        }
+        h1 {
+            color: #00d4ff;
+            text-align: center;
+        }
+        .container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            justify-content: center;
+        }
+        .panel {
+            background: #16213e;
+            border-radius: 10px;
+            padding: 20px;
+            min-width: 300px;
+        }
+        .panel h2 {
+            margin-top: 0;
+            color: #00d4ff;
+            font-size: 1.2em;
+        }
+        #videoContainer {
+            position: relative;
+            display: inline-block;
+        }
+        #video, #canvas {
+            max-width: 100%;
+            border-radius: 8px;
+        }
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        #imageCanvas {
+            max-width: 100%;
+            border-radius: 8px;
+            background: #0f0f23;
+        }
+        button {
+            background: #00d4ff;
+            color: #000;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 5px;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background: #00a8cc;
+        }
+        button:disabled {
+            background: #555;
+            cursor: not-allowed;
+        }
+        input[type="file"] {
+            display: none;
+        }
+        .file-label {
+            display: inline-block;
+            background: #e94560;
+            color: #fff;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        .file-label:hover {
+            background: #c73e54;
+        }
+        #status {
+            text-align: center;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            background: #0f3460;
+        }
+        #stats {
+            font-family: monospace;
+            font-size: 12px;
+            color: #aaa;
+        }
+        .detection-list {
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+            background: #0f0f23;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .slider-container {
+            margin: 10px 0;
+        }
+        .slider-container label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        .slider-container input[type="range"] {
+            width: 100%;
+        }
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+    </style>
+</head>
+<body>
+    <h1>🦻 BlazeEar - Ear Detection</h1>
+    
+    <div id="status">Loading ONNX Runtime...</div>
+
+    <div class="container">
+        <!-- Webcam Panel -->
+        <div class="panel">
+            <h2>📹 Webcam Detection</h2>
+            <div class="controls">
+                <button id="startWebcam" disabled>Start Webcam</button>
+                <button id="stopWebcam" disabled>Stop Webcam</button>
+            </div>
+            <div id="videoContainer">
+                <video id="video" width="640" height="480" autoplay muted playsinline></video>
+                <canvas id="canvas" width="640" height="480"></canvas>
+            </div>
+            <div id="stats"></div>
+        </div>
+
+        <!-- Image Panel -->
+        <div class="panel">
+            <h2>🖼️ Image Detection</h2>
+            <div class="controls">
+                <label class="file-label">
+                    Choose Image
+                    <input type="file" id="imageInput" accept="image/*">
+                </label>
+            </div>
+            <canvas id="imageCanvas" width="640" height="480"></canvas>
+            <div class="detection-list" id="detectionList">
+                Upload an image to see detections
+            </div>
+        </div>
+
+        <!-- Settings Panel -->
+        <div class="panel">
+            <h2>⚙️ Settings</h2>
+            <div class="slider-container">
+                <label>Confidence Threshold: <span id="confValue">0.75</span></label>
+                <input type="range" id="confSlider" min="0.1" max="0.99" step="0.01" value="0.75">
+            </div>
+            <div class="slider-container">
+                <label>Model Path:</label>
+                <input type="text" id="modelPath" value="../runs/checkpoints/BlazeEar_e2e.onnx" 
+                       style="width: 100%; padding: 8px; border-radius: 5px; border: none; background: #0f0f23; color: #eee;">
+            </div>
+            <button id="reloadModel">Reload Model</button>
+            <div style="margin-top: 15px; font-size: 12px; color: #888;">
+                <p><strong>Model Types:</strong></p>
+                <ul>
+                    <li><code>BlazeEar_e2e.onnx</code> - End-to-end (recommended)</li>
+                    <li><code>BlazeEar_inference.onnx</code> - Normalized output</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- ONNX Runtime Web -->
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.16.0/dist/ort.min.js"></script>
+    
+    <!-- BlazeEar Inference Module -->
+    <script type="module">
+        import { BlazeEarInference } from './blazeear_inference.js';
+
+        // Global state
+        let detector = null;
+        let isWebcamRunning = false;
+        let animationId = null;
+
+        // DOM elements
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const imageCanvas = document.getElementById('imageCanvas');
+        const imageCtx = imageCanvas.getContext('2d');
+        const statusEl = document.getElementById('status');
+        const statsEl = document.getElementById('stats');
+        const detectionListEl = document.getElementById('detectionList');
+        const startBtn = document.getElementById('startWebcam');
+        const stopBtn = document.getElementById('stopWebcam');
+        const imageInput = document.getElementById('imageInput');
+        const confSlider = document.getElementById('confSlider');
+        const confValue = document.getElementById('confValue');
+        const modelPathInput = document.getElementById('modelPath');
+        const reloadModelBtn = document.getElementById('reloadModel');
+
+        // Update confidence threshold display
+        confSlider.addEventListener('input', () => {
+            confValue.textContent = confSlider.value;
+            if (detector) {
+                detector.confidenceThreshold = parseFloat(confSlider.value);
+            }
+        });
+
+        // Load model
+        async function loadModel() {
+            statusEl.textContent = 'Loading model...';
+            statusEl.style.background = '#0f3460';
+
+            try {
+                const modelPath = modelPathInput.value;
+                detector = new BlazeEarInference({
+                    confidenceThreshold: parseFloat(confSlider.value)
+                });
+                await detector.load(modelPath);
+                
+                statusEl.textContent = `✅ Model loaded: ${detector.useEndToEnd ? 'End-to-End' : 'Simple'}`;
+                statusEl.style.background = '#155724';
+                
+                startBtn.disabled = false;
+            } catch (error) {
+                statusEl.textContent = `❌ Error loading model: ${error.message}`;
+                statusEl.style.background = '#721c24';
+                console.error(error);
+            }
+        }
+
+        // Reload model button
+        reloadModelBtn.addEventListener('click', loadModel);
+
+        // Start webcam
+        startBtn.addEventListener('click', async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: 640, height: 480, facingMode: 'user' }
+                });
+                video.srcObject = stream;
+                await video.play();
+                
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                
+                isWebcamRunning = true;
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                
+                detectLoop();
+            } catch (error) {
+                statusEl.textContent = `❌ Webcam error: ${error.message}`;
+                statusEl.style.background = '#721c24';
+            }
+        });
+
+        // Stop webcam
+        stopBtn.addEventListener('click', () => {
+            isWebcamRunning = false;
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+            }
+            if (video.srcObject) {
+                video.srcObject.getTracks().forEach(track => track.stop());
+            }
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            statsEl.textContent = '';
+        });
+
+        // Webcam detection loop
+        let frameCount = 0;
+        let lastTime = performance.now();
+        
+        async function detectLoop() {
+            if (!isWebcamRunning) return;
+
+            const startTime = performance.now();
+            
+            try {
+                const detections = await detector.detect(video);
+                
+                // Clear and draw detections
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                detector.drawDetections(ctx, detections, {
+                    color: '#00FF00',
+                    lineWidth: 3,
+                    fontSize: 16
+                });
+
+                // Calculate FPS
+                frameCount++;
+                const now = performance.now();
+                if (now - lastTime >= 1000) {
+                    const fps = frameCount;
+                    const inferenceTime = (now - startTime).toFixed(1);
+                    statsEl.textContent = `FPS: ${fps} | Inference: ${inferenceTime}ms | Detections: ${detections.length}`;
+                    frameCount = 0;
+                    lastTime = now;
+                }
+            } catch (error) {
+                console.error('Detection error:', error);
+            }
+
+            animationId = requestAnimationFrame(detectLoop);
+        }
+
+        // Image upload
+        imageInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const img = new Image();
+            img.onload = async () => {
+                // Resize canvas to fit image
+                const maxWidth = 640;
+                const scale = Math.min(1, maxWidth / img.width);
+                imageCanvas.width = img.width * scale;
+                imageCanvas.height = img.height * scale;
+                
+                // Draw image
+                imageCtx.drawImage(img, 0, 0, imageCanvas.width, imageCanvas.height);
+                
+                // Detect on original image
+                try {
+                    const startTime = performance.now();
+                    const detections = await detector.detect(img);
+                    const inferenceTime = (performance.now() - startTime).toFixed(1);
+                    
+                    // Draw detections (scaled)
+                    const scaledDetections = detections.map(d => ({
+                        ...d,
+                        ymin: d.ymin * scale,
+                        xmin: d.xmin * scale,
+                        ymax: d.ymax * scale,
+                        xmax: d.xmax * scale,
+                        x: d.xmin * scale,
+                        y: d.ymin * scale,
+                        width: (d.xmax - d.xmin) * scale,
+                        height: (d.ymax - d.ymin) * scale
+                    }));
+                    
+                    detector.drawDetections(imageCtx, scaledDetections, {
+                        color: '#00FF00',
+                        lineWidth: 2,
+                        fontSize: 14
+                    });
+
+                    // Update detection list
+                    let html = `<strong>Found ${detections.length} ear(s) in ${inferenceTime}ms</strong><br><br>`;
+                    detections.forEach((d, i) => {
+                        html += `<div>
+                            [${i}] box=(${d.ymin.toFixed(1)}, ${d.xmin.toFixed(1)}, ${d.ymax.toFixed(1)}, ${d.xmax.toFixed(1)})<br>
+                            &nbsp;&nbsp;&nbsp;&nbsp;conf=${(d.confidence * 100).toFixed(1)}%
+                        </div><br>`;
+                    });
+                    detectionListEl.innerHTML = html || 'No detections';
+                } catch (error) {
+                    detectionListEl.innerHTML = `Error: ${error.message}`;
+                    console.error(error);
+                }
+            };
+            img.src = URL.createObjectURL(file);
+        });
+
+        // Initialize
+        loadModel();
+    </script>
+</body>
+</html>
