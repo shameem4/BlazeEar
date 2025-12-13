@@ -342,6 +342,43 @@ pytest
 
 ---
 
+## Export to ONNX
+
+This repo includes a small helper script that exports the training checkpoint format
+(`model_state_dict` inside the `.pth`) to an ONNX graph.
+
+```bash
+# If needed:
+pip install onnx
+# Needed for the torch.export-based exporter:
+pip install onnxscript
+
+python export_onnx.py \
+  --checkpoint runs/checkpoints/BlazeEar_best.pth \
+  --output runs/checkpoints/BlazeEar_best.onnx
+```
+
+Note: as of PyTorch 2.8, `torch.export` ONNX export can fall back to the legacy exporter for some ops
+(notably padding). You can enforce a pure `torch.export` path with `--no-fallback` (may fail).
+
+The exported model takes `image: (N, 3, 128, 128)` and returns:
+
+- `raw_boxes: (N, 896, 16)`
+- `raw_scores: (N, 896, 1)` (logits)
+
+To export an ONNX model that includes post-processing (decode + NMS) and returns final detections:
+
+```bash
+python export_onnx.py \
+  --postprocess \
+  --checkpoint runs/checkpoints/BlazeEar_best.pth \
+  --output runs/checkpoints/BlazeEar_best_post.onnx
+```
+
+`detections` is `(num_detections, 5)` in `[ymin, xmin, ymax, xmax, score]` (normalized coords).
+
+---
+
 ## Next Directions
 
 Areas that naturally follow from the current pipeline:
