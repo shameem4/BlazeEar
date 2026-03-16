@@ -28,16 +28,16 @@ DEFAULT_SAVE_EVERY = 10
 
 # Model parameters
 DEFAULT_INPUT_SIZE = 128
-DEFAULT_DETECTION_THRESHOLD = 0.6
+DEFAULT_DETECTION_THRESHOLD = 0.70
 DEFAULT_TRAIN_THRESHOLD = 0.3
 DEFAULT_NMS_IOU_THRESHOLD = 0.35
 
 # Debug/inference defaults
 DEFAULT_DEBUG_WEIGHTS = DEFAULT_BEST_CHECKPOINT
 DEFAULT_SECONDARY_WEIGHTS = DEFAULT_WEIGHTS_PATH
-DEFAULT_COMPARE_THRESHOLD = 0.6
+DEFAULT_COMPARE_THRESHOLD = 0.70
 DEFAULT_COMPARE_LABEL = "Mediapipe"
-DEFAULT_DETECTOR_THRESHOLD_DEBUG = 0.6
+DEFAULT_DETECTOR_THRESHOLD_DEBUG = 0.70
 DEFAULT_SCREENSHOT_OUTPUT = "runs/logs/debug_images"
 DEFAULT_SCREENSHOT_COUNT = 10
 DEFAULT_SCREENSHOT_MIN_FACES = 2
@@ -50,3 +50,11 @@ DEFAULT_EVAL_IOU_THRESHOLD = 0.5
 NEAR_CENTER_DISTANCE_FRAC = 0.55
 NEAR_MIN_AREA_RATIO = 0.35
 NEAR_MIN_COVERAGE = 0.8
+
+# Geometric post-filters (false positive rejection)
+# Aspect ratio (width/height) bounds for plausible ear detections
+EAR_MIN_ASPECT_RATIO = 0.35  # ears are taller than wide at minimum
+EAR_MAX_ASPECT_RATIO = 1.4   # nearly square to slightly wider than tall
+# Min/max size as fraction of image max dimension
+EAR_MIN_SIZE_FRAC = 0.03     # reject tiny spurious detections
+EAR_MAX_SIZE_FRAC = 0.55     # reject implausibly large boxes

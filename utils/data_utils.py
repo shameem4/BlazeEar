@@ -82,8 +82,7 @@ def split_dataframe_by_images(
             n_val = len(image_ids) - 1
 
     val_ids = set(image_ids[:n_val])
-    val_id_list = list(val_ids)
-    val_mask = df[image_column].isin(val_id_list)
+    val_mask = df[image_column].isin(val_ids)
     val_df = df[val_mask].copy().reset_index(drop=True)
     train_df = df[~val_mask].copy().reset_index(drop=True)
     return cast(pd.DataFrame, train_df), cast(pd.DataFrame, val_df)

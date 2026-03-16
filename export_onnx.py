@@ -123,7 +123,7 @@ def export_onnx(
     fallback: bool = True,
     verbose: bool = False,
     postprocess: bool = False,
-    score_thresh: float = 0.75,
+    score_thresh: float = 0.70,
     iou_thresh: float = 0.3,
     topk: int = 200,
 ) -> None:
@@ -229,7 +229,7 @@ def main() -> int:
     parser.add_argument(
         "--score-thresh",
         type=float,
-        default=0.75,
+        default=0.70,
         help="Score threshold used during ONNX postprocessing export.",
     )
     parser.add_argument(

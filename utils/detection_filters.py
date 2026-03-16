@@ -9,6 +9,10 @@ from utils.config import (
     NEAR_CENTER_DISTANCE_FRAC,
     NEAR_MIN_AREA_RATIO,
     NEAR_MIN_COVERAGE,
+    EAR_MIN_ASPECT_RATIO,
+    EAR_MAX_ASPECT_RATIO,
+    EAR_MIN_SIZE_FRAC,
+    EAR_MAX_SIZE_FRAC,
 )
 
 
@@ -152,4 +156,45 @@ def filter_duplicate_detections(
     keep = _compute_keep_indices(boxes, scores, center_distance_frac, min_area_ratio, min_coverage)
     if keep.size == 0:
         return dets[:0]
+    return dets[keep]
+
+
+def filter_by_geometry(
+    detections: np.ndarray,
+    image_height: int,
+    image_width: int,
+    min_aspect_ratio: float = EAR_MIN_ASPECT_RATIO,
+    max_aspect_ratio: float = EAR_MAX_ASPECT_RATIO,
+    min_size_frac: float = EAR_MIN_SIZE_FRAC,
+    max_size_frac: float = EAR_MAX_SIZE_FRAC,
+) -> np.ndarray:
+    """Reject detections with implausible aspect ratios or sizes.
+
+    Boxes are expected as (N, >=4) with columns [ymin, xmin, ymax, xmax, ...].
+    Aspect ratio is width/height.  Size fraction is max(w,h) / max(img_w, img_h).
+
+    Returns the filtered array (same column layout as input).
+    """
+    if detections is None:
+        return detections
+
+    dets = np.asarray(detections, dtype=np.float32)
+    if dets.ndim == 1:
+        dets = dets.reshape(1, -1)
+    if dets.shape[0] == 0:
+        return dets
+
+    h = np.clip(dets[:, 2] - dets[:, 0], 1e-6, None)  # ymax - ymin
+    w = np.clip(dets[:, 3] - dets[:, 1], 1e-6, None)  # xmax - xmin
+    aspect = w / h
+
+    max_dim = float(max(image_height, image_width))
+    size_frac = np.maximum(w, h) / max_dim
+
+    keep = (
+        (aspect >= min_aspect_ratio)
+        & (aspect <= max_aspect_ratio)
+        & (size_frac >= min_size_frac)
+        & (size_frac <= max_size_frac)
+    )
     return dets[keep]

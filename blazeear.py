@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from blazebase import BlazeBlock_WT
 from blazedetector import BlazeDetector
 from utils.anchor_utils import generate_reference_anchors
+from utils.detection_filters import filter_by_geometry
 
 
 
@@ -45,7 +46,7 @@ class BlazeEar(BlazeDetector):
         self.y_scale = 128.0
         self.h_scale = 128.0
         self.w_scale = 128.0
-        self.min_score_thresh = 0.75
+        self.min_score_thresh = 0.70
         self.min_suppression_threshold = 0.3
         self.num_keypoints = 6  # Keep keypoint outputs (untrained without labels)
 
@@ -177,6 +178,11 @@ class BlazeEar(BlazeDetector):
         img1, img2, scale, pad = self.resize_pad(frame)
         normalized_ear_detections = self.predict_on_image(img2)
         ear_detections = self.denormalize_detections(normalized_ear_detections, scale, pad)
-        # xc, yc, scale, theta = self.detection2roi(ear_detections.cpu())
+
+        # Geometric post-filter: reject implausible aspect ratios and sizes
+        if ear_detections.numel() > 0:
+            dets_np = ear_detections.cpu().numpy()
+            dets_np = filter_by_geometry(dets_np, frame.shape[0], frame.shape[1])
+            ear_detections = torch.from_numpy(dets_np).to(ear_detections.device)
 
         return ear_detections

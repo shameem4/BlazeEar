@@ -266,9 +266,9 @@ class BlazeDetector(BlazeBase):
         # 4. Non-maximum suppression to remove overlapping detections:
         filtered_detections = []
         for i in range(len(detections)):
-            faces = self._weighted_non_max_suppression(detections[i])
-            faces = torch.stack(faces) if len(faces) > 0 else torch.zeros((0, int(self.num_coords)+1))
-            filtered_detections.append(faces)
+            ears = self._hard_non_max_suppression(detections[i])
+            ears = torch.stack(ears) if len(ears) > 0 else torch.zeros((0, int(self.num_coords)+1))
+            filtered_detections.append(ears)
 
         return filtered_detections
 
@@ -355,26 +355,20 @@ class BlazeDetector(BlazeBase):
             num_keypoints=getattr(self, "num_keypoints", 0),
         )
 
-    def _weighted_non_max_suppression(self, detections: torch.Tensor) -> list[torch.Tensor]:
-        """The alternative NMS method as mentioned in the BlazeFace/BlazeEar paper:
+    def _hard_non_max_suppression(self, detections: torch.Tensor) -> list[torch.Tensor]:
+        """Standard hard NMS: keep the highest-scoring detection and suppress
+        all overlapping boxes above the IoU threshold.
 
-        "We replace the suppression algorithm with a blending strategy that
-        estimates the regression parameters of a bounding box as a weighted
-        mean between the overlapping predictions."
+        Unlike weighted NMS, this does not blend coordinates or average
+        confidence scores, which avoids creating phantom detections from
+        clusters of weak false positives.
 
-        The original MediaPipe code assigns the score of the most confident
-        detection to the weighted detection, but we take the average score
-        of the overlapping detections.
+        The input detections should be a Tensor of shape (count, num_coords+1).
 
-        The input detections should be a Tensor of shape (count, 5).
-
-        Returns a list of PyTorch tensors, one for each detected face.
-        
-        This is based on the source code from:
-        mediapipe/calculators/util/non_max_suppression_calculator.cc
-        mediapipe/calculators/util/non_max_suppression_calculator.proto
+        Returns a list of PyTorch tensors, one for each detected ear.
         """
-        if len(detections) == 0: return []
+        if len(detections) == 0:
+            return []
 
         output_detections = []
 
@@ -383,37 +377,22 @@ class BlazeDetector(BlazeBase):
 
         while len(remaining) > 0:
             detection = detections[remaining[0]]
+            output_detections.append(detection)
 
-            # Compute the overlap between the first box and the other 
-            # remaining boxes. (Note that the other_boxes also include
-            # the first_box.)
+            if len(remaining) == 1:
+                break
+
+            # Compute IoU between the kept detection and all remaining.
             first_box = detection[:4]
-            other_boxes = detections[remaining, :4]
+            other_boxes = detections[remaining[1:], :4]
             ious = self.overlap_similarity(first_box, other_boxes)
-
-            # If two detections don't overlap enough, they are considered
-            # to be from different faces.
             ious = torch.nan_to_num(ious, nan=0.0, posinf=0.0, neginf=0.0)
-            mask = ious > self.min_suppression_threshold
-            if not torch.any(mask):
-                mask[0] = True
-            overlapping = remaining[mask]
-            remaining = remaining[~mask]
 
-            # Take an average of the coordinates from the overlapping
-            # detections, weighted by their confidence scores.
-            weighted_detection = detection.clone()
-            if len(overlapping) > 1:
-                coordinates = detections[overlapping, :self.num_coords]
-                scores = detections[overlapping, self.num_coords:self.num_coords+1]
-                total_score = scores.sum()
-                weighted = (coordinates * scores).sum(dim=0) / total_score
-                weighted_detection[:self.num_coords] = weighted
-                weighted_detection[self.num_coords] = total_score / len(overlapping)
+            # Keep only boxes that do NOT overlap enough with the kept one.
+            keep_mask = ious <= self.min_suppression_threshold
+            remaining = remaining[1:][keep_mask]
 
-            output_detections.append(weighted_detection)
-
-        return output_detections    
+        return output_detections
 
 
     # IOU functions now use utils.iou module

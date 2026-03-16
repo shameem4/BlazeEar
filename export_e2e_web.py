@@ -5,7 +5,7 @@ from blazeear_inference import BlazeEarInference
 # Load pipeline
 pipeline = BlazeEarInference(
     weights_path='runs/checkpoints/BlazeEar_best.pth',
-    confidence_threshold=0.75,
+    confidence_threshold=0.70,
     device='cuda'
 )
 

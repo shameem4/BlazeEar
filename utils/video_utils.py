@@ -23,7 +23,11 @@ class WebcamVideoStream:
 
     def _update(self) -> None:
         while not self.stopped:
-            self.grabbed, self.frame = self.stream.read()
+            grabbed, frame = self.stream.read()
+            if grabbed:
+                self.grabbed, self.frame = grabbed, frame
+            else:
+                time.sleep(0.001)
 
     def read(self) -> np.ndarray:
         return self.frame

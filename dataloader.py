@@ -290,9 +290,6 @@ def create_dataloader(
     )
 
 
-# Legacy alias for backward compatibility
-get_dataloader = create_dataloader
-
 
 def create_train_val_split(
     csv_path: str,

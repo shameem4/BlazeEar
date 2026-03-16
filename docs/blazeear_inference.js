@@ -30,12 +30,17 @@ class BlazeEarInference {
     /**
      * Create a BlazeEar detector instance
      * @param {Object} options - Configuration options
-     * @param {number} options.confidenceThreshold - Minimum confidence for detections (default: 0.75)
+     * @param {number} options.confidenceThreshold - Minimum confidence for detections (default: 0.70)
      * @param {number} options.iouThreshold - IoU threshold for NMS (default: 0.3)
      */
     constructor(options = {}) {
-        this.confidenceThreshold = options.confidenceThreshold ?? 0.75;
+        this.confidenceThreshold = options.confidenceThreshold ?? 0.70;
         this.iouThreshold = options.iouThreshold ?? 0.3;
+        // Geometric filter thresholds (aspect ratio = width/height)
+        this.minAspectRatio = options.minAspectRatio ?? 0.35;
+        this.maxAspectRatio = options.maxAspectRatio ?? 1.4;
+        this.minSizeFrac = options.minSizeFrac ?? 0.03;
+        this.maxSizeFrac = options.maxSizeFrac ?? 0.55;
         this.inputSize = 128;
         this.session = null;
         this.isLoaded = false;
@@ -288,7 +293,7 @@ class BlazeEarInference {
         // Apply NMS
         const detections = this._nms(candidates, this.iouThreshold);
 
-        // Clamp to image bounds and add convenience properties
+        // Clamp to image bounds, add convenience properties, then filter geometry
         for (const det of detections) {
             det.ymin = Math.max(0, Math.min(det.ymin, originalHeight));
             det.xmin = Math.max(0, Math.min(det.xmin, originalWidth));
@@ -301,7 +306,7 @@ class BlazeEarInference {
             delete det.index;  // Remove internal property
         }
 
-        return detections;
+        return this._filterByGeometry(detections, originalWidth, originalHeight);
     }
 
     /**
@@ -346,7 +351,7 @@ class BlazeEarInference {
             });
         }
 
-        return detections;
+        return this._filterByGeometry(detections, originalWidth, originalHeight);
     }
 
     /**
@@ -398,6 +403,27 @@ class BlazeEarInference {
         const unionArea = areaA + areaB - interArea;
 
         return unionArea > 0 ? interArea / unionArea : 0;
+    }
+
+    /**
+     * Filter detections by aspect ratio and size relative to image dimensions.
+     * @private
+     */
+    _filterByGeometry(detections, imageWidth, imageHeight) {
+        const maxDim = Math.max(imageWidth, imageHeight);
+        return detections.filter(det => {
+            const w = det.xmax - det.xmin;
+            const h = det.ymax - det.ymin;
+            if (h < 1e-6) return false;
+            const aspect = w / h;
+            const sizeFrac = Math.max(w, h) / maxDim;
+            return (
+                aspect >= this.minAspectRatio &&
+                aspect <= this.maxAspectRatio &&
+                sizeFrac >= this.minSizeFrac &&
+                sizeFrac <= this.maxSizeFrac
+            );
+        });
     }
 
     /**

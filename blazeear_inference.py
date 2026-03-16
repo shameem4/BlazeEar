@@ -15,7 +15,7 @@ Usage (Python):
     
     pipeline = BlazeEarInference(
         weights_path="runs/checkpoints/BlazeEar_best.pth",
-        confidence_threshold=0.75,
+        confidence_threshold=0.70,
         iou_threshold=0.3,
         device="cuda"
     )
@@ -78,7 +78,7 @@ class BlazeEarInference(nn.Module):
     
     Args:
         weights_path: Path to trained model weights (.pth file)
-        confidence_threshold: Minimum score for a detection (default: 0.75)
+        confidence_threshold: Minimum score for a detection (default: 0.70)
         iou_threshold: IoU threshold for NMS (default: 0.3)
         input_size: Model input size (default: 128)
         max_detections: Maximum number of detections to return (default: 100)
@@ -96,7 +96,7 @@ class BlazeEarInference(nn.Module):
     def __init__(
         self,
         weights_path: Optional[Union[str, Path]] = None,
-        confidence_threshold: float = 0.75,
+        confidence_threshold: float = 0.70,
         iou_threshold: float = 0.3,
         input_size: int = 128,
         max_detections: int = 100,
@@ -718,7 +718,7 @@ class BlazeEarInferenceExportable(nn.Module):
         self,
         model: nn.Module,
         anchors: torch.Tensor,
-        confidence_threshold: float = 0.75,
+        confidence_threshold: float = 0.70,
         iou_threshold: float = 0.3,
         input_size: int = 128,
         max_detections: int = 100,
@@ -965,7 +965,7 @@ class BlazeEarEndToEndExportable(nn.Module):
         self,
         model: nn.Module,
         anchors: torch.Tensor,
-        confidence_threshold: float = 0.75,
+        confidence_threshold: float = 0.70,
         iou_threshold: float = 0.3,
         input_size: int = 128,
         max_detections: int = 100,
@@ -1080,7 +1080,7 @@ class BlazeEarEndToEndExportable(nn.Module):
 
 def load_inference_pipeline(
     weights_path: str = "runs/checkpoints/BlazeEar_best.pth",
-    confidence_threshold: float = 0.75,
+    confidence_threshold: float = 0.70,
     iou_threshold: float = 0.3,
     device: str = "auto",
 ) -> BlazeEarInference:
@@ -1118,7 +1118,7 @@ if __name__ == "__main__":
     parser.add_argument("--export-onnx-e2e", type=str, default=None, 
                         help="Export end-to-end ONNX (turnkey: any resolution -> original coords)")
     parser.add_argument("--export-torchscript", type=str, default=None, help="Export to TorchScript")
-    parser.add_argument("--confidence", type=float, default=0.75)
+    parser.add_argument("--confidence", type=float, default=0.70)
     parser.add_argument("--iou", type=float, default=0.3)
     args = parser.parse_args()
     

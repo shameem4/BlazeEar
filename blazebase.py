@@ -1,4 +1,3 @@
-import cv2
 import numpy as np
 import torch
 import torch.nn as nn
@@ -13,7 +12,6 @@ from utils.anchor_utils import (
     flatten_anchor_targets_torch,
     anchor_options,
 )
-from utils.iou import compute_iou_np as compute_iou
 
 
 # =============================================================================

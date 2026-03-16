@@ -21,7 +21,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from utils import model_utils, drawing, video_utils, config
-from utils.detection_filters import filter_duplicate_detections
+from utils.detection_filters import filter_duplicate_detections, filter_by_geometry
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
@@ -109,6 +109,7 @@ if __name__ == "__main__":
                 detections.cpu().numpy() if hasattr(detections, "cpu") else np.asarray(detections)
             )
             detections_np = np.asarray(detections_np)
+            detections_np = filter_by_geometry(detections_np, frame.shape[0], frame.shape[1])
             filtered_detections = filter_duplicate_detections(detections_np)
 
         # Draw detections
