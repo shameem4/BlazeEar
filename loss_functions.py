@@ -45,7 +45,8 @@ class BlazeEarDetectionLoss(nn.Module):
         use_focal_loss: bool = False,
         focal_alpha: float = 0.25,
         focal_gamma: float = 2.0,
-        positive_classification_weight: Optional[float] = None
+        positive_classification_weight: Optional[float] = None,
+        regression_beta: float = 0.1
     ):
         """
         Args:
@@ -59,6 +60,15 @@ class BlazeEarDetectionLoss(nn.Module):
             focal_gamma: Focal loss gamma parameter (focusing parameter)
             positive_classification_weight: Optional override for positive classification loss weight.
                 Defaults to classification_weight when not provided.
+            regression_beta: SmoothL1 transition point, in the same units as
+                the decoded boxes (normalized [0, 1]). 0.1 is about 13 px at the
+                128 px input: errors below it are treated as fine localization
+                and get the quadratic branch, larger ones are outliers and get
+                the linear branch. The previous default of 1.0 is the width of
+                the whole image, so a 6 px error received a gradient of 0.05
+                while a gross error received one 20x larger -- fine localization
+                was effectively untrained. Measured on the epoch-94 checkpoint,
+                48.3% of positive-anchor errors fell below 1.0.
         """
         super().__init__()
         self.hard_negative_ratio = hard_negative_ratio
@@ -72,81 +82,73 @@ class BlazeEarDetectionLoss(nn.Module):
         self.focal_alpha = focal_alpha
         self.focal_gamma = focal_gamma
         
-        self.huber_loss = nn.SmoothL1Loss(reduction='mean')
+        self.regression_beta = float(regression_beta)
+        self.huber_loss = nn.SmoothL1Loss(reduction='mean', beta=self.regression_beta)
     
     def focal_loss(
         self,
-        pred: torch.Tensor,
+        logits: torch.Tensor,
         target: torch.Tensor
     ) -> torch.Tensor:
         """
-        Compute focal loss for classification.
-        
-        Focal loss down-weights easy examples and focuses on hard negatives.
+        Compute focal loss for classification, from logits.
+
         FL(pt) = -alpha * (1 - pt)^gamma * log(pt)
-        
+
         Args:
-            pred: Predicted probabilities (after sigmoid) [N]
+            logits: Raw classification logits (no sigmoid applied) [N]
             target: Target labels (0 or 1) [N]
-            
+
         Returns:
             Focal loss value (scalar)
         """
-        # Clamp for numerical stability
-        pred = torch.clamp(pred, min=1e-7, max=1 - 1e-7)
-        
-        # Binary cross entropy per element
-        bce = -target * torch.log(pred) - (1 - target) * torch.log(1 - pred)
-        
-        # Focal weight: (1 - pt)^gamma
-        pt = torch.where(target == 1, pred, 1 - pred)
+        bce = F.binary_cross_entropy_with_logits(logits, target, reduction='none')
+
+        # pt = p for positives, 1 - p for negatives. exp(-bce) recovers it
+        # without a second sigmoid and without the saturation that made the
+        # probability-space version lose gradient on confident mistakes.
+        pt = torch.exp(-bce)
         focal_weight = (1 - pt) ** self.focal_gamma
-        
-        # Alpha weighting
         alpha_weight = torch.where(target == 1, self.focal_alpha, 1 - self.focal_alpha)
-        
-        loss = alpha_weight * focal_weight * bce
-        return loss.mean()
+
+        return (alpha_weight * focal_weight * bce).mean()
     
     def bce_loss(
         self,
-        pred: torch.Tensor,
+        logits: torch.Tensor,
         target: torch.Tensor
     ) -> torch.Tensor:
         """
-        Compute binary cross entropy loss.
-        
+        Compute binary cross entropy from logits.
+
         Args:
-            pred: Predicted probabilities (after sigmoid) [N]
+            logits: Raw classification logits (no sigmoid applied) [N]
             target: Target labels (0 or 1) [N]
-            
+
         Returns:
             BCE loss value (scalar)
         """
-        # Clamp for numerical stability
-        pred = torch.clamp(pred, min=1e-7, max=1 - 1e-7)
-        bce = -target * torch.log(pred) - (1 - target) * torch.log(1 - pred)
-        return bce.mean()
+        return F.binary_cross_entropy_with_logits(logits, target)
     
     def classification_loss(
         self,
-        pred: torch.Tensor,
+        logits: torch.Tensor,
         target: torch.Tensor
     ) -> torch.Tensor:
         """
-        Compute classification loss (BCE or Focal).
-        
+        Compute classification loss (BCE or Focal) from logits.
+
         Args:
-            pred: Predicted probabilities [N]
+            logits: Raw classification logits [N]
             target: Target labels [N]
-            
+
         Returns:
             Classification loss value
         """
         if self.use_focal_loss:
-            return self.focal_loss(pred, target)
+            return self.focal_loss(logits, target)
         else:
-            return self.bce_loss(pred, target)
+            return self.bce_loss(logits, target)
     
     def decode_boxes(
         self,
@@ -169,7 +171,7 @@ class BlazeEarDetectionLoss(nn.Module):
     
     def forward(
         self,
-        class_predictions: torch.Tensor,
+        class_logits: torch.Tensor,
         anchor_predictions: torch.Tensor,
         anchor_targets: torch.Tensor,
         reference_anchors: torch.Tensor
@@ -183,7 +185,7 @@ class BlazeEarDetectionLoss(nn.Module):
         - BCE for classification
 
         Args:
-            class_predictions: [B, 896, 1] predicted class scores (sigmoid applied)
+            class_logits: [B, 896, 1] raw classification logits (no sigmoid)
             anchor_predictions: [B, 896, 4] predicted box offsets [dx, dy, w, h]
             anchor_targets: [B, 896, 5] targets [class, ymin, xmin, ymax, xmax]
             reference_anchors: [896, 2] anchor centers [x, y]
@@ -191,7 +193,7 @@ class BlazeEarDetectionLoss(nn.Module):
         Returns:
             Dict with 'total', 'detection', 'background', 'positive' losses
         """
-        B = class_predictions.shape[0]
+        B = class_logits.shape[0]
         
         # Extract targets
         true_classes = anchor_targets[:, :, 0]  # [B, 896]
@@ -210,15 +212,15 @@ class BlazeEarDetectionLoss(nn.Module):
             self.min_negatives_per_image
         )
         
-        # Squeeze class predictions
-        class_pred_squeezed = class_predictions.squeeze(-1)  # [B, 896]
-        
-        # For hard negative mining: set positive locations to very low score
-        # so they won't be selected as negatives
-        predicted_classes_scores = torch.where(
-            faces_mask_bool,
-            torch.full_like(class_pred_squeezed, -99.0),
-            class_pred_squeezed
+        # Squeeze class logits
+        class_pred_squeezed = class_logits.squeeze(-1)  # [B, 896]
+
+        # For hard negative mining: push positive locations below every real
+        # logit so they cannot be selected as negatives. A fixed sentinel such
+        # as -99 is not safe in logit space, where a confident negative can go
+        # lower than that.
+        predicted_classes_scores = class_pred_squeezed.masked_fill(
+            faces_mask_bool, torch.finfo(class_pred_squeezed.dtype).min
         )  # [B, 896]
         
         # Sort and select top-k background predictions (hard negatives)
@@ -236,7 +238,7 @@ class BlazeEarDetectionLoss(nn.Module):
                 torch.zeros_like(background_class_predictions)
             )
         else:
-            background_loss = torch.tensor(0.0, device=class_predictions.device)
+            background_loss = torch.tensor(0.0, device=class_logits.device)
         
         # Positive loss: predict 1 for faces/ears
         if positive_class_predictions.numel() > 0:
@@ -245,7 +247,7 @@ class BlazeEarDetectionLoss(nn.Module):
                 torch.ones_like(positive_class_predictions)
             )
         else:
-            positive_loss = torch.tensor(0.0, device=class_predictions.device)
+            positive_loss = torch.tensor(0.0, device=class_logits.device)
         
         # === Regression Loss ===
         # Decode predictions to absolute coordinates
@@ -258,7 +260,7 @@ class BlazeEarDetectionLoss(nn.Module):
         if filtered_pred_coords.numel() > 0:
             detection_loss = self.huber_loss(filtered_pred_coords, filtered_true_coords)
         else:
-            detection_loss = torch.tensor(0.0, device=class_predictions.device)
+            detection_loss = torch.tensor(0.0, device=class_logits.device)
         
         # === Combined Loss ===
         # Following vincent1bt formula: detection * 150 + background * 35 + positive * 35
@@ -274,7 +276,7 @@ class BlazeEarDetectionLoss(nn.Module):
             'background': background_loss,
             'positive': positive_loss,
             'num_positives': faces_num,
-            'num_negatives': torch.tensor(background_num * B, device=class_predictions.device)
+            'num_negatives': torch.tensor(background_num * B, device=class_logits.device)
         }
 
 

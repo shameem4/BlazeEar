@@ -189,7 +189,10 @@ class BlazeEarTrainer:
             images: [B, 3, H, W] input images
 
         Returns:
-            class_predictions: [B, 896, 1] sigmoid scores (probabilities)
+            class_logits: [B, 896, 1] raw classification logits (no sigmoid).
+                The loss applies binary_cross_entropy_with_logits itself, which
+                is numerically stable under autocast; pre-applying sigmoid in
+                fp16 and taking log of it afterwards was not.
             anchor_predictions: [B, 896, 4] box predictions
         """
         # Use training output method that bypasses NMS
@@ -206,17 +209,12 @@ class BlazeEarTrainer:
             if raw_boxes.shape[-1] > 4:
                 raw_boxes = raw_boxes[..., :4]
 
-            # Apply sigmoid to convert logits to probabilities
-            # Loss function expects probabilities, not logits
-            class_predictions = torch.sigmoid(raw_scores)
-
-            return class_predictions, raw_boxes
+            return raw_scores, raw_boxes
         else:
             # Fallback: call model directly
             output = self.model(images)
             if isinstance(output, tuple):
-                scores = torch.sigmoid(output[1])  # Apply sigmoid
-                return scores, output[0]  # scores, boxes
+                return output[1], output[0]  # logits, boxes
             raise ValueError("Model must have get_training_outputs() method")
 
     @staticmethod
@@ -397,7 +395,7 @@ class BlazeEarTrainer:
     
     def _compute_metrics(
         self,
-        class_predictions: torch.Tensor,
+        class_logits: torch.Tensor,
         anchor_targets: torch.Tensor,
         anchor_predictions: torch.Tensor,
         gt_boxes_tensor: Optional[torch.Tensor] = None,
@@ -420,7 +418,7 @@ class BlazeEarTrainer:
         - positive_anchor_iou: regression quality on target-positive anchors only
 
         Args:
-            class_predictions: [B, 896, 1] predicted scores (sigmoid applied)
+            class_logits: [B, 896, 1] raw classification logits
             anchor_targets: [B, 896, 5] targets [class, ymin, xmin, ymax, xmax]
             anchor_predictions: [B, 896, 4] predicted boxes
             gt_boxes_tensor: [B, max_gt, 4] padded ground-truth boxes
@@ -433,7 +431,8 @@ class BlazeEarTrainer:
         """
         true_classes = anchor_targets[:, :, 0]  # [B, 896]
         true_coords = anchor_targets[:, :, 1:]  # [B, 896, 4]
-        pred_scores = class_predictions.squeeze(-1)  # [B, 896]
+        # Metrics are thresholded and ranked in probability space.
+        pred_scores = torch.sigmoid(class_logits).squeeze(-1)  # [B, 896]
 
         # Positive accuracy
         positive_mask = true_classes > 0.5
@@ -477,7 +476,7 @@ class BlazeEarTrainer:
                     anchor_predictions, self.reference_anchors
                 )
 
-            batch_size = class_predictions.shape[0]
+            batch_size = class_logits.shape[0]
             fallback_gt = None
             if gt_boxes_tensor is None or gt_box_counts is None:
                 fallback_gt = self._build_gt_from_targets(anchor_targets)
@@ -544,9 +543,9 @@ class BlazeEarTrainer:
             self.optimizer.zero_grad(set_to_none=True)
 
             with autocast(enabled=self.use_amp):
-                class_predictions, anchor_predictions = self._get_training_outputs(images)
+                class_logits, anchor_predictions = self._get_training_outputs(images)
                 losses = self.loss_fn(
-                    class_predictions,
+                    class_logits,
                     anchor_predictions,
                     anchor_targets,
                     self.reference_anchors
@@ -569,7 +568,7 @@ class BlazeEarTrainer:
             if compute_metrics_this_batch:
                 with torch.no_grad():
                     metrics = self._compute_metrics(
-                        class_predictions,
+                        class_logits,
                         anchor_targets,
                         anchor_predictions,
                         gt_boxes_tensor,
@@ -679,16 +678,16 @@ class BlazeEarTrainer:
                     gt_box_counts = None
                 
                 with autocast(enabled=self.use_amp):
-                    class_predictions, anchor_predictions = self._get_training_outputs(images)
+                    class_logits, anchor_predictions = self._get_training_outputs(images)
                     losses = self.loss_fn(
-                        class_predictions,
+                        class_logits,
                         anchor_predictions,
                         anchor_targets,
                         self.reference_anchors
                     )
                 
                 metrics = self._compute_metrics(
-                    class_predictions,
+                    class_logits,
                     anchor_targets,
                     anchor_predictions,
                     gt_boxes_tensor,

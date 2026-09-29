@@ -164,14 +164,49 @@ it aligns training with inference, which already resamples source -> 256 -> 128 
 
 ## P3 — Loss and numerics
 
-- [ ] **Use `binary_cross_entropy_with_logits`.** Training pre-applies `sigmoid`
+- [x] **Use `binary_cross_entropy_with_logits`.** Training pre-applies `sigmoid`
       inside `autocast`, then the loss hand-rolls BCE with `clamp(1e-7, 1-1e-7)`.
       Under fp16 the sigmoid saturates long before the clamp, capping per-sample
       loss at ~16.1 and truncating gradients on confidently-wrong anchors — exactly
       the samples hard-negative mining just selected. Same for the focal path.
-- [ ] **Box regression scale.** `decode_boxes` returns normalized [0,1] coords, so
-      the SmoothL1 argument never leaves the quadratic regime and "Huber" is a no-op.
-      Set `beta` to the coordinate scale, or regress in anchor-relative units.
+- [x] **Box regression scale.** *Correction to the original review claim:* the
+      SmoothL1 argument was **not** always inside the quadratic regime. Measured
+      on the epoch-94 checkpoint, 51.7% of positive-anchor errors exceed 1.0, so
+      the loss was already largely linear. The real defect is the opposite end:
+      beta=1.0 is the width of the entire image, so a 6 px error received a
+      gradient of 0.05 while a gross error received one 20x larger, and fine
+      localization went untrained. beta is now 0.1 (~13 px at the 128 px input):
+      quadratic for fine localization, linear and outlier-robust above.
+
+### Measured impact of the P3 fixes
+
+The old classification loss applied `sigmoid` and then `torch.log` behind a
+`clamp(1e-7, 1 - 1e-7)`. `torch.clamp` has **exactly zero gradient outside its
+range**, so any positive anchor whose logit fell below about -16.1 received no
+gradient at all, permanently. On the epoch-94 checkpoint:
+
+| statistic over positive-target anchors | value |
+| --- | --- |
+| median logit | **-1047** |
+| 25th / 75th percentile logit | -4990 / -13.3 |
+| **fraction below -16.1 (the dead zone)** | **73.5%** |
+| background anchors above +16.1 | 0.001% |
+
+Three quarters of the positive supervision signal was switched off and could not
+recover. Mean positive loss sat at 13.69 against the clamp's 16.1 ceiling. In
+logit space the same batch scores 4411, i.e. 322x — that ratio measures how far
+the checkpoint had drifted into the dead zone, not what a fresh run will see,
+since MediaPipe-initialised logits start near 0.
+
+This is very likely the dominant cause of the detector's behaviour: anchors that
+should fire are pinned at hugely negative logits, their box heads are therefore
+unconstrained (median regression error 6.09 in normalized units, where 1.0 is the
+whole image), and the surviving detections flood the image with low-confidence
+boxes. It also explains why the geometry and duplicate filters were needed at
+inference.
+
+`binary_cross_entropy_with_logits` has bounded gradient regardless of how wrong a
+prediction is, so no clamping is needed and nothing destabilises.
 
 ## P4 — Architecture (single retrain)
 
