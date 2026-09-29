@@ -10,7 +10,7 @@ Browser-based ear detection using ONNX Runtime Web.
    python -m http.server 8000
    ```
 
-2. **Open in browser**: http://localhost:8000/js_demo/
+2. **Open in browser**: http://localhost:8000/docs/
 
 3. **Use the demo**:
    - Click "Start Webcam" for live detection
@@ -70,4 +70,4 @@ const detector = new BlazeEarInference(options);
 python export_e2e_web.py
 ```
 
-This creates `js_demo/BlazeEar_web.onnx` from the trained weights.
+This creates `docs/BlazeEar_web.onnx` from the trained weights.

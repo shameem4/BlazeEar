@@ -10,7 +10,7 @@ pipeline = BlazeEarInference(
 )
 
 # Export web-optimized ONNX (avoids int64 ops)
-pipeline.to_onnx('js_demo/BlazeEar_web.onnx', for_web=True)
+pipeline.to_onnx('docs/BlazeEar_web.onnx', for_web=True)
 
 print('Done!')
 print()

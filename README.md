@@ -285,16 +285,38 @@ Examples (from this run):
 The simplest programmatic usage:
 
 ```python
-from blazeear import BlazeEar
-import torch
+from blazeear_inference import BlazeEarInference
 
-model = BlazeEar()
-model.load_weights("runs/checkpoints/BlazeEar_best.pth")
-model.to("cuda").eval()
+pipeline = BlazeEarInference(
+    weights_path="runs/checkpoints/BlazeEar_best.pth",
+    device="cuda",
+)
 
 # img: numpy HxWx3 RGB
+dets = pipeline.predict(img)  # (N, 5) [ymin, xmin, ymax, xmax, score] in image space
+```
+
+`BlazeEarInference` accepts both checkpoint layouts (a bare state dict, or a
+training checkpoint with the weights under `model_state_dict`). To drive the
+bare model instead, unwrap the checkpoint yourself and build the anchors after
+moving the model to its device:
+
+```python
+import torch
+from blazeear import BlazeEar
+from utils.anchor_utils import anchor_options
+
+model = BlazeEar()
+checkpoint = torch.load("runs/checkpoints/BlazeEar_best.pth", map_location="cpu")
+model.load_state_dict(checkpoint["model_state_dict"])
+model.to("cuda").eval()
+model.generate_anchors(anchor_options)
+
 dets = model.process(img)  # returns boxes in original image space
 ```
+
+Note: `load_weights()` only handles a bare state dict, so it cannot load the
+`.pth` files written by `train_blazeear.py` directly.
 
 Utilities:
 
