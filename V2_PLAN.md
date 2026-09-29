@@ -13,22 +13,59 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
 Until these land, no experiment is interpretable. None of them require a retrain;
 they change what the numbers mean, not what the model is.
 
-- [ ] **Dataset-level mAP.** `utils/metrics.py:compute_map_torch` computes VOC07
+- [x] **Dataset-level mAP.** `utils/metrics.py:compute_map_torch` computes VOC07
       11-point AP *per image*, and `_compute_metrics` averages those. With 1–2 GT
       boxes per image the per-image AP quantizes to a few discrete values and the
       mean is dominated by that quantization. Replace with a single PR curve pooled
       over the whole split (all-point interpolation), and report mAP@0.5 plus
       mAP@[.5:.95].
-- [ ] **Fix checkpoint selection.** `train()` selects `is_best` on validation
+- [x] **Fix checkpoint selection.** `train()` selects `is_best` on validation
       *loss* over `200 // batch_size` batches of an unshuffled loader, and
       `split_dataframe_by_images` preserves master-CSV row order, which is
       source-by-source. The selection slice is therefore the first ~192 images of
       one annotation source. Select on mAP, evaluate on the full val split.
-- [ ] **Stop reporting `mean_iou` as detection quality.** It is computed only over
+- [x] **Stop reporting `mean_iou` as detection quality.** It is computed only over
       target-positive anchors, so false positives and misses cannot affect it.
       Rename to `positive_anchor_iou` and add a real post-NMS detection IoU.
 - [ ] **Break metrics out by `annotation_source`**, so GT and pseudo-label
       performance are never averaged into one headline number again.
+
+### Measured impact of the P0 fixes
+
+`runs/checkpoints/BlazeEar_best.pth` (epoch 94) on the full 2022-image val split,
+old metric vs new, same checkpoint and same detection path throughout:
+
+| metric | value |
+| --- | --- |
+| old per-image average, first 192 images (what was published) | 0.4286 |
+| old per-image average, full val | 0.2801 |
+| **pooled mAP@0.5** | **0.1358** |
+| pooled mAP@[.5:.95] | 0.0328 |
+| post-NMS IoU on matched detections | 0.6242 |
+| detections kept vs 4009 GT boxes | 78834 |
+
+The published number was roughly 3x the real one. The detector emits ~39 detections
+per image at the 0.1 eval threshold; per-image AP averaging hid that, because a
+flood of false positives spread across images barely moves a per-image mean but
+dominates a pooled ranking. Localization is not the problem — matched boxes sit at
+0.62 IoU. Precision is.
+
+**The documented "peak 0.46 -> final 0.25 collapse" is a measurement artifact, not a
+training dynamic.** On this one unchanging checkpoint the old metric reads:
+
+| val images evaluated | old mAP@0.5 |
+| --- | --- |
+| 96 | 0.5508 |
+| 192 | 0.4286 |
+| 288 | 0.3312 |
+| 480 | 0.2497 |
+| 2022 | 0.2801 |
+
+Per-epoch validation used `200 // batch_size` batches and the final summary used
+`500 // batch_size`, so the reported decline from ~0.46 to ~0.25 is reproduced
+exactly by changing only the subset size, with the model held fixed. `val.csv`
+preserves master-CSV order, which is source-by-source, so short prefixes sample one
+easy source.
 
 ## P1 — Data and labels (long pole; blocks the retrain)
 

@@ -42,7 +42,8 @@ from torch.cuda.amp import autocast, GradScaler
 from blazeear import BlazeEar
 from blazebase import generate_reference_anchors, load_mediapipe_weights
 from dataloader import create_dataloader
-from loss_functions import BlazeEarDetectionLoss, compute_mean_iou, compute_map
+from loss_functions import BlazeEarDetectionLoss, compute_mean_iou
+from utils.detection_eval import DetectionEvaluator
 from utils.config import (
     DEFAULT_BEST_CHECKPOINT,
     DEFAULT_BATCH_SIZE,
@@ -159,6 +160,7 @@ class BlazeEarTrainer:
         self.epoch = 0
         self.global_step = 0
         self.best_val_loss = float('inf')
+        self.best_val_map = -1.0
         
         # Metrics tracking
         self.metrics = {
@@ -350,6 +352,38 @@ class BlazeEarTrainer:
 
         return torch.stack(keep) if keep else torch.empty(0, dtype=torch.long, device=boxes.device)
 
+    def _detections_for_image(
+        self,
+        scores: torch.Tensor,
+        decoded_boxes: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Run the evaluation detection path for a single image.
+
+        Mirrors inference: take the top candidates, drop anything under the score
+        threshold, then suppress duplicates. Returns (boxes, scores), possibly empty.
+
+        Args:
+            scores: [896] per-anchor confidences (sigmoid already applied)
+            decoded_boxes: [896, 4] decoded boxes [ymin, xmin, ymax, xmax]
+        """
+        candidate_k = min(self.max_map_candidates, scores.numel())
+        candidate_scores, candidate_indices = torch.topk(scores, k=candidate_k)
+        candidate_boxes = decoded_boxes[candidate_indices]
+
+        score_mask = candidate_scores > self.eval_score_threshold
+        filtered_scores = candidate_scores[score_mask]
+        filtered_boxes = candidate_boxes[score_mask]
+
+        if filtered_scores.numel() == 0:
+            return filtered_boxes, filtered_scores
+
+        keep = self._nms(filtered_boxes, filtered_scores, self.nms_iou_threshold)
+        if keep.numel() == 0:
+            return filtered_boxes[:0], filtered_scores[:0]
+
+        return filtered_boxes[keep], filtered_scores[keep]
+
     @staticmethod
     def _build_gt_from_targets(anchor_targets: torch.Tensor) -> List[torch.Tensor]:
         """
@@ -369,26 +403,33 @@ class BlazeEarTrainer:
         gt_boxes_tensor: Optional[torch.Tensor] = None,
         gt_box_counts: Optional[torch.Tensor] = None,
         threshold: float = 0.5,
-        compute_map_flag: bool = True,
+        evaluator: Optional[DetectionEvaluator] = None,
         compute_iou_flag: bool = True
     ) -> Dict[str, float]:
         """
-        Compute training metrics following vincent1bt.
+        Compute per-batch anchor-level diagnostics.
 
-        Metrics:
-        - Positive accuracy: % of positive anchors correctly classified
-        - Background accuracy: % of background anchors correctly classified
-        - Mean IoU: Average IoU for positive predictions
-        - mAP@0.5: Mean Average Precision at IoU threshold 0.5
+        Detection quality (mAP, post-NMS IoU) is not returned here: it is pooled
+        across the whole split by `evaluator`, because averaging per-image AP over
+        images with one or two boxes each measures quantization more than it
+        measures the detector. Call `evaluator.compute()` once the split is done.
+
+        Metrics returned:
+        - positive_acc: % of positive anchors correctly classified
+        - background_acc: % of background anchors correctly classified
+        - positive_anchor_iou: regression quality on target-positive anchors only
 
         Args:
-            class_predictions: [B, 896, 1] predicted scores
-            anchor_targets: [B, 896, 5] targets [class, ymin, xmin, ymax, xmax] (MediaPipe convention)
+            class_predictions: [B, 896, 1] predicted scores (sigmoid applied)
+            anchor_targets: [B, 896, 5] targets [class, ymin, xmin, ymax, xmax]
             anchor_predictions: [B, 896, 4] predicted boxes
+            gt_boxes_tensor: [B, max_gt, 4] padded ground-truth boxes
+            gt_box_counts: [B] real box count per image
             threshold: Classification threshold
+            evaluator: Optional split-level detection evaluator to feed
 
         Returns:
-            Dictionary of metrics
+            Dictionary of per-batch diagnostics
         """
         true_classes = anchor_targets[:, :, 0]  # [B, 896]
         true_coords = anchor_targets[:, :, 1:]  # [B, 896, 4]
@@ -410,87 +451,55 @@ class BlazeEarTrainer:
         else:
             background_acc = 1.0
 
-        # Mean IoU and mAP for positive predictions
-        mean_iou = 0.0
-        map_50 = 0.0
+        # Regression quality on anchors the target marks positive. This is a
+        # training diagnostic only: false positives and missed detections cannot
+        # affect it, so it must not be read as detection quality. The comparable
+        # number is `detection_iou`, which the evaluator computes on post-NMS
+        # detections.
+        positive_anchor_iou = 0.0
 
         decoded_boxes = None
-        if positive_mask.sum() > 0 and (compute_iou_flag or compute_map_flag):
-            # Decode predictions
+        if positive_mask.sum() > 0 and compute_iou_flag:
             decoded_boxes = self.loss_fn.decode_boxes(
                 anchor_predictions, self.reference_anchors
             )
+            pred_coords = decoded_boxes[positive_mask]
+            gt_coords = true_coords[positive_mask]
+            positive_anchor_iou = compute_mean_iou(pred_coords, gt_coords, scale=self.scale).item()
 
-            # Mean IoU for positive anchors
-            if compute_iou_flag:
-                pred_coords = decoded_boxes[positive_mask]
-                gt_coords = true_coords[positive_mask]
-                mean_iou = compute_mean_iou(pred_coords, gt_coords, scale=self.scale).item()
+        # Feed the split-level evaluator, which pools detections across every
+        # image before computing one PR curve. Unlike the previous per-image AP
+        # average, images with no ground truth are still accumulated so that
+        # false positives on them are counted.
+        if evaluator is not None:
+            if decoded_boxes is None:
+                decoded_boxes = self.loss_fn.decode_boxes(
+                    anchor_predictions, self.reference_anchors
+                )
 
-            if compute_map_flag:
-                batch_size = class_predictions.shape[0]
-                map_scores: List[float] = []
+            batch_size = class_predictions.shape[0]
+            fallback_gt = None
+            if gt_boxes_tensor is None or gt_box_counts is None:
+                fallback_gt = self._build_gt_from_targets(anchor_targets)
 
-                fallback_gt = None
-                if gt_boxes_tensor is None or gt_box_counts is None:
-                    fallback_gt = self._build_gt_from_targets(anchor_targets)
+            for b in range(batch_size):
+                if gt_boxes_tensor is not None and gt_box_counts is not None:
+                    count = int(gt_box_counts[b].item())
+                    gt_boxes_batch = gt_boxes_tensor[b, :count]
+                elif fallback_gt is not None and b < len(fallback_gt):
+                    gt_boxes_batch = fallback_gt[b]
+                else:
+                    gt_boxes_batch = anchor_predictions.new_zeros((0, 4))
 
-                for b in range(batch_size):
-                    if gt_boxes_tensor is not None and gt_box_counts is not None:
-                        count = int(gt_box_counts[b].item())
-                        if count == 0:
-                            continue
-                        gt_boxes_batch = gt_boxes_tensor[b, :count]
-                    else:
-                        if fallback_gt is None or b >= len(fallback_gt):
-                            continue
-                        gt_boxes_batch = fallback_gt[b]
-                        if gt_boxes_batch is None or gt_boxes_batch.numel() == 0:
-                            continue
-
-                    batch_scores = pred_scores[b]
-                    batch_decoded = decoded_boxes[b]
-                    candidate_k = min(self.max_map_candidates, batch_scores.numel())
-                    candidate_scores, candidate_indices = torch.topk(batch_scores, k=candidate_k)
-                    candidate_boxes = batch_decoded[candidate_indices]
-
-                    score_mask = candidate_scores > self.eval_score_threshold
-                    filtered_scores = candidate_scores[score_mask]
-                    filtered_boxes = candidate_boxes[score_mask]
-
-                    if filtered_scores.numel() == 0:
-                        map_scores.append(0.0)
-                        continue
-
-                    keep_indices = self._nms(
-                        filtered_boxes,
-                        filtered_scores,
-                        self.nms_iou_threshold
-                    )
-
-                    if keep_indices.numel() == 0:
-                        map_scores.append(0.0)
-                        continue
-
-                    selected_boxes = filtered_boxes[keep_indices]
-                    selected_scores = filtered_scores[keep_indices]
-
-                    ap = compute_map(
-                        selected_boxes,
-                        selected_scores,
-                        gt_boxes_batch,
-                        iou_threshold=0.5
-                    )
-                    map_scores.append(ap.item())
-
-                if map_scores:
-                    map_50 = sum(map_scores) / len(map_scores)
+                det_boxes, det_scores = self._detections_for_image(
+                    pred_scores[b], decoded_boxes[b]
+                )
+                evaluator.add_image(det_boxes, det_scores, gt_boxes_batch)
 
         return {
             'positive_acc': positive_acc,
             'background_acc': background_acc,
-            'mean_iou': mean_iou,
-            'map_50': map_50
+            'positive_anchor_iou': positive_anchor_iou,
         }
     
     def train_epoch(self) -> Dict[str, float]:
@@ -505,16 +514,15 @@ class BlazeEarTrainer:
         epoch_metrics: Dict[str, float] = {
             'positive_acc': 0.0,
             'background_acc': 0.0,
-            'mean_iou': 0.0,
-            'map_50': 0.0
+            'positive_anchor_iou': 0.0
         }
+        train_evaluator = DetectionEvaluator() if self.compute_train_map else None
         num_batches = 0
         num_metric_batches = 0
         last_metrics: Dict[str, float] = {
             'positive_acc': 0.0,
             'background_acc': 0.0,
-            'mean_iou': 0.0,
-            'map_50': 0.0
+            'positive_anchor_iou': 0.0
         }
         
         batch_time = time.time()
@@ -567,7 +575,7 @@ class BlazeEarTrainer:
                         gt_boxes_tensor,
                         gt_box_counts,
                         threshold=self.metric_threshold,
-                        compute_map_flag=self.compute_train_map,
+                        evaluator=train_evaluator,
                         compute_iou_flag=True
                     )
             else:
@@ -620,28 +628,39 @@ class BlazeEarTrainer:
             for key in epoch_metrics:
                 epoch_metrics[key] /= num_metric_batches
         
+        if train_evaluator is not None:
+            epoch_metrics.update(train_evaluator.compute())
+        else:
+            epoch_metrics.setdefault('map_50', 0.0)
+
         # Combine into single dict
         epoch_losses.update(epoch_metrics)
         
         return epoch_losses
     
-    def validate(self, compute_map: bool = False, max_batches: Optional[int] = None) -> Dict[str, float]:
+    def validate(self, compute_map: bool = True, max_batches: Optional[int] = None) -> Dict[str, float]:
         """
-        Run validation.
-        
+        Run validation over the whole split.
+
+        Detection metrics are pooled across every image into a single PR curve
+        rather than averaged per image, so `max_batches` truncation produces a
+        number for a different (smaller) dataset and should be used only for
+        smoke tests, never for model selection or reporting.
+
         Args:
-            compute_map: Whether to compute mAP metric
-            max_batches: Maximum number of batches to process (None = all)
-        
+            compute_map: Whether to compute pooled detection metrics
+            max_batches: Debug-only cap on batches processed (None = whole split)
+
         Returns:
-            Dictionary of average validation losses and metrics
+            Dictionary of average validation losses and pooled metrics
         """
         if self.val_loader is None:
             return {}
-        
+
         self.model.eval()
         val_losses = {}
-        val_metrics = {'positive_acc': 0.0, 'background_acc': 0.0, 'mean_iou': 0.0, 'map_50': 0.0}
+        val_metrics = {'positive_acc': 0.0, 'background_acc': 0.0, 'positive_anchor_iou': 0.0}
+        evaluator = DetectionEvaluator() if compute_map else None
         num_batches = 0
         
         with torch.no_grad():
@@ -675,31 +694,42 @@ class BlazeEarTrainer:
                     gt_boxes_tensor,
                     gt_box_counts,
                     threshold=self.metric_threshold,
-                    compute_map_flag=compute_map,
+                    evaluator=evaluator,
                     compute_iou_flag=True
                 )
-                
+
                 for key, value in losses.items():
                     if isinstance(value, torch.Tensor):
                         if key not in val_losses:
                             val_losses[key] = 0.0
                         val_losses[key] += value.item()
-                
+
                 for key, value in metrics.items():
                     val_metrics[key] += value
-                
+
                 num_batches += 1
-        
-        # Average
+
+        if num_batches == 0:
+            return {}
+
+        # Per-batch diagnostics average over batches; detection metrics are
+        # pooled once over the whole split.
         for key in val_losses:
             val_losses[key] /= num_batches
             self.writer.add_scalar(f'val/{key}', val_losses[key], self.global_step)
         for key in val_metrics:
             val_metrics[key] /= num_batches
             self.writer.add_scalar(f'val/{key}', val_metrics[key], self.global_step)
-        
+
+        if evaluator is not None:
+            for key, value in evaluator.compute().items():
+                val_metrics[key] = value
+                self.writer.add_scalar(f'val/{key}', value, self.global_step)
+        else:
+            val_metrics.setdefault('map_50', 0.0)
+
         val_losses.update(val_metrics)
-        
+
         return val_losses
     
     def save_checkpoint(self, filename: Optional[str] = None, is_best: bool = False):
@@ -712,7 +742,8 @@ class BlazeEarTrainer:
             'global_step': self.global_step,
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
-            'best_val_loss': self.best_val_loss
+            'best_val_loss': self.best_val_loss,
+            'best_val_map': self.best_val_map
         }
         if self.use_amp:
             checkpoint["scaler_state_dict"] = self.scaler.state_dict()
@@ -743,6 +774,7 @@ class BlazeEarTrainer:
         self.epoch = checkpoint['epoch']
         self.global_step = checkpoint['global_step']
         self.best_val_loss = checkpoint.get('best_val_loss', float('inf'))
+        self.best_val_map = checkpoint.get('best_val_map', -1.0)
 
         if self.use_amp and "scaler_state_dict" in checkpoint:
             try:
@@ -800,25 +832,33 @@ class BlazeEarTrainer:
             print(f'  Train | Loss: {train_results["total"]:.5f} | '
                 f'Pos Acc: {train_results["positive_acc"]:.4f} | '
                 f'Bg Acc: {train_results["background_acc"]:.4f} | '
-                f'IoU: {train_results["mean_iou"]:.4f} | '
+                f'IoU: {train_results["positive_anchor_iou"]:.4f} | '
                 f'mAP: {train_results["map_50"]:.4f}')
             
-            # Validate (use subset for speed - ~200 samples)
+            # Validate over the whole split. Subsetting here previously took an
+            # unshuffled prefix, which is ordered by annotation source, so the
+            # selection signal came from a single source.
             if self.val_loader and (epoch + 1) % validate_every == 0:
-                batch_size = self.val_loader.batch_size or 32
-                val_max_batches = max(1, 200 // batch_size)
-                val_results = self.validate(compute_map=val_compute_map, max_batches=val_max_batches)
+                val_results = self.validate(compute_map=val_compute_map)
                 print(f'  Val   | Loss: {val_results["total"]:.5f} | '
                         f'Pos Acc: {val_results["positive_acc"]:.4f} | '
                         f'Bg Acc: {val_results["background_acc"]:.4f} | '
-                        f'IoU: {val_results["mean_iou"]:.4f} | '
-                        f'mAP: {val_results["map_50"]:.4f}'
+                        f'AnchIoU: {val_results["positive_anchor_iou"]:.4f} | '
+                        f'DetIoU: {val_results.get("detection_iou", 0.0):.4f} | '
+                        f'mAP50: {val_results["map_50"]:.4f} | '
+                        f'mAP50-95: {val_results.get("map_50_95", 0.0):.4f}'
                       )
                 
-                # Check for best model
-                if val_results['total'] < self.best_val_loss:
-                    self.best_val_loss = val_results['total']
+                # Select on detection quality, not loss. Validation loss is
+                # dominated by hard-negative mining, whose magnitude depends on
+                # the positive count per batch, so its argmin has no particular
+                # relationship to the best detector.
+                self.best_val_loss = min(self.best_val_loss, val_results['total'])
+                current_map = val_results.get('map_50', 0.0)
+                if current_map > self.best_val_map:
+                    self.best_val_map = current_map
                     self.save_checkpoint(is_best=True)
+                    print(f'  New best mAP@0.5: {current_map:.4f}')
             
             # Save checkpoint
             if (epoch + 1) % save_every == 0:
@@ -826,11 +866,8 @@ class BlazeEarTrainer:
         
         final_val_metrics = None
         if self.val_loader:
-            print('\nRunning final validation for summary (500 samples)...')
-            # Use ~500 samples for final validation (500 / batch_size batches)
-            batch_size = self.val_loader.batch_size or 32
-            max_batches = max(1, 500 // batch_size)
-            final_val_metrics = self.validate(compute_map=val_compute_map, max_batches=max_batches)
+            print('\nRunning final validation over the full split...')
+            final_val_metrics = self.validate(compute_map=val_compute_map)
         
         # Save final checkpoint
         self.save_checkpoint(f'{self.model_name}_final.pth')
@@ -843,9 +880,11 @@ class BlazeEarTrainer:
                   f'Loss: {final_val_metrics["total"]:.5f} | '
                   f'Pos Acc: {final_val_metrics["positive_acc"]:.4f} | '
                   f'Bg Acc: {final_val_metrics["background_acc"]:.4f} | '
-                  f'IoU: {final_val_metrics["mean_iou"]:.4f} | '
-                  f'mAP: {final_val_metrics["map_50"]:.4f}')
-        print(f'Best validation loss: {self.best_val_loss:.5f}')
+                  f'AnchIoU: {final_val_metrics["positive_anchor_iou"]:.4f} | '
+                  f'DetIoU: {final_val_metrics.get("detection_iou", 0.0):.4f} | '
+                  f'mAP50: {final_val_metrics["map_50"]:.4f} | '
+                  f'mAP50-95: {final_val_metrics.get("map_50_95", 0.0):.4f}')
+        print(f'Best validation mAP@0.5: {self.best_val_map:.4f}')
         print(f'Checkpoints saved to: {self.checkpoint_dir}')
         print('=' * 60)
 
