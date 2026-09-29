@@ -61,7 +61,8 @@ class CSVDetectorDataset(Dataset):
         root_dir: str,
         target_size: Tuple[int, int] = (128, 128),
         augment: bool = True,
-        max_samples: Optional[int] = None
+        max_samples: Optional[int] = None,
+        augment_max_side: int = 256
     ):
         # Avoid oversubscribing CPU threads in DataLoader workers.
         try:
@@ -74,6 +75,7 @@ class CSVDetectorDataset(Dataset):
         self.root_dir = Path(root_dir)
         self.target_size = target_size
         self.augment = augment
+        self.augment_max_side = int(augment_max_side)
 
         df = pd.read_csv(self.csv_path)
         required_cols = {"image_path", "x1", "y1", "w", "h"}
@@ -115,9 +117,35 @@ class CSVDetectorDataset(Dataset):
             raise RuntimeError(f"Could not read image data: {full_path}")
         return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
+    def _downscale_for_augment(self, image: np.ndarray) -> np.ndarray:
+        """Cap the working resolution before augmenting.
+
+        Geometric augmentation has to happen before the letterbox resize, but
+        warping at full source resolution is wasted work when the model input is
+        128px: sources here are 640x640, which is 25x the pixels of the target.
+        Capping at `augment_max_side` (2x the model input) keeps every detail
+        that survives the final resize.
+
+        It also matches inference more closely. BlazeDetector.resize_pad goes
+        source -> 256 -> 128, so the model sees two-step resampling at inference
+        but saw a single 640 -> 128 step in training.
+        """
+        h, w = image.shape[:2]
+        longest = max(h, w)
+        if longest <= self.augment_max_side:
+            return image
+        scale = self.augment_max_side / longest
+        return cv2.resize(
+            image, (max(1, int(round(w * scale))), max(1, int(round(h * scale)))),
+            interpolation=cv2.INTER_AREA
+        )
+
     def _augment_image(self, image: np.ndarray, bboxes: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         if not self.augment:
             return image, bboxes
+
+        # Boxes are normalized, so downscaling leaves them unchanged.
+        image = self._downscale_for_augment(image)
 
         # Color augmentations
         if np.random.random() > 0.5:
@@ -137,15 +165,19 @@ class CSVDetectorDataset(Dataset):
         if np.random.random() > 0.5 and len(bboxes) > 0:
             image, bboxes = augmentation.augment_rotation(image, bboxes, angle_range=(-20, 20))
         
-        # Occlusion augmentations (less frequent)
+        # Occlusion augmentations (less frequent). Each is passed the labelled
+        # boxes so it can refuse to hide an ear whose positive label it would
+        # leave behind; sizes are fractions of the image, since these now run
+        # before the letterbox at the augmentation working resolution rather
+        # than on the finished 128x128 tensor.
         if np.random.random() > 0.6 and len(bboxes) > 0:
             image = augmentation.augment_face_cutout(image, bboxes)
         if np.random.random() > 0.6 and len(bboxes) > 0:
             image = augmentation.augment_targeted_ear_occlusion(image, bboxes)
         if np.random.random() > 0.7:
-            image = augmentation.augment_synthetic_occlusion(image, num_occlusions=1)
+            image = augmentation.augment_synthetic_occlusion(image, bboxes, num_occlusions=1)
         if np.random.random() > 0.7:
-            image = augmentation.augment_cutout(image, num_holes=1, hole_size_range=(10, 25))
+            image = augmentation.augment_cutout(image, bboxes, num_holes=1)
 
         return image, bboxes
 
@@ -228,8 +260,14 @@ class CSVDetectorDataset(Dataset):
             else:
                 bboxes = np.zeros((0, 4), dtype=np.float32)
 
-            image, bboxes = self._resize_and_pad(image, bboxes)
+            # Augment at native resolution, then letterbox once. Doing it the
+            # other way round scaled and rotated an image that had already been
+            # padded to 128x128, so augment_scale added a second letterbox and
+            # augment_rotation turned the padding bars into diagonal wedges that
+            # never occur at inference -- all at a resolution where an ear is
+            # roughly 10x15 px.
             image, bboxes = self._augment_image(image, bboxes)
+            image, bboxes = self._resize_and_pad(image, bboxes)
 
             small_anchors, big_anchors = encode_boxes_to_anchors(bboxes, input_size=self.target_size[0])
             anchor_targets = flatten_anchor_targets(small_anchors, big_anchors)

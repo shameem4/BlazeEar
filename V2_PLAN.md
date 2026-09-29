@@ -123,21 +123,44 @@ background anchors — precisely that ear.
 
 ## P2 — Augmentation correctness
 
-- [ ] **Order: geometric augs before resize/pad.** `dataloader.py:__getitem__` calls
+- [x] **Order: geometric augs before resize/pad.** `dataloader.py:__getitem__` calls
       `_resize_and_pad` then `_augment_image`, so `augment_scale` letterboxes an
       already-letterboxed image and `augment_rotation` rotates the padding bars into
       diagonal wedges that never occur at inference — all at 128px, on ears of
       roughly 10×15px. Augment at native resolution, resize once.
-- [ ] **Stop erasing the ear while keeping the label.** `augment_face_cutout` fills
+- [x] **Stop erasing the ear while keeping the label.** `augment_face_cutout` fills
       1.3–1.9× the ear box with a solid random color and returns the GT box
       untouched; ~24% of boxes per epoch. `augment_targeted_ear_occlusion` adds
       25–60% solid fill, also label-preserving. Either drop the box when occlusion
       passes a visibility threshold, or cap occlusion so the ear stays partly
-      visible. Also rename `drop_probability` — `> 0.6` means it fires 60% of the
-      time, the opposite of what the name reads as.
-- [ ] **Contiguity.** `np.fliplr` returns a negative-stride view that is then written
+      visible. (Correction to an earlier note in this plan: `drop_probability`
+      was *not* inverted — it is genuinely the probability of dropping the
+      region. Renamed to `occlusion_probability` for clarity only.)
+- [x] **Contiguity.** `np.fliplr` returns a negative-stride view that is then written
       through by the occlusion augs and handed to `cv2.resize` / `cv2.warpAffine`.
-      (Unverified — OpenCV's behavior on non-contiguous input varies by version.)
+      Fixed by materialising a contiguous copy; the boxes array is also no
+      longer mutated in place.
+
+### Measured impact of the P2 fixes
+
+Old `augment_face_cutout` over 200 seeds on a labelled ear: mean ear visibility
+0.400, and the ear **fully erased in 120 of 200 calls** while its positive label
+was kept. With the dataloader's 40% gate that is ~24% of boxes per epoch trained
+as "this flat colour patch is an ear". After the fix: 0 erasures, mean visibility
+0.792, and 110 tests assert the invariant across seeds.
+
+Augmenting before the letterbox costs throughput, since the warps now run on a
+real image rather than a 128x128 thumbnail. Sources here are uniformly 640x640:
+
+| augmentation working size | samples/s/worker |
+| --- | --- |
+| native 640 | 44.7 |
+| capped at 256 (default) | 204.8 |
+| old, on the finished 128px tensor | ~900 |
+
+256 is 2x the model input, so nothing that survives the final resize is lost, and
+it aligns training with inference, which already resamples source -> 256 -> 128 in
+`BlazeDetector.resize_pad`.
 
 ## P3 — Loss and numerics
 

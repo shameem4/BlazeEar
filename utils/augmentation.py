@@ -1,8 +1,85 @@
 """
 Image augmentation utilities for training.
+
+Geometric and occlusion augmentations run at the image's native resolution,
+before the letterbox resize to the model input size. Occlusion sizes are
+therefore expressed as fractions of the image rather than absolute pixels, so
+they mean the same thing regardless of source resolution.
+
+Occlusion augmentations never remove a labelled ear. An occlusion that would
+cover more than `max_ear_coverage` of any labelled box is rejected rather than
+applied, because covering an ear while keeping its positive label trains the
+classifier to fire on flat colour patches.
 """
 import cv2
 import numpy as np
+
+# An occlusion may hide at most this fraction of any labelled ear.
+DEFAULT_MAX_EAR_COVERAGE = 0.5
+
+# How many random placements to try before giving up on an occlusion.
+_PLACEMENT_ATTEMPTS = 8
+
+
+class _EarCoverage:
+    """
+    Tracks how much of each labelled ear the occlusions applied so far cover.
+
+    Coverage per rectangle is accumulated independently, which over-counts when
+    two rectangles overlap inside the same box. That errs towards rejecting an
+    occlusion, which is the safe direction: the failure we are preventing is an
+    ear that is fully hidden but still labelled positive.
+    """
+
+    def __init__(self, bboxes, image_h, image_w, max_coverage=DEFAULT_MAX_EAR_COVERAGE):
+        self.max_coverage = float(max_coverage)
+        if bboxes is None or len(bboxes) == 0:
+            self.boxes = np.zeros((0, 4), dtype=np.float32)
+            self.areas = np.zeros((0,), dtype=np.float32)
+            self.covered = np.zeros((0,), dtype=np.float32)
+            return
+
+        boxes = np.asarray(bboxes, dtype=np.float32)[:, :4].copy()
+        boxes[:, [0, 2]] *= image_h
+        boxes[:, [1, 3]] *= image_w
+        self.boxes = boxes
+        self.areas = np.clip(
+            (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1]), 1e-6, None
+        )
+        self.covered = np.zeros(len(boxes), dtype=np.float32)
+
+    def _fractions(self, y1, x1, y2, x2):
+        """Fraction of each labelled box covered by this pixel rectangle."""
+        if len(self.boxes) == 0:
+            return np.zeros((0,), dtype=np.float32)
+        inter_h = np.clip(
+            np.minimum(self.boxes[:, 2], y2) - np.maximum(self.boxes[:, 0], y1), 0, None
+        )
+        inter_w = np.clip(
+            np.minimum(self.boxes[:, 3], x2) - np.maximum(self.boxes[:, 1], x1), 0, None
+        )
+        return (inter_h * inter_w) / self.areas
+
+    def would_exceed(self, y1, x1, y2, x2) -> bool:
+        """True when applying this rectangle would over-occlude a labelled ear."""
+        if len(self.boxes) == 0:
+            return False
+        return bool(np.any(self.covered + self._fractions(y1, x1, y2, x2) > self.max_coverage))
+
+    def commit(self, y1, x1, y2, x2) -> None:
+        if len(self.boxes) > 0:
+            self.covered += self._fractions(y1, x1, y2, x2)
+
+
+def _random_rect(h, w, size_frac_range, rng=np.random):
+    """A random axis-aligned rectangle sized as a fraction of the image."""
+    frac_h = rng.uniform(*size_frac_range)
+    frac_w = rng.uniform(*size_frac_range)
+    rect_h = max(1, int(round(h * frac_h)))
+    rect_w = max(1, int(round(w * frac_w)))
+    y1 = rng.randint(0, max(1, h - rect_h))
+    x1 = rng.randint(0, max(1, w - rect_w))
+    return y1, x1, min(h, y1 + rect_h), min(w, x1 + rect_w)
 
 
 def augment_saturation(image: np.ndarray, factor_range: tuple[float, float] = (0.5, 1.5)) -> np.ndarray:
@@ -86,9 +163,12 @@ def augment_horizontal_flip(
     Returns:
         (flipped_image, flipped_bboxes)
     """
-    image = np.fliplr(image)
+    # np.fliplr returns a negative-stride view. Later augmentations write into
+    # the array and hand it to OpenCV, so materialise a real contiguous copy.
+    image = np.ascontiguousarray(np.fliplr(image))
 
     # Flip x coordinates
+    bboxes = bboxes.copy()
     xmin_old = bboxes[:, 1].copy()
     xmax_old = bboxes[:, 3].copy()
     bboxes[:, 1] = 1.0 - xmax_old
@@ -99,28 +179,36 @@ def augment_horizontal_flip(
 
 def augment_synthetic_occlusion(
     image: np.ndarray,
+    bboxes: np.ndarray | None = None,
     num_occlusions: int = 1,
-    occlusion_size_range: tuple[int, int] = (10, 50)
+    size_frac_range: tuple[float, float] = (0.04, 0.18),
+    max_ear_coverage: float = DEFAULT_MAX_EAR_COVERAGE
 ) -> np.ndarray:
     """Add synthetic occlusions (black rectangles) to image.
 
     Args:
         image: RGB image
+        bboxes: Labelled boxes [ymin, xmin, ymax, xmax] normalized, used to keep
+                occlusions from hiding a labelled ear
         num_occlusions: Number of occlusions to add
-        occlusion_size_range: (min, max) size of occlusion rectangles
+        size_frac_range: (min, max) occlusion size as a fraction of the image
+        max_ear_coverage: Maximum fraction of any labelled ear that may be hidden
 
     Returns:
         Augmented image
     """
     h, w = image.shape[:2]
+    image = np.ascontiguousarray(image)
+    coverage = _EarCoverage(bboxes, h, w, max_ear_coverage)
 
     for _ in range(num_occlusions):
-        occ_h = np.random.randint(*occlusion_size_range)
-        occ_w = np.random.randint(*occlusion_size_range)
-        occ_y = np.random.randint(0, max(1, h - occ_h))
-        occ_x = np.random.randint(0, max(1, w - occ_w))
-
-        image[occ_y:occ_y + occ_h, occ_x:occ_x + occ_w] = 0
+        for _ in range(_PLACEMENT_ATTEMPTS):
+            y1, x1, y2, x2 = _random_rect(h, w, size_frac_range)
+            if coverage.would_exceed(y1, x1, y2, x2):
+                continue
+            image[y1:y2, x1:x2] = 0
+            coverage.commit(y1, x1, y2, x2)
+            break
 
     return image
 
@@ -275,32 +363,39 @@ def augment_color_jitter(
 
 def augment_cutout(
     image: np.ndarray,
+    bboxes: np.ndarray | None = None,
     num_holes: int = 1,
-    hole_size_range: tuple[int, int] = (20, 60),
-    fill_value: int = 128
+    hole_size_frac_range: tuple[float, float] = (0.06, 0.20),
+    fill_value: int = 128,
+    max_ear_coverage: float = DEFAULT_MAX_EAR_COVERAGE
 ) -> np.ndarray:
     """Apply cutout/random erasing augmentation.
 
     Args:
         image: RGB image
+        bboxes: Labelled boxes [ymin, xmin, ymax, xmax] normalized, used to keep
+                holes from hiding a labelled ear
         num_holes: Number of cutout holes
-        hole_size_range: (min, max) size of cutout squares
+        hole_size_frac_range: (min, max) hole size as a fraction of the image
         fill_value: Fill value for cutout (0=black, 128=gray)
+        max_ear_coverage: Maximum fraction of any labelled ear that may be hidden
 
     Returns:
         Augmented image
     """
     h, w = image.shape[:2]
     image = image.copy()
-    
+    coverage = _EarCoverage(bboxes, h, w, max_ear_coverage)
+
     for _ in range(num_holes):
-        hole_h = np.random.randint(*hole_size_range)
-        hole_w = np.random.randint(*hole_size_range)
-        hole_y = np.random.randint(0, max(1, h - hole_h))
-        hole_x = np.random.randint(0, max(1, w - hole_w))
-        
-        image[hole_y:hole_y + hole_h, hole_x:hole_x + hole_w] = fill_value
-    
+        for _ in range(_PLACEMENT_ATTEMPTS):
+            y1, x1, y2, x2 = _random_rect(h, w, hole_size_frac_range)
+            if coverage.would_exceed(y1, x1, y2, x2):
+                continue
+            image[y1:y2, x1:x2] = fill_value
+            coverage.commit(y1, x1, y2, x2)
+            break
+
     return image
 
 
@@ -308,10 +403,26 @@ def augment_face_cutout(
     image: np.ndarray,
     bboxes: np.ndarray,
     context_scale_range: tuple[float, float] = (1.3, 1.9),
-    drop_probability: float = 0.6,
-    max_regions: int = 2
+    occlusion_probability: float = 0.6,
+    max_regions: int = 2,
+    max_ear_coverage: float = DEFAULT_MAX_EAR_COVERAGE
 ) -> np.ndarray:
-    """Apply cutout over expanded bbox regions to emulate facial occlusions."""
+    """Occlude part of the region around an ear, to emulate facial occlusions.
+
+    This used to fill the whole expanded box with a solid colour, which erased
+    the ear while its positive label was kept, teaching the classifier that a
+    flat colour patch is an ear. The occluder is now a sub-rectangle of the
+    expanded region, placed so it hides at most `max_ear_coverage` of any
+    labelled ear; if no such placement is found the region is skipped.
+
+    Args:
+        image: RGB image
+        bboxes: Labelled boxes [ymin, xmin, ymax, xmax] normalized
+        context_scale_range: How far around the ear the occluder may reach
+        occlusion_probability: Chance of occluding each selected region
+        max_regions: Maximum number of regions to occlude
+        max_ear_coverage: Maximum fraction of any labelled ear that may be hidden
+    """
     if len(bboxes) == 0:
         return image
 
@@ -321,9 +432,10 @@ def augment_face_cutout(
     if regions <= 0:
         return image
     selected = np.random.choice(len(bboxes), size=regions, replace=False)
+    coverage = _EarCoverage(bboxes, h, w, max_ear_coverage)
 
     for idx in selected:
-        if np.random.random() > drop_probability:
+        if np.random.random() > occlusion_probability:
             continue
         ymin, xmin, ymax, xmax = bboxes[idx]
         cy = (ymin + ymax) * 0.5 * h
@@ -331,18 +443,31 @@ def augment_face_cutout(
         box_h = max(1.0, (ymax - ymin) * h)
         box_w = max(1.0, (xmax - xmin) * w)
         scale = np.random.uniform(*context_scale_range)
-        half_h = box_h * scale * 0.5
-        half_w = box_w * scale * 0.5
 
-        y1 = int(np.clip(cy - half_h, 0, h))
-        y2 = int(np.clip(cy + half_h, 0, h))
-        x1 = int(np.clip(cx - half_w, 0, w))
-        x2 = int(np.clip(cx + half_w, 0, w))
-        if y2 <= y1 or x2 <= x1:
+        region_y1 = int(np.clip(cy - box_h * scale * 0.5, 0, h))
+        region_y2 = int(np.clip(cy + box_h * scale * 0.5, 0, h))
+        region_x1 = int(np.clip(cx - box_w * scale * 0.5, 0, w))
+        region_x2 = int(np.clip(cx + box_w * scale * 0.5, 0, w))
+        if region_y2 <= region_y1 or region_x2 <= region_x1:
             continue
 
-        fill_color = np.random.randint(0, 256, size=(1, 1, 3), dtype=np.uint8)
-        output[y1:y2, x1:x2] = fill_color
+        # Try random sub-rectangles of the expanded region until one leaves
+        # enough of every labelled ear visible.
+        region_h = region_y2 - region_y1
+        region_w = region_x2 - region_x1
+        for _ in range(_PLACEMENT_ATTEMPTS):
+            occ_h = max(1, int(region_h * np.random.uniform(0.3, 0.9)))
+            occ_w = max(1, int(region_w * np.random.uniform(0.3, 0.9)))
+            y1 = np.random.randint(region_y1, max(region_y1 + 1, region_y2 - occ_h + 1))
+            x1 = np.random.randint(region_x1, max(region_x1 + 1, region_x2 - occ_w + 1))
+            y2 = min(h, y1 + occ_h)
+            x2 = min(w, x1 + occ_w)
+            if coverage.would_exceed(y1, x1, y2, x2):
+                continue
+            fill_color = np.random.randint(0, 256, size=(1, 1, 3), dtype=np.uint8)
+            output[y1:y2, x1:x2] = fill_color
+            coverage.commit(y1, x1, y2, x2)
+            break
 
     return output
 
@@ -351,7 +476,8 @@ def augment_targeted_ear_occlusion(
     image: np.ndarray,
     bboxes: np.ndarray,
     occlusion_fraction: tuple[float, float] = (0.25, 0.6),
-    max_regions: int = 3
+    max_regions: int = 3,
+    max_ear_coverage: float = DEFAULT_MAX_EAR_COVERAGE
 ) -> np.ndarray:
     """Hide random slices inside ear boxes to mimic hair/hands covering the ear."""
     if len(bboxes) == 0:
@@ -363,6 +489,7 @@ def augment_targeted_ear_occlusion(
     if regions <= 0:
         return image
     selected = np.random.choice(len(bboxes), size=regions, replace=False)
+    coverage = _EarCoverage(bboxes, h, w, max_ear_coverage)
 
     for idx in selected:
         ymin, xmin, ymax, xmax = bboxes[idx]
@@ -385,9 +512,16 @@ def augment_targeted_ear_occlusion(
 
         max_y = max(y1 + 1, y2 - occ_h + 1)
         max_x = max(x1 + 1, x2 - occ_w + 1)
-        start_y = np.random.randint(y1, max_y)
-        start_x = np.random.randint(x1, max_x)
-        fill_color = np.random.randint(0, 80, size=(1, 1, 3), dtype=np.uint8)
-        output[start_y:start_y + occ_h, start_x:start_x + occ_w] = fill_color
+        for _ in range(_PLACEMENT_ATTEMPTS):
+            start_y = np.random.randint(y1, max_y)
+            start_x = np.random.randint(x1, max_x)
+            end_y = min(h, start_y + occ_h)
+            end_x = min(w, start_x + occ_w)
+            if coverage.would_exceed(start_y, start_x, end_y, end_x):
+                continue
+            fill_color = np.random.randint(0, 80, size=(1, 1, 3), dtype=np.uint8)
+            output[start_y:end_y, start_x:end_x] = fill_color
+            coverage.commit(start_y, start_x, end_y, end_x)
+            break
 
     return output
