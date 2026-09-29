@@ -32,3 +32,18 @@ def test_collate_handles_all_zero_gt_boxes():
     assert batch["gt_boxes"].shape == (2, 1, 4)
     assert torch.allclose(batch["gt_boxes"], torch.zeros(2, 1, 4))
     assert torch.equal(batch["gt_box_counts"], torch.tensor([0, 0]))
+
+
+def test_collate_defaults_missing_sample_index():
+    # Sample producers that do not track an index (e.g. the NPY path) must
+    # still collate; they get -1 rather than a KeyError.
+    batch = collate_detector_fn([_make_sample(1), _make_sample(1)])
+    assert torch.equal(batch["sample_index"], torch.tensor([-1, -1]))
+
+
+def test_collate_passes_through_sample_index():
+    first, second = _make_sample(1), _make_sample(1)
+    first["sample_index"] = 7
+    second["sample_index"] = 11
+    batch = collate_detector_fn([first, second])
+    assert torch.equal(batch["sample_index"], torch.tensor([7, 11]))

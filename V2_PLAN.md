@@ -27,8 +27,10 @@ they change what the numbers mean, not what the model is.
 - [x] **Stop reporting `mean_iou` as detection quality.** It is computed only over
       target-positive anchors, so false positives and misses cannot affect it.
       Rename to `positive_anchor_iou` and add a real post-NMS detection IoU.
-- [ ] **Break metrics out by `annotation_source`**, so GT and pseudo-label
-      performance are never averaged into one headline number again.
+- [x] **Break metrics out by `annotation_source`**, so GT and pseudo-label
+      performance are never averaged into one headline number again. Shipped as
+      `evaluate.py`, using ignore regions so excluding untrusted labels does not
+      turn real ears into false positives.
 
 ### Measured impact of the P0 fixes
 
@@ -66,6 +68,38 @@ Per-epoch validation used `200 // batch_size` batches and the final summary used
 exactly by changing only the subset size, with the model held fixed. `val.csv`
 preserves master-CSV order, which is source-by-source, so short prefixes sample one
 easy source.
+
+### POSE labels are a different annotation convention, not noise
+
+`python evaluate.py --checkpoint runs/checkpoints/BlazeEar_best.pth`:
+
+| view | GT boxes | mAP@0.5 | mAP@[.5:.95] |
+| --- | --- | --- | --- |
+| all sources | 4009 | 0.1358 | 0.0328 |
+| human only (POSE ignored) | 2495 | **0.1935** | 0.0476 |
+| POSE only (human ignored) | 1514 | **0.0067** | 0.0014 |
+
+The model scores ~0 against POSE boxes *that it was trained on*. Box statistics
+from `master.csv` explain why: POSE boxes have the same aspect ratio as human
+boxes (median 0.52 vs 0.51) but a median area of 900 px vs 2383 px — about 2.6x
+smaller. Two concentric boxes differing 2.6x in area cannot reach IoU 0.5, so
+POSE is not noisy labelling of the same convention, it is a *different*
+convention: a tight box around the ear keypoint rather than the ear's extent.
+
+This makes the pseudo-labels actively harmful rather than merely unreliable. The
+same visual object is labelled at two incompatible scales depending on source, so
+box regression receives contradictory targets it cannot satisfy — which is
+consistent with mAP@[.5:.95] of 0.033 while matched detections sit at 0.62 IoU.
+Relabeling (P1) should therefore also normalise POSE boxes to the human
+convention, not just fill in missing ears.
+
+### The shipped geometry filter discards 22% of real ears
+
+`EAR_MIN_ASPECT_RATIO = 0.35` / `EAR_MAX_ASPECT_RATIO = 1.4` against the human
+labels in `master.csv`: 22.0% of GT boxes and 26.3% of GT+EAR boxes fall outside
+that gate. The filter that `BlazeEar.process` and the JS demo apply is rejecting
+more than a fifth of true ears on aspect ratio alone, before the close-up size
+gate is even considered. See P5.
 
 ## P1 — Data and labels (long pole; blocks the retrain)
 

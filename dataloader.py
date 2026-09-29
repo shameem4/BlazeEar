@@ -33,6 +33,10 @@ def collate_detector_fn(batch: List[Dict]) -> Dict[str, torch.Tensor]:
 
     return {
         "image": torch.stack([sample["image"] for sample in batch]),
+        # -1 for sample producers that do not track an index (e.g. the NPY path).
+        "sample_index": torch.tensor(
+            [int(sample.get("sample_index", -1)) for sample in batch], dtype=torch.long
+        ),
         "anchor_targets": torch.stack([sample["anchor_targets"] for sample in batch]),
         "small_anchors": torch.stack([sample["small_anchors"] for sample in batch]),
         "big_anchors": torch.stack([sample["big_anchors"] for sample in batch]),
@@ -235,6 +239,11 @@ class CSVDetectorDataset(Dataset):
 
             return {
                 "image": image,
+                # Index into self.samples, so callers can recover the source
+                # image and its per-box annotation provenance. With augment=False
+                # the returned gt_boxes stay in CSV row order, one-to-one with
+                # self.samples[idx]["boxes"].
+                "sample_index": idx,
                 "anchor_targets": torch.from_numpy(anchor_targets).float(),
                 "small_anchors": torch.from_numpy(small_anchors).float(),
                 "big_anchors": torch.from_numpy(big_anchors).float(),

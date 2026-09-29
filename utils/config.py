@@ -46,6 +46,10 @@ DEFAULT_EVAL_MAX_IMAGES = 500
 DEFAULT_EVAL_SCORE_THRESHOLD = 0.5
 DEFAULT_EVAL_IOU_THRESHOLD = 0.5
 
+# Annotation provenance (data_prep.py writes these into annotation_source)
+# Human-verified boxes; everything else in the CSV is machine-generated.
+HUMAN_ANNOTATION_SOURCES = ("GT", "GT+EAR")
+
 # Duplicate suppression (near-duplicate box filtering)
 NEAR_CENTER_DISTANCE_FRAC = 0.55
 NEAR_MIN_AREA_RATIO = 0.35

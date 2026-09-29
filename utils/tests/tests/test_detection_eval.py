@@ -153,6 +153,69 @@ class TestDetectionEvaluator:
         # Pooled number sits between the two groups.
         assert abs(m['map_50'] - 0.5) < 1e-6
 
+class TestIgnoreRegions:
+    def test_detection_on_ignore_region_is_not_a_false_positive(self):
+        # One real GT (detected) plus a detection on an untrusted region.
+        # Without ignore this would be a FP and halve precision.
+        gt = torch.tensor([box(10, 10, 20, 20)])
+        pseudo = torch.tensor([box(80, 80, 90, 90)])
+        preds = torch.tensor([box(80, 80, 90, 90), box(10, 10, 20, 20)])
+        scores = torch.tensor([0.95, 0.9])
+
+        without = DetectionEvaluator()
+        without.add_image(preds, scores, gt)
+        with_ignore = DetectionEvaluator()
+        with_ignore.add_image(preds, scores, gt, ignore_boxes=pseudo)
+
+        assert without.compute()['map_50'] < 1.0
+        assert with_ignore.compute()['map_50'] == 1.0
+        assert with_ignore.compute()['num_ignored'] == 1.0
+
+    def test_ignore_does_not_inflate_recall(self):
+        # The ignore region must not count as recallable ground truth.
+        gt = torch.tensor([box(10, 10, 20, 20)])
+        pseudo = torch.tensor([box(80, 80, 90, 90)])
+        ev = DetectionEvaluator()
+        # Detect only the ignore region, miss the real GT.
+        ev.add_image(torch.tensor([box(80, 80, 90, 90)]), torch.tensor([0.9]), gt,
+                     ignore_boxes=pseudo)
+        m = ev.compute()
+        assert m['num_ground_truth'] == 1.0
+        assert m['map_50'] == 0.0
+
+    def test_true_positive_overlapping_ignore_is_still_counted(self):
+        # A detection that matches real GT is kept even if an ignore region
+        # happens to cover the same area.
+        gt = torch.tensor([box(10, 10, 20, 20)])
+        ev = DetectionEvaluator()
+        ev.add_image(gt.clone(), torch.tensor([0.9]), gt, ignore_boxes=gt.clone())
+        m = ev.compute()
+        assert m['map_50'] == 1.0
+        assert m['num_ignored'] == 0.0
+
+    def test_small_detection_inside_large_ignore_region(self):
+        # IoU would be tiny here; intersection-over-detection-area is what matters.
+        gt = torch.zeros((0, 4))
+        big_ignore = torch.tensor([box(0, 0, 100, 100)])
+        tiny = torch.tensor([box(40, 40, 45, 45)])
+        ev = DetectionEvaluator()
+        ev.add_image(tiny, torch.tensor([0.9]), gt, ignore_boxes=big_ignore)
+        assert ev.compute()['num_ignored'] == 1.0
+
+    def test_detection_outside_ignore_still_penalised(self):
+        gt = torch.tensor([box(10, 10, 20, 20)])
+        pseudo = torch.tensor([box(80, 80, 90, 90)])
+        ev = DetectionEvaluator()
+        ev.add_image(
+            torch.tensor([box(40, 40, 50, 50), box(10, 10, 20, 20)]),
+            torch.tensor([0.95, 0.9]), gt, ignore_boxes=pseudo,
+        )
+        m = ev.compute()
+        assert m['num_ignored'] == 0.0
+        assert m['map_50'] < 1.0
+
+
+class TestReset:
     def test_reset_clears_state(self):
         ev = DetectionEvaluator()
         gt = torch.tensor([box(10, 10, 20, 20)])

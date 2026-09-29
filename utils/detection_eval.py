@@ -104,20 +104,25 @@ class DetectionEvaluator:
         self,
         iou_thresholds: Sequence[float] = COCO_IOU_THRESHOLDS,
         primary_iou_threshold: float = 0.5,
-        groups: bool = False
+        groups: bool = False,
+        ignore_ioa_threshold: float = 0.5
     ):
         self.iou_thresholds = tuple(float(t) for t in iou_thresholds)
         if primary_iou_threshold not in self.iou_thresholds:
             self.iou_thresholds = tuple(sorted(self.iou_thresholds + (primary_iou_threshold,)))
         self.primary_iou_threshold = float(primary_iou_threshold)
         self.groups_enabled = groups
+        self.ignore_ioa_threshold = float(ignore_ioa_threshold)
         self.reset()
 
     def reset(self) -> None:
-        self._scores: List[torch.Tensor] = []
+        # Scores are kept per IoU threshold because the ignore mask depends on
+        # whether a detection matched ground truth at that particular threshold.
+        self._scores: Dict[float, List[torch.Tensor]] = {t: [] for t in self.iou_thresholds}
         self._tp: Dict[float, List[torch.Tensor]] = {t: [] for t in self.iou_thresholds}
         self._num_gt = 0
         self._num_images = 0
+        self._num_ignored = 0
         self._matched_ious: List[torch.Tensor] = []
         self._group_scores: Dict[str, List[torch.Tensor]] = {}
         self._group_tp: Dict[str, List[torch.Tensor]] = {}
@@ -152,15 +157,27 @@ class DetectionEvaluator:
         pred_boxes: torch.Tensor,
         pred_scores: torch.Tensor,
         gt_boxes: torch.Tensor,
+        ignore_boxes: Optional[torch.Tensor] = None,
         group: Optional[str] = None
     ) -> None:
         """
         Add one image's post-NMS detections and ground truth.
 
+        Ignore regions let a split be scored against a trusted subset of the
+        labels without punishing the detector for the untrusted ones. A detection
+        that matches no real ground truth but lands on an ignore region is dropped
+        from the evaluation entirely rather than counted as a false positive.
+        Ignore boxes never contribute to the recall denominator.
+
+        The ignore decision is made per IoU threshold, using whether the detection
+        matched real ground truth at that same threshold, which is why scores are
+        accumulated per threshold rather than once.
+
         Args:
             pred_boxes: [P, 4] detections in [ymin, xmin, ymax, xmax]
             pred_scores: [P] detection confidences
             gt_boxes: [G, 4] ground-truth boxes, same convention
+            ignore_boxes: [I, 4] regions that neither reward nor punish
             group: optional label (e.g. an `annotation_source`) to also report
                    this image's contribution under, when groups are enabled
         """
@@ -180,23 +197,50 @@ class DetectionEvaluator:
         gt = gt_boxes.detach().float().cpu() if num_gt else torch.zeros((0, 4))
 
         iou = pairwise_iou(boxes_sorted, gt)
-        self._scores.append(scores_sorted)
+
+        # Overlap with ignore regions, measured as intersection over the
+        # *detection* area: a small detection sitting inside a large ignore
+        # region should be ignored even though their IoU is low.
+        on_ignore = torch.zeros(boxes_sorted.shape[0], dtype=torch.bool)
+        if ignore_boxes is not None and ignore_boxes.numel():
+            ign = ignore_boxes.detach().float().cpu()
+            y_min = torch.maximum(boxes_sorted[:, None, 0], ign[None, :, 0])
+            x_min = torch.maximum(boxes_sorted[:, None, 1], ign[None, :, 1])
+            y_max = torch.minimum(boxes_sorted[:, None, 2], ign[None, :, 2])
+            x_max = torch.minimum(boxes_sorted[:, None, 3], ign[None, :, 3])
+            inter = torch.clamp(y_max - y_min, min=0) * torch.clamp(x_max - x_min, min=0)
+            det_area = torch.clamp(
+                (boxes_sorted[:, 2] - boxes_sorted[:, 0]) * (boxes_sorted[:, 3] - boxes_sorted[:, 1]),
+                min=1e-9
+            )
+            ioa = inter / det_area[:, None]
+            on_ignore = (ioa >= self.ignore_ioa_threshold).any(dim=1)
+
+        primary_tp: Optional[torch.Tensor] = None
+        primary_keep: Optional[torch.Tensor] = None
 
         for threshold in self.iou_thresholds:
-            self._tp[threshold].append(self._greedy_match(iou, threshold))
+            tp = self._greedy_match(iou, threshold)
+            # Keep true positives always; drop unmatched detections that sit on
+            # an ignore region.
+            keep = (tp > 0.5) | (~on_ignore)
+            self._scores[threshold].append(scores_sorted[keep])
+            self._tp[threshold].append(tp[keep])
+            if threshold == self.primary_iou_threshold:
+                primary_tp, primary_keep = tp, keep
+
+        if primary_keep is not None:
+            self._num_ignored += int((~primary_keep).sum().item())
 
         # IoU of the detections that matched at the primary threshold, for a
         # localization-quality readout that (unlike the positive-anchor IoU) is
         # computed on real post-NMS detections.
-        primary_tp = self._tp[self.primary_iou_threshold][-1]
-        if num_gt and primary_tp.any():
+        if num_gt and primary_tp is not None and primary_tp.any():
             self._matched_ious.append(iou.max(dim=1).values[primary_tp > 0.5])
 
-        if self.groups_enabled and group is not None:
-            self._group_scores.setdefault(group, []).append(scores_sorted)
-            self._group_tp.setdefault(group, []).append(
-                self._tp[self.primary_iou_threshold][-1]
-            )
+        if self.groups_enabled and group is not None and primary_keep is not None:
+            self._group_scores.setdefault(group, []).append(scores_sorted[primary_keep])
+            self._group_tp.setdefault(group, []).append(primary_tp[primary_keep])
 
     def compute(self) -> Dict[str, float]:
         """
@@ -206,22 +250,27 @@ class DetectionEvaluator:
         matched detections), `num_detections`, `num_ground_truth`, `num_images`,
         and `map_50/<group>` entries when groups are enabled.
         """
-        if not self._scores:
-            empty = {
+        primary_scores = self._scores[self.primary_iou_threshold]
+        if not primary_scores:
+            return {
                 'map_50': 0.0,
                 'map_50_95': 0.0,
                 'detection_iou': 0.0,
                 'num_detections': 0.0,
+                'num_ignored': float(self._num_ignored),
                 'num_ground_truth': float(self._num_gt),
                 'num_images': float(self._num_images),
             }
-            return empty
 
-        scores = torch.cat(self._scores)
         per_threshold = {
-            threshold: average_precision(scores, torch.cat(self._tp[threshold]), self._num_gt)
+            threshold: average_precision(
+                torch.cat(self._scores[threshold]),
+                torch.cat(self._tp[threshold]),
+                self._num_gt
+            )
             for threshold in self.iou_thresholds
         }
+        scores = torch.cat(primary_scores)
 
         detection_iou = (
             float(torch.cat(self._matched_ious).mean().item())
@@ -233,6 +282,7 @@ class DetectionEvaluator:
             'map_50_95': sum(per_threshold.values()) / len(per_threshold),
             'detection_iou': detection_iou,
             'num_detections': float(scores.numel()),
+            'num_ignored': float(self._num_ignored),
             'num_ground_truth': float(self._num_gt),
             'num_images': float(self._num_images),
         }
