@@ -107,10 +107,11 @@ def split_dataframe_by_images(
             small source can land almost entirely on one side. Pass "source"
             and it is reduced with `base_source` first.
         group_keys: image -> group id. Images sharing a group id always land on
-            the same side. Defaults to `source_photo_key`, which groups the
-            Roboflow re-exports of one photo: without it 53 source photos in
-            this dataset appear in both halves, which is leakage nothing else
-            reports. Pass an empty dict to split strictly per file.
+            the same side. Defaults to the content-hash photo index when one has
+            been built, falling back to `source_photo_key`. Filenames alone miss
+            most of it: the same scene was ingested under different sequence
+            numbers, so content hashing finds 559 duplicate files where the
+            filename key finds 231. Pass an empty dict to split per file.
         shuffle_rows: Shuffle output row order. The previous implementation
             preserved the input order, which is source-by-source, so any prefix
             of val.csv was a single dataset -- that is how a 192-image
@@ -132,7 +133,12 @@ def split_dataframe_by_images(
         raise ValueError("No images found to split.")
 
     if group_keys is None:
-        group_keys = {img: source_photo_key(img) for img in image_ids}
+        try:
+            from utils.photo_index import load_index
+            index = load_index()
+        except Exception:
+            index = {}
+        group_keys = {img: (index.get(img) or source_photo_key(img)) for img in image_ids}
     group_of = {img: group_keys.get(img, img) for img in image_ids}
 
     strata: DefaultDict[str, list] = defaultdict(list)

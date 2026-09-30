@@ -17,6 +17,7 @@ round of review produces the next unreviewed batch.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 from pathlib import Path
 
@@ -33,7 +34,8 @@ CONTEXT = 3.0
 CROP_WIDTH = 360
 
 
-def render_crops(rows: pd.DataFrame, data_root: Path, human, out_dir: Path) -> list[dict]:
+def render_crops(rows: pd.DataFrame, data_root: Path, human, out_dir: Path,
+                 inline: bool = False, quality: int = 72) -> list[dict]:
     out_dir.mkdir(parents=True, exist_ok=True)
     items: list[dict] = []
 
@@ -60,7 +62,13 @@ def render_crops(rows: pd.DataFrame, data_root: Path, human, out_dir: Path) -> l
         scaled_height = max(1, int(crop.shape[0] * CROP_WIDTH / crop.shape[1]))
         crop = cv2.resize(crop, (CROP_WIDTH, scaled_height))
         name = f'c{position:04d}.jpg'
-        cv2.imwrite(str(out_dir / name), crop, [cv2.IMWRITE_JPEG_QUALITY, 72])
+        if inline:
+            ok, buffer = cv2.imencode('.jpg', crop, [cv2.IMWRITE_JPEG_QUALITY, quality])
+            if not ok:
+                continue
+            name = 'data:image/jpeg;base64,' + base64.b64encode(buffer).decode('ascii')
+        else:
+            cv2.imwrite(str(out_dir / name), crop, [cv2.IMWRITE_JPEG_QUALITY, quality])
 
         items.append({
             'id': int(row.Index), 'file': name, 'conf': round(float(row.confidence), 3),
@@ -87,6 +95,12 @@ def main() -> None:
                              '(accept rate 0.69 for the largest quartile against 0.17 for '
                              'the smallest, while "is it a real ear" barely moved).')
     parser.add_argument('--image-size', type=float, default=640.0)
+    parser.add_argument('--inline-images', action='store_true',
+                        help='Embed crops in the page as data URIs instead of separate '
+                             'files. An artifact publishes at most 255 files, so a batch '
+                             'larger than ~250 needs this. The page gets bigger but '
+                             'loads in one request.')
+    parser.add_argument('--quality', type=int, default=72, help='JPEG quality for crops')
     args = parser.parse_args()
 
     queue = pd.read_csv(args.queue)
@@ -116,8 +130,9 @@ def main() -> None:
         return
 
     out_dir = Path(args.out)
-    items = render_crops(rows, Path(args.data_root),
-                         human_boxes_by_image(args.csv), out_dir / 'crops')
+    items = render_crops(rows, Path(args.data_root), human_boxes_by_image(args.csv),
+                         out_dir / 'crops', inline=args.inline_images,
+                         quality=args.quality)
 
     remaining = total_pending - len(items)
     page = TEMPLATE.read_text(encoding='utf-8')
@@ -127,13 +142,18 @@ def main() -> None:
             .replace('__REMAINING__', str(max(0, remaining))))
     (out_dir / 'index.html').write_text(page, encoding='utf-8')
 
-    size_mb = sum(f.stat().st_size for f in (out_dir / 'crops').glob('*.jpg')) / 1e6
-    print(f'batch {args.batch}: {len(items)} items, {size_mb:.2f} MB of crops -> {out_dir}')
+    if args.inline_images:
+        size_mb = (out_dir / 'index.html').stat().st_size / 1e6
+        print(f'batch {args.batch}: {len(items)} items inlined, page {size_mb:.2f} MB -> {out_dir}')
+    else:
+        size_mb = sum(f.stat().st_size for f in (out_dir / 'crops').glob('*.jpg')) / 1e6
+        print(f'batch {args.batch}: {len(items)} items, {size_mb:.2f} MB of crops -> {out_dir}')
     print(f'{remaining} distinct ears still pending in category {args.category!r}')
     if duplicates_hidden:
         print(f'{duplicates_hidden} duplicate copies hidden; their decisions are '
               f'copied from the representative at apply time')
-    print('files:', ' '.join(sorted(p.name for p in (out_dir / "crops").glob("*.jpg"))[:3]), '...')
+    if not args.inline_images:
+        print('files:', ' '.join(sorted(p.name for p in (out_dir / "crops").glob("*.jpg"))[:3]), '...')
 
 
 if __name__ == '__main__':

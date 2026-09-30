@@ -177,7 +177,7 @@ function render(){
   $('live').hidden = false; $('bar').hidden = false; $('finished').hidden = true;
 
   const it = ITEMS[pos];
-  $('shot').src = 'crops/' + it.file;
+  $('shot').src = it.file.startsWith('data:') ? it.file : 'crops/' + it.file;
   $('idx').textContent = it.id;
   $('conf').textContent = it.conf.toFixed(2);
   $('path').textContent = it.image_path.split('/').pop();

@@ -30,6 +30,7 @@ import pandas as pd
 
 from utils.config import HUMAN_ANNOTATION_SOURCES, IGNORE_ANNOTATION_SOURCE
 from utils.data_utils import source_photo_key
+from utils.photo_index import load_index
 
 DEFAULT_QUEUE = 'data/relabel/proposals.csv'
 
@@ -127,7 +128,14 @@ def add_dedup_keys(queue: pd.DataFrame) -> pd.DataFrame:
         queue['dedup_key'] = []
         return queue
     queue = queue.copy()
-    queue['photo_key'] = queue.image_path.map(source_photo_key)
+    # Content hash first: the same photo was ingested under different sequence
+    # numbers (1-626-, 1-1161-, 1-232-, 1-1046- are one scene), so a
+    # filename-derived key groups none of them. It finds 559 duplicate files
+    # against the filename key's 231.
+    index = load_index()
+    queue['photo_key'] = queue.image_path.map(
+        lambda p: index.get(p) or source_photo_key(p)
+    )
     centre_x = ((queue.x1 + queue.w / 2) / DEDUP_CENTRE_PX).round().astype(int)
     centre_y = ((queue.y1 + queue.h / 2) / DEDUP_CENTRE_PX).round().astype(int)
     queue['dedup_key'] = (queue.photo_key + '@'
