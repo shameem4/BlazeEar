@@ -59,7 +59,10 @@ def nms(boxes, scores, iou_threshold=0.3):
         if i + 1 >= len(scores):
             break
         overlap = pairwise_iou(boxes[i:i + 1], boxes[i + 1:])[0]
-        alive[i + 1:] &= overlap < iou_threshold
+        # Keep at `<=`, so suppression is strictly above the threshold, as in
+        # blazedetector, blazeear_inference and the trainer. This started as
+        # `<`, which suppressed one boundary case the other four paths keep.
+        alive[i + 1:] &= overlap <= iou_threshold
     keep = torch.tensor(keep, dtype=torch.long)
     return boxes[keep], scores[keep]
 
