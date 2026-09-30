@@ -267,6 +267,14 @@ def cmd_review(args: argparse.Namespace) -> None:
 def cmd_apply(args: argparse.Namespace) -> None:
     queue = pd.read_csv(args.queue)
     queue, propagated = propagate_decisions(queue)
+    if getattr(args, 'pending_as_ignore', False):
+        pending = (queue.review == 'pending') & (queue.category != 'missed')
+        queue.loc[pending, 'review'] = 'low_quality'
+        print(f'{int(pending.sum())} unreviewed proposals carried as ignore regions')
+        print('  87% of proposals sit on a real ear, and an ignore region on the 13% '
+              'that do not costs a handful of anchors. Leaving them out entirely '
+              'would leave real ears in the hard-negative pool, which is the bug '
+              'this pipeline exists to fix.')
     if propagated:
         print(f'propagated {propagated} decisions to duplicate copies of the same photo')
     accepted = queue[(queue.review == 'accepted') & (queue.category != 'missed')]
@@ -353,6 +361,10 @@ def main() -> None:
     p.add_argument('--csv', default=common['csv'])
     p.add_argument('--output', default='data/splits/master_relabelled.csv')
     p.add_argument('--drop-pose', action='store_true', default=True)
+    p.add_argument('--pending-as-ignore', action='store_true',
+                   help='Treat every unreviewed proposal as an ignore region. Makes a '
+                        'partly-reviewed queue usable for training without leaving real '
+                        'ears in the negative pool. Does not modify the queue file.')
     p.set_defaults(func=cmd_apply)
 
     args = parser.parse_args()

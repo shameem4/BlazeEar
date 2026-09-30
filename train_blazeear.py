@@ -40,7 +40,7 @@ from torch.optim.lr_scheduler import LRScheduler
 from torch.cuda.amp import autocast, GradScaler
 
 from blazeear import BlazeEar
-from blazebase import load_mediapipe_weights
+from blazebase import checkpoint_is_folded, load_checkpoint_state, load_mediapipe_weights
 from utils.anchor_utils import get_anchors
 from dataloader import create_dataloader
 from loss_functions import BlazeEarDetectionLoss, compute_mean_iou
@@ -682,9 +682,6 @@ class BlazeEarTrainer:
                 anchor_ignore = batch.get('anchor_ignore')
                 if anchor_ignore is not None:
                     anchor_ignore = anchor_ignore.to(self.device)
-            anchor_ignore = batch.get('anchor_ignore')
-            if anchor_ignore is not None:
-                anchor_ignore = anchor_ignore.to(self.device)
                 gt_boxes_tensor = batch.get('gt_boxes')
                 gt_box_counts = batch.get('gt_box_counts')
                 if gt_boxes_tensor is not None and gt_box_counts is not None:
@@ -778,8 +775,26 @@ class BlazeEarTrainer:
             print(f'  Saved best model: {best_path}')
     
     def load_checkpoint(self, path: str):
-        """Load training checkpoint."""
+        """Load training checkpoint.
+
+        Refuses a checkpoint written from the other backbone variant. Those
+        predate the BatchNorm switch and store `convs.0.weight` per block where
+        this model expects `dw_conv.weight` and `bn1.*`; load_state_dict's own
+        error is a wall of key names that does not say what to do about it.
+        """
         checkpoint = torch.load(path, map_location=self.device)
+        state = checkpoint.get('model_state_dict', checkpoint)
+        folded_checkpoint = checkpoint_is_folded(state)
+        model_is_folded = not any('.bn1.' in k for k in self.model.state_dict())
+        if folded_checkpoint != model_is_folded:
+            raise RuntimeError(
+                f'{path} was written from the '
+                f'{"BatchNorm-folded" if folded_checkpoint else "trainable-BatchNorm"} '
+                f'backbone, but this model is the '
+                f'{"folded" if model_is_folded else "trainable-BatchNorm"} one. '
+                'Checkpoints do not carry across that change: start fresh, or '
+                'build the model with the matching use_batchnorm setting.'
+            )
         
         self.model.load_state_dict(checkpoint['model_state_dict'])
         try:
@@ -1258,8 +1273,14 @@ def main():
         checkpoint_path = Path(args.resume)
         if checkpoint_path.exists():
             print(f'\nFound checkpoint: {checkpoint_path}')
-            print('Resuming training from checkpoint...')
-            trainer.load_checkpoint(str(checkpoint_path))
+            try:
+                trainer.load_checkpoint(str(checkpoint_path))
+                print('Resuming training from checkpoint...')
+            except RuntimeError as exc:
+                # An incompatible checkpoint left over from a previous
+                # architecture must not stop a fresh run.
+                print(f'Not resuming: {exc}')
+                print('Starting from the configured initialization instead.')
         else:
             print(f'Warning: specified checkpoint {checkpoint_path} not found. Starting fresh.')
 
