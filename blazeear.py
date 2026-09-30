@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from blazebase import BlazeBlock_WT
+from blazebase import BlazeBlock, BlazeBlock_WT
 from blazedetector import BlazeDetector
 from utils.anchor_utils import generate_reference_anchors
 from utils.detection_filters import filter_by_geometry
@@ -33,8 +33,22 @@ class BlazeEar(BlazeDetector):
     https://github.com/google/mediapipe/
 
     """
-    def __init__(self):
+    def __init__(self, use_batchnorm: bool = True):
+        """
+        Args:
+            use_batchnorm: Build the backbone from BlazeBlock, which has explicit
+                trainable BatchNorm. False builds BlazeBlock_WT, the variant with
+                BatchNorm folded into the conv weights, which is what MediaPipe
+                ships and what this model previously used throughout.
+
+                The folded variant has no normalization layers at all, so
+                training it backpropagates into weights calibrated for
+                MediaPipe's activation statistics with nothing holding those
+                statistics in place. Keep False only to load folded weights or
+                to check parity against them.
+        """
         super(BlazeEar, self).__init__()
+        self.use_batchnorm = use_batchnorm
 
         # These are the settings from the MediaPipe example graph
         # mediapipe/graphs/face_detection/face_detection_mobile_gpu.pbtxt
@@ -65,29 +79,31 @@ class BlazeEar(BlazeDetector):
 
     def _define_layers(self):
         # Front model architecture (128x128 input)
+        Block = BlazeBlock if self.use_batchnorm else BlazeBlock_WT
+
         self.backbone1 = nn.Sequential(
             nn.Conv2d(in_channels=3, out_channels=24, kernel_size=5, stride=2, padding=0, bias=True),
             nn.ReLU(inplace=True),
 
-            BlazeBlock_WT(24, 24),
-            BlazeBlock_WT(24, 28),
-            BlazeBlock_WT(28, 32, stride=2),
-            BlazeBlock_WT(32, 36),
-            BlazeBlock_WT(36, 42),
-            BlazeBlock_WT(42, 48, stride=2),
-            BlazeBlock_WT(48, 56),
-            BlazeBlock_WT(56, 64),
-            BlazeBlock_WT(64, 72),
-            BlazeBlock_WT(72, 80),
-            BlazeBlock_WT(80, 88),
+            Block(24, 24),
+            Block(24, 28),
+            Block(28, 32, stride=2),
+            Block(32, 36),
+            Block(36, 42),
+            Block(42, 48, stride=2),
+            Block(48, 56),
+            Block(56, 64),
+            Block(64, 72),
+            Block(72, 80),
+            Block(80, 88),
         )
     
         self.backbone2 = nn.Sequential(
-            BlazeBlock_WT(88, 96, stride=2),
-            BlazeBlock_WT(96, 96),
-            BlazeBlock_WT(96, 96),
-            BlazeBlock_WT(96, 96),
-            BlazeBlock_WT(96, 96),
+            Block(88, 96, stride=2),
+            Block(96, 96),
+            Block(96, 96),
+            Block(96, 96),
+            Block(96, 96),
         )
 
         self.classifier_8 = nn.Conv2d(88, 2, 1, bias=True)

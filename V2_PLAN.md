@@ -239,7 +239,7 @@ prediction is, so no clamping is needed and nothing destabilises.
 
 ## P4 — Architecture (single retrain)
 
-- [ ] **Put normalization into the model.** `BlazeEar._define_layers` uses
+- [x] **Put normalization into the model.** `BlazeEar._define_layers` uses
       `BlazeBlock_WT` (BN folded into conv) throughout; `BlazeBlock`, the trainable-BN
       block the `trainable_blazeface` lineage exists to provide, is never
       instantiated, and `convert_blazeear_wt_to_trainable` is only reachable from a
@@ -290,6 +290,27 @@ Two things follow from the table:
 
 `ANCHOR_TOP_K` is 3, against the old encoder's effective 12 positives per box
 (one per cell, repeated 2x and 6x). Worth a sweep during the retrain.
+
+### The unfold path had never once executed
+
+`BlazeEar` now builds from `BlazeBlock` (32 BatchNorm layers, 103418 params
+against 101390) with `use_batchnorm=False` retained for loading folded weights
+and for parity checks.
+
+Switching it exposed why the dead code was dead. `load_mediapipe_weights` chose
+between the direct and converted paths with `try: load_state_dict(...) except
+RuntimeError`, but `load_state_dict(strict=False)` does not raise on missing or
+unexpected keys, only on shape mismatch. The direct load therefore always
+"succeeded" and the conversion never ran. Loading MediaPipe weights into a
+BatchNorm backbone reported success while leaving **160 keys missing and 64
+unexpected** -- the entire backbone randomly initialized, silently.
+
+The choice is now made by inspecting the target model's keys, and a backbone
+that fails to load raises instead of returning a list nobody checks. With that
+fixed, both variants load 0 missing / 0 unexpected, and eval-mode parity between
+the folded and BatchNorm models is **1.2e-4 relative** -- the residual being
+BatchNorm's eps compounding over 32 layers. The lineage claim is true for the
+first time.
 
 ## P5 — Inference parity
 

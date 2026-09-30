@@ -254,17 +254,31 @@ def load_mediapipe_weights(model: nn.Module,
     # Load original weights (could be BlazeBlock_WT or previously converted format)
     original_state = torch.load(weights_path, map_location='cpu')
 
-    # First, try loading directly (for BlazeBlock_WT-based models)
-    try:
-        state_dict = split_regressor_heads(maybe_strip(original_state))
-        result = model.load_state_dict(state_dict, strict=strict)
-        return result.missing_keys, result.unexpected_keys
-    except RuntimeError:
-        # Fallback: convert folded-BN weights to BlazeBlock format
-        converted = convert_blazeear_wt_to_trainable(original_state)
-        converted = split_regressor_heads(maybe_strip(converted))
-        result = model.load_state_dict(converted, strict=strict)
-        return result.missing_keys, result.unexpected_keys
+    # Decide by inspecting the target model, not by catching an exception.
+    # load_state_dict(strict=False) does not raise on missing or unexpected
+    # keys -- only on shape mismatch -- so a `try/except RuntimeError` around it
+    # never fired, and every BlazeBlock model silently kept its random
+    # initialization while reporting success.
+    target_keys = set(model.state_dict().keys())
+    needs_unfolding = any('.bn1.' in key for key in target_keys)
+
+    if needs_unfolding:
+        state_dict = convert_blazeear_wt_to_trainable(original_state)
+    else:
+        state_dict = original_state
+
+    state_dict = split_regressor_heads(maybe_strip(state_dict))
+    result = model.load_state_dict(state_dict, strict=strict)
+
+    backbone_missing = [k for k in result.missing_keys if k.startswith('backbone')]
+    if backbone_missing:
+        raise RuntimeError(
+            f"{len(backbone_missing)} backbone weights were not loaded from "
+            f"{weights_path} (first: {backbone_missing[:3]}). The model would "
+            f"train from random initialization while appearing to be pretrained."
+        )
+
+    return result.missing_keys, result.unexpected_keys
 
 
 # =============================================================================
