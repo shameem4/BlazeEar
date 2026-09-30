@@ -192,13 +192,13 @@ def main():
     if crop_model:
         print(f'face detector found nothing in {no_face} '
               f'({100 * no_face / max(images, 1):.1f}%) -- a hard recall ceiling')
-    header = f'{"pipeline":14s} {"mAP@0.5":>9s} {"mAP@[.5:.95]":>13s} {"det IoU":>9s}'
+    header = f'{"pipeline":20s} {"mAP@0.5":>9s} {"mAP@[.5:.95]":>13s} {"det IoU":>9s}'
     print()
     print(header)
     print('-' * len(header))
     for name, evaluator in evaluators.items():
         m = evaluator.compute()
-        print(f'{name:14s} {m["map_50"]:9.4f} {m["map_50_95"]:13.4f} '
+        print(f'{name:20s} {m["map_50"]:9.4f} {m["map_50_95"]:13.4f} '
               f'{m["detection_iou"]:9.4f}')
 
 

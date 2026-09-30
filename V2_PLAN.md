@@ -493,3 +493,22 @@ Crop-space mAP flatters the pipeline by hiding its own recall ceiling, so
 `evaluate_two_stage.py` scores end to end in ORIGINAL image pixels against
 every human ear. An ear stranded in an image with no detected face counts as
 a miss rather than leaving the denominator.
+
+### The fitted priors still fit in crop space — hypothesis tested, not supported
+
+The P4 anchor priors were fitted to full-frame ear boxes, and ears in a face
+crop are 2.3x larger relative to the input, so the priors looked like they
+should now be too small. Measured over the 12595 crop-space training ears,
+they are not:
+
+| best shape-only IoU against any prior | p10 | p50 | p90 |
+|---|---|---|---|
+| | 0.549 | 0.701 | 0.865 |
+
+Only 6.0% of crop ears have no prior within IoU 0.5. No refit; the mAP@[.5:.95]
+gap seen early in training is undertraining, not anchor mismatch.
+
+The set is lopsided in crop space, though: `(0.114, 0.245)` alone claims 55.9%
+of ears as its best match, while the smallest prior and the two largest claim
+2.4% between them. Reallocating those three is an optimization worth trying
+only if the two-stage approach is adopted.
