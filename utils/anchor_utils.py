@@ -328,3 +328,36 @@ def assign_anchor_targets(
     positive = targets[:, 0] > 0.5
     ignore = (iou.max(axis=0) >= ignore_iou) & ~positive
     return targets, ignore
+
+
+# =============================================================================
+# Canonical anchors
+# =============================================================================
+
+_ANCHOR_CACHE: dict = {}
+
+
+def get_anchors(device=None) -> torch.Tensor:
+    """
+    The one anchor tensor. Every path must use this.
+
+    Anchors were previously generated in four places -- the dataloader for
+    assignment, the trainer for decoding inside the loss, `BlazeEar.generate_anchors`
+    for `process()`, and `BlazeEarInference._generate_anchors` for the exported
+    graph. Three of them independently hardcoded w=h=1.0. Changing the priors in
+    one place silently left the others behind, which is survivable only while
+    every copy happens to agree.
+
+    Decode reads w/h as the scale the network's raw prediction is multiplied by,
+    so these priors are not only a matching device: the network regresses
+    relative to them. Training and inference must therefore use identical values
+    or the boxes come out at the wrong scale.
+
+    Returns:
+        [896, 4] of (x_center, y_center, width, height), normalized.
+    """
+    key = str(device)
+    if key not in _ANCHOR_CACHE:
+        _ANCHOR_CACHE[key] = generate_anchors_from_priors().to(device) if device is not None \
+            else generate_anchors_from_priors()
+    return _ANCHOR_CACHE[key]

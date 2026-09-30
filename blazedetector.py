@@ -7,6 +7,7 @@ import cv2
 from blazebase import BlazeBase
 from utils.iou import intersect_torch, jaccard_torch, overlap_similarity_torch
 from utils.box_utils import decode_boxes_with_keypoints
+from utils.preprocess import resize_pad as preprocess_resize_pad
 
 class BlazeDetector(BlazeBase):
     """ Base class for detector models.
@@ -148,42 +149,19 @@ class BlazeDetector(BlazeBase):
         self,
         img: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray, float, tuple[int, int]]:
-        """ resize and pad images to be input to the detectors
+        """Resize and pad an image to the detector input size.
 
-        The face and palm detector networks take 256x256 and 128x128 images
-        as input. As such the input image is padded and resized to fit the
-        size while maintaing the aspect ratio.
+        Delegates to `utils.preprocess.resize_pad`, the single implementation
+        shared with BlazeEarInference, so that every path feeds the model the
+        same pixels it was trained on.
 
         Returns:
-            img1: 256x256
-            img2: 128x128
-            scale: scale factor between original image and 256x256 image
-            pad: pixels of padding in the original image
+            img1: intermediate 256x256
+            img2: 128x128 model input
+            scale: scale factor between original image and the 256x256 image
+            pad: padding in original image pixels
         """
-
-        size0 = img.shape
-        if size0[0]>=size0[1]:
-            h1 = 256
-            w1 = 256 * size0[1] // size0[0]
-            padh = 0
-            padw = 256 - w1
-            scale = size0[1] / w1
-        else:
-            h1 = 256 * size0[0] // size0[1]
-            w1 = 256
-            padh = 256 - h1
-            padw = 0
-            scale = size0[0] / h1
-        padh1 = padh//2
-        padh2 = padh//2 + padh%2
-        padw1 = padw//2
-        padw2 = padw//2 + padw%2
-        img1 = cv2.resize(img, (w1,h1))
-        img1 = np.pad(img1, ((padh1, padh2), (padw1, padw2), (0,0)))
-        pad = (int(padh1 * scale), int(padw1 * scale))
-        img2 = cv2.resize(img1, (128,128))
-        return img1, img2, scale, pad
-
+        return preprocess_resize_pad(img, output_size=int(self.x_scale))
 
     def denormalize_detections(
         self,

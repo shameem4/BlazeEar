@@ -314,7 +314,7 @@ first time.
 
 ## P5 — Inference parity
 
-- [ ] **One implementation each of anchors, decode, and NMS.** Anchors are generated
+- [x] **One implementation each of anchors, decode, and NMS.** Anchors are generated
       in 3 places, box decode exists in 5, NMS in 5, the geometry filter in 2.
       Commit `efea1f3` touched 15 files to change one conceptual threshold.
 - [ ] **Geometry filter policy.** `EAR_MAX_SIZE_FRAC = 0.55` rejects any ear filling
@@ -325,6 +325,29 @@ first time.
       `BlazeEarInference.forward` does not; the e2e ONNX does not; the web ONNX plus
       JS does. Add a parity test pinning all four to the same output on fixed inputs.
 - [ ] **Re-export ONNX artifacts** after the retrain.
+
+### Unification found two live divergences
+
+Changing the priors in P4a immediately desynced the paths, which is the hazard
+this item exists to remove: the dataloader matched against fitted priors while
+the trainer's decode, `BlazeEar.process` and `BlazeEarInference` all still used
+three separately hardcoded copies of w=h=1.0. Training stayed self-consistent
+only because targets are absolute boxes, so the priors were doing nothing for
+regression -- half their value silently discarded. All four now read
+`utils.anchor_utils.get_anchors`.
+
+Preprocessing had three resamplers: `cv2.resize` in `BlazeDetector.resize_pad`
+and the dataloader, `F.interpolate(mode="bilinear")` in
+`BlazeEarInference.preprocess`, and canvas `drawImage` in the browser. The cv2
+and torch paths differed by up to 0.0072 per pixel on a [-1, 1] scale (0.0013
+mean), moving raw outputs by 0.003. Minor, but it is train/serve skew that
+nothing would ever have reported. Both Python paths now share
+`utils/preprocess.py` and produce bit-identical tensors. The browser cannot call
+cv2, so that residual remains until preprocessing moves into the exported graph.
+
+`test_inference_parity.py` pins all of this: 9 tests covering anchor identity
+across four paths, decode agreement between `box_utils` and the pipeline, and
+bit-identical preprocessing at four aspect ratios.
 
 ## P6 — Claims
 

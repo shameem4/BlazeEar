@@ -66,6 +66,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.ops
 
+from utils.preprocess import resize_pad as shared_resize_pad
+
 
 class BlazeEarInference(nn.Module):
     # Type hints for registered buffers
@@ -132,34 +134,16 @@ class BlazeEarInference(nn.Module):
     
     def _generate_anchors(self) -> torch.Tensor:
         """
-        Generate 896 anchors for BlazeEar detector.
-        
-        Grid layout:
-        - 16x16 grid with 2 anchors per cell = 512 anchors
-        - 8x8 grid with 6 anchors per cell = 384 anchors
-        Total: 896 anchors
-        
-        Returns:
-            Tensor of shape (896, 4) with [x_center, y_center, width, height]
+        The 896 anchors, from the single shared definition.
+
+        This used to rebuild them inline with w=h=1.0 hardcoded, independently
+        of training. Anchor w/h scale the network's raw prediction during
+        decode, so a private copy here silently produces boxes at the wrong
+        scale whenever the training priors change.
         """
-        # Small anchors: 16x16 grid
-        small_boxes = torch.linspace(0.03125, 0.96875, self.SMALL_GRID)
-        small_x = small_boxes.repeat_interleave(self.SMALL_ANCHORS_PER_CELL).repeat(self.SMALL_GRID)
-        small_y = small_boxes.repeat_interleave(self.SMALL_GRID * self.SMALL_ANCHORS_PER_CELL)
-        small_w = torch.ones_like(small_x)
-        small_h = torch.ones_like(small_x)
-        small_anchors = torch.stack([small_x, small_y, small_w, small_h], dim=1)
-        
-        # Big anchors: 8x8 grid
-        big_boxes = torch.linspace(0.0625, 0.9375, self.BIG_GRID)
-        big_x = big_boxes.repeat_interleave(self.BIG_ANCHORS_PER_CELL).repeat(self.BIG_GRID)
-        big_y = big_boxes.repeat_interleave(self.BIG_GRID * self.BIG_ANCHORS_PER_CELL)
-        big_w = torch.ones_like(big_x)
-        big_h = torch.ones_like(big_x)
-        big_anchors = torch.stack([big_x, big_y, big_w, big_h], dim=1)
-        
-        return torch.cat([small_anchors, big_anchors], dim=0)
-    
+        from utils.anchor_utils import get_anchors
+        return get_anchors()
+
     def _create_model(self) -> nn.Module:
         """Create the BlazeEar model backbone."""
         from blazeear import BlazeEar
@@ -213,69 +197,32 @@ class BlazeEarInference(nn.Module):
             pad: (pad_y, pad_x) padding applied in 256x256 space
             orig_size: (orig_h, orig_w) original image dimensions
         """
-        # Convert to tensor if numpy
-        if isinstance(image, np.ndarray):
-            if image.dtype == np.uint8:
-                image = torch.from_numpy(image.copy()).float()
-            else:
-                image = torch.from_numpy(image.copy()).float()
-            # Assume HWC format for numpy
-            if image.dim() == 3 and image.shape[2] == 3:
-                image = image.permute(2, 0, 1)  # HWC -> CHW
-        
-        # Ensure float and CHW format
-        if image.dim() == 3 and image.shape[0] != 3 and image.shape[2] == 3:
-            image = image.permute(2, 0, 1)
-        
-        image = image.float()
-        _, orig_h, orig_w = image.shape
+        # Accept CHW tensors by returning them to HWC numpy; the shared
+        # cv2 implementation is the reference, because it is what the training
+        # dataloader uses and therefore what the weights were fitted against.
+        if isinstance(image, torch.Tensor):
+            array = image.detach().cpu()
+            if array.dim() == 3 and array.shape[0] == 3:
+                array = array.permute(1, 2, 0)
+            image = array.numpy()
+
+        image = np.asarray(image)
+        if image.dtype != np.uint8:
+            image = np.clip(image, 0, 255).astype(np.uint8)
+
+        orig_h, orig_w = image.shape[:2]
         orig_size = (orig_h, orig_w)
-        
-        # Calculate resize dimensions preserving aspect ratio to fit in 256x256
-        if orig_h >= orig_w:
-            new_h = 256
-            new_w = int(256 * orig_w / orig_h)
-            pad_h = 0
-            pad_w = 256 - new_w
-            scale = orig_w / new_w
-        else:
-            new_h = int(256 * orig_h / orig_w)
-            new_w = 256
-            pad_h = 256 - new_h
-            pad_w = 0
-            scale = orig_h / new_h
-        
-        # Resize to fit within 256x256
-        image = image.unsqueeze(0)  # Add batch dim for interpolate
-        resized = F.interpolate(
-            image,
-            size=(new_h, new_w),
-            mode="bilinear",
-            align_corners=False
+
+        _, resized, scale, pad = shared_resize_pad(image, output_size=self.input_size)
+
+        preprocessed = (
+            torch.from_numpy(np.ascontiguousarray(resized))
+            .permute(2, 0, 1)
+            .unsqueeze(0)
+            .float()
         )
-        
-        # Pad to 256x256 (centered)
-        pad_h1 = pad_h // 2
-        pad_h2 = pad_h - pad_h1
-        pad_w1 = pad_w // 2
-        pad_w2 = pad_w - pad_w1
-        
-        padded = F.pad(resized, (pad_w1, pad_w2, pad_h1, pad_h2), mode="constant", value=0)
-        
-        # Resize to model input size (128x128)
-        preprocessed = F.interpolate(
-            padded,
-            size=(self.input_size, self.input_size),
-            mode="bilinear",
-            align_corners=False
-        )
-        
-        # Normalize to [-1, 1]
         preprocessed = preprocessed / 127.5 - 1.0
-        
-        # Calculate padding in original image space
-        pad = (int(pad_h1 * scale), int(pad_w1 * scale))
-        
+
         return preprocessed, scale, pad, orig_size
     
     # =========================================================================

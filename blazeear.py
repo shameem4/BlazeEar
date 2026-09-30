@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 from blazebase import BlazeBlock, BlazeBlock_WT
 from blazedetector import BlazeDetector
-from utils.anchor_utils import generate_reference_anchors
+from utils.anchor_utils import get_anchors
 from utils.detection_filters import filter_by_geometry
 
 
@@ -174,17 +174,13 @@ class BlazeEar(BlazeDetector):
         """
         Initialize anchors for inference/training.
 
-        To keep training targets and inference decoding in sync, this delegates
-        to `utils.anchor_utils.generate_reference_anchors`, which is also used
-        by the dataloader and loss.
+        Delegates to `utils.anchor_utils.get_anchors`, the single definition
+        shared with the dataloader, the loss and the exported graph. `options`
+        is accepted for call-site compatibility and ignored: the anchor set is
+        not configurable per call, because a decode that disagrees with training
+        produces boxes at the wrong scale rather than an error.
         """
-        input_size = int(options.get("input_size_height", 128))
-        fixed_anchor_size = bool(options.get("fixed_anchor_size", True))
-        reference_anchors, _, _ = generate_reference_anchors(
-            input_size=input_size,
-            fixed_anchor_size=fixed_anchor_size
-        )
-        self.anchors = reference_anchors.to(self._device())
+        self.anchors = get_anchors().to(self._device())
         assert self.anchors.ndimension() == 2
         assert self.anchors.shape[0] == self.num_anchors
         assert self.anchors.shape[1] == 4  # [x, y, w, h]

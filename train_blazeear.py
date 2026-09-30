@@ -40,7 +40,8 @@ from torch.optim.lr_scheduler import LRScheduler
 from torch.cuda.amp import autocast, GradScaler
 
 from blazeear import BlazeEar
-from blazebase import generate_reference_anchors, load_mediapipe_weights
+from blazebase import load_mediapipe_weights
+from utils.anchor_utils import get_anchors
 from dataloader import create_dataloader
 from loss_functions import BlazeEarDetectionLoss, compute_mean_iou
 from utils.detection_eval import DetectionEvaluator
@@ -128,10 +129,9 @@ class BlazeEarTrainer:
         self.use_amp = bool(use_amp and str(device).startswith("cuda") and torch.cuda.is_available())
         self.scaler = GradScaler(enabled=self.use_amp)
         
-        # Generate reference anchors for loss computation
-        # generate_reference_anchors returns (reference_anchors, small, big) tuple
-        reference_anchors, _, _ = generate_reference_anchors()
-        self.reference_anchors = reference_anchors.float().to(device)
+        # The canonical anchors, shared with the dataloader's assignment and
+        # with every inference path.
+        self.reference_anchors = get_anchors().float().to(device)
         
         # Setup loss function
         self.loss_fn = loss_fn if loss_fn else BlazeEarDetectionLoss(scale=scale)
