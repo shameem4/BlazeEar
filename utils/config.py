@@ -76,7 +76,20 @@ NEGATIVE_ANNOTATION_SOURCE = "NEGATIVE"
 # agree on these, or evaluation crops differently than training did and the
 # pipeline is scored on inputs it never saw.
 FACE_CROP_EXPAND = 1.5        # crop side, in multiples of the face box
-FACE_CROP_THRESHOLD = 0.3     # face score floor; this sets the recall ceiling
+# Face score floor. This sets the recall ceiling, and is the only real lever
+# on it: an ear whose face is missed never reaches the second stage. Swept on
+# the validation split, with no retraining of the crop model:
+#
+#   threshold   no face   mAP@0.5   mAP@[.5:.95]   det IoU
+#      0.30       4.1%     0.6336      0.2783       0.7276
+#      0.25       2.8%     0.6381      0.2786       0.7259
+#      0.20       1.3%     0.6447      0.2804       0.7236
+#      0.15       0.4%     0.6476      0.2763       0.7213
+#
+# 0.20 takes the ceiling from 4.1% to 1.3% and has the best mAP@[.5:.95].
+# 0.15 buys a little more mAP@0.5 but loses localisation and costs more crops
+# per frame, so the gain there is weaker detections, not better ones.
+FACE_CROP_THRESHOLD = 0.2
 FACE_CROP_MAX_FACES = 8
 
 # Duplicate suppression (near-duplicate box filtering)

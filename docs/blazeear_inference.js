@@ -28,6 +28,16 @@ const ort = (typeof window !== 'undefined' && window.ort) ||
  */
 class BlazeEarInference {
     /**
+     * One detector pass over whatever it is handed. NOT exported: it is the
+     * stage BlazeEarTwoStage runs twice, once on the frame for faces and once
+     * per crop for ears, and it is not an entry point.
+     *
+     * Run over a whole frame on its own it scores mAP@0.5 0.3142 against the
+     * two-stage pipeline's 0.5760, and on the images the face stage cannot
+     * reach -- where it would be the only option -- it scores 0.0284, because
+     * those ears are a median 4.4 px. There is no regime where it is the right
+     * choice, so it is not offered as one.
+     *
      * Create a BlazeEar detector instance
      * @param {Object} options - Configuration options
      * @param {number} options.confidenceThreshold - Minimum confidence for detections (default: 0.70)
@@ -482,18 +492,6 @@ class BlazeEarInference {
     }
 }
 
-/**
- * Convenience function to create and load a detector
- * @param {string} modelPath - Path to ONNX model
- * @param {Object} options - Detector options
- * @returns {Promise<BlazeEarInference>} Loaded detector instance
- */
-async function createDetector(modelPath, options = {}) {
-    const detector = new BlazeEarInference(options);
-    await detector.load(modelPath);
-    return detector;
-}
-
 
 /**
  * The two-stage pipeline: MediaPipe BlazeFace on the full frame, then the ear
@@ -518,7 +516,7 @@ async function createDetector(modelPath, options = {}) {
 class BlazeEarTwoStage {
     constructor(options = {}) {
         this.expand = options.expand ?? 1.5;
-        this.faceThreshold = options.faceThreshold ?? 0.3;
+        this.faceThreshold = options.faceThreshold ?? 0.2;
         this.maxFaces = options.maxFaces ?? 8;
         this.iouThreshold = options.iouThreshold ?? 0.3;
         this.face = new BlazeEarInference({
@@ -619,7 +617,7 @@ class BlazeEarTwoStage {
 }
 
 /**
- * Load the two-stage pipeline.
+ * Load the two-stage pipeline. This is the entry point.
  * @returns {Promise<BlazeEarTwoStage>}
  */
 async function createTwoStageDetector(facePath, earPath, options = {}) {
@@ -631,15 +629,11 @@ async function createTwoStageDetector(facePath, earPath, options = {}) {
 // Export for different module systems
 if (typeof module !== 'undefined' && module.exports) {
     // CommonJS
-    module.exports = { BlazeEarInference, createDetector,
-                       BlazeEarTwoStage, createTwoStageDetector };
+    module.exports = { BlazeEarTwoStage, createTwoStageDetector };
 } else if (typeof window !== 'undefined') {
     // Browser global
-    window.BlazeEarInference = BlazeEarInference;
-    window.createBlazeEarDetector = createDetector;
     window.BlazeEarTwoStage = BlazeEarTwoStage;
     window.createBlazeEarTwoStageDetector = createTwoStageDetector;
 }
 
-export { BlazeEarInference, createDetector,
-         BlazeEarTwoStage, createTwoStageDetector };
+export { BlazeEarTwoStage, createTwoStageDetector };

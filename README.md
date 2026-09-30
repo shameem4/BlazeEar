@@ -2,6 +2,20 @@
 
 ![BlazeEar cover](assets/linkedin_cover_blazeear.png)
 
+**[Live demo](https://shameem4.github.io/BlazeEar/)** &mdash; runs entirely in
+your browser, on your device. No image leaves the page.
+
+**Write-ups:**
+[Measuring the whole head, privately, in the browser](https://www.linkedin.com/m/pulse/measuring-whole-head-privately-browser-shameem-hameed-ep0mc)
+&middot;
+[BlazeEar: extending trainable BlazeFace from faces to ears](https://www.linkedin.com/pulse/blazeear-extending-trainable-blazeface-from-faces-ears-shameem-hameed-dalic/)
+
+> Note on the earlier article: it reports a peak validation mAP@0.5 of about
+> 0.46 declining to 0.25. Both figures are withdrawn -- they were an artifact
+> of an unshuffled validation prefix ordered by annotation source. See
+> [v2: what changed](#v2-what-changed-and-what-it-was-worth) for the
+> corrected numbers and how they were measured.
+
 BlazeEar is a lightweight ear detector built on the MediaPipe BlazeFace family of models. The goal is practical ear localization in unconstrained images (profiles, partial occlusions, mixed lighting) with a compact architecture that can run in real time on consumer GPUs and edge devices.
 
 The project started as an experiment to reuse BlazeFace’s anchor layout and training recipe for a different small target (ears). Early versions relied on external detectors to generate pseudo‑labels; the current codebase supports a full pipeline from heterogeneous annotations to a trained BlazeEar model, with optional staged fine‑tuning and tooling for qualitative inspection.

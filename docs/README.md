@@ -67,24 +67,30 @@ These defaults mirror `FACE_CROP_*` in `utils/config.py`. The Python reference
 implementation is `evaluate_two_stage.py`; if you change the crop geometry in
 one place, change it in the other.
 
-## Single-stage, for comparison
+## Why single-stage is not offered
 
 Running one ear detector over the whole frame is what this demo used to do. It
-is kept as an API, not as a page option, because on the same held-out images it
-scores mAP@0.5 0.3142 against the two-stage pipeline's 0.5760 -- roughly half:
+is no longer exported, because there is no regime where it is the better
+choice:
 
-```javascript
-import { BlazeEarInference } from './blazeear_inference.js';
+| | median ear at 128 px | single-stage | two-stage |
+|---|---|---|---|
+| a face is found (96%) | 14.0 px | 0.3694 | **0.6593** |
+| no face found (4%) | **4.4 px** | **0.0284** | unreachable |
 
-const detector = new BlazeEarInference({ confidenceThreshold: 0.70 });
-await detector.load('BlazeEar_web.onnx');
-const detections = await detector.detect(videoElement);
-```
+The second row is the one that settles it. It is tempting to assume the images
+the face stage misses are ear close-ups, where a full-frame detector would
+shine. They are the opposite: the ears there are a median 4.4 px, three times
+*smaller* than average, because BlazeFace misses those faces precisely when the
+subject is tiny. Single-stage scores 0.0284 on them, which is noise. It does
+not rescue the images two-stage cannot reach -- it fails on them harder.
 
-Note that `BlazeEar_web.onnx` is now the **crop-trained** checkpoint, so used
-this way it is being run on inputs it was not trained for. To reproduce the
-0.3142 figure, export the full-frame checkpoint with
-`python export_e2e_web.py`.
+That is also why falling back to a full-frame pass measured as a wash: it was
+not recovering ears, it was adding false positives.
+
+`BlazeEarInference` still exists inside the module, because it is the stage the
+pipeline runs twice -- once on the frame for faces, once per crop for ears. It
+is an implementation detail, not an entry point, and is not exported.
 
 ## Model
 
@@ -132,9 +138,10 @@ const detector = new BlazeEarTwoStage(options);
 
 **Options:**
 - `confidenceThreshold` (default: 0.70) - minimum confidence, ear stage
-- `faceThreshold` (default: 0.3) - minimum confidence, face stage. This sets
+- `faceThreshold` (default: 0.2) - minimum confidence, face stage. This sets
   the recall ceiling: lower it to reach more ears at the cost of more crops
-  per frame.
+  per frame. Swept on the validation split, 0.3 leaves 4.1% of images with no
+  face and 0.2 leaves 1.3%, for mAP@0.5 0.6336 -> 0.6447.
 - `expand` (default: 1.5) - crop side, in multiples of the face box. Larger
   reaches more ears and gives each one fewer pixels.
 - `maxFaces` (default: 8) - crops per frame, at most
@@ -146,22 +153,7 @@ const detector = new BlazeEarTwoStage(options);
   array carries a `faceCount` property.
 - `drawDetections(ctx, detections, options)` - draw boxes on a canvas
 
-### BlazeEarInference
-
-The single stage, used directly or as the building block of the above.
-
-```javascript
-const detector = new BlazeEarInference(options);
-```
-
-**Options:**
-- `confidenceThreshold` (default: 0.70) - Minimum detection confidence
-- `iouThreshold` (default: 0.3) - NMS IoU threshold
-
-**Methods:**
-- `load(modelPath)` - Load ONNX model
-- `detect(source)` - Run detection on image/video/canvas
-- `drawDetections(ctx, detections, options)` - Draw boxes on canvas
+`BlazeEarTwoStage` and `createTwoStageDetector` are the only exports.
 
 ## Regenerating the models
 
