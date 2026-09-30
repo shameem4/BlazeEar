@@ -129,3 +129,50 @@ class TestDeterminism:
         _, a = split_dataframe_by_images(df, val_fraction=0.25, random_seed=1)
         _, b = split_dataframe_by_images(df, val_fraction=0.25, random_seed=2)
         assert set(a.image_path) != set(b.image_path)
+
+
+class TestSourcePhotoGrouping:
+    """
+    Roboflow re-exports one photo under several hashes with photometric
+    alterations. Splitting per file puts the same scene on both sides.
+    """
+
+    def test_recognises_roboflow_exports(self):
+        from utils.data_utils import source_photo_key
+        a = 'ear annotations..v3i.coco/train/1-590-_jpg.rf.7212e68de243cb47dfe24cc.jpg'
+        b = 'ear annotations..v3i.coco/train/1-590-_jpg.rf.ea4a51185388213f10bf372.jpg'
+        assert source_photo_key(a) == source_photo_key(b)
+
+    def test_different_photos_stay_distinct(self):
+        from utils.data_utils import source_photo_key
+        a = 'ds/train/1-590-_jpg.rf.7212e68de243cb47dfe24cc.jpg'
+        b = 'ds/train/1-327-_jpg.rf.7212e68de243cb47dfe24cc.jpg'
+        assert source_photo_key(a) != source_photo_key(b)
+
+    def test_non_roboflow_names_fall_back_to_the_path(self):
+        from utils.data_utils import source_photo_key
+        assert source_photo_key('a/b/plain.jpg') == 'a/b/plain.jpg'
+
+    def test_copies_never_straddle_the_split(self):
+        rows = []
+        for i in range(40):
+            for copy in range(2):
+                rows.append({
+                    'image_path': f'ds/train/img{i:03d}_jpg.rf.{copy:032x}.jpg',
+                    'x1': 10, 'y1': 10, 'w': 20, 'h': 40, 'source': 'ds',
+                })
+        df = pd.DataFrame(rows)
+        train, val = split_dataframe_by_images(df, val_fraction=0.5)
+
+        from utils.data_utils import source_photo_key
+        train_keys = {source_photo_key(p) for p in train.image_path}
+        val_keys = {source_photo_key(p) for p in val.image_path}
+        assert train_keys & val_keys == set()
+
+    def test_per_file_splitting_is_still_available(self):
+        rows = [{'image_path': f'ds/train/img{i:03d}_jpg.rf.{c:032x}.jpg',
+                 'x1': 10, 'y1': 10, 'w': 20, 'h': 40, 'source': 'ds'}
+                for i in range(40) for c in range(2)]
+        train, val = split_dataframe_by_images(
+            pd.DataFrame(rows), val_fraction=0.5, group_keys={})
+        assert len(train) and len(val)

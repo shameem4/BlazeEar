@@ -29,11 +29,16 @@ import numpy as np
 import pandas as pd
 
 from utils.config import HUMAN_ANNOTATION_SOURCES, IGNORE_ANNOTATION_SOURCE
+from utils.data_utils import source_photo_key
 
 DEFAULT_QUEUE = 'data/relabel/proposals.csv'
 
 # A proposal matching an existing human box at this IoU is the same ear.
 MATCH_IOU = 0.5
+
+# Proposals on copies of one source photo are the same ear if their centres
+# fall within this many pixels, so one judgement covers all of them.
+DEDUP_CENTRE_PX = 40
 
 # Categories:
 #   new      proposal overlaps no human box -- a candidate missing ear
@@ -110,6 +115,38 @@ def categorise(
     return proposal_rows, missed_rows
 
 
+def add_dedup_keys(queue: pd.DataFrame) -> pd.DataFrame:
+    """Tag each row with the source photo and a same-ear group.
+
+    Copies of one Roboflow photo hold the same ear at the same place, so a
+    single review decision covers every copy. Grouping on the photo plus a
+    coarse box centre keeps two genuinely different ears in one photo apart.
+    """
+    if queue.empty:
+        queue['photo_key'] = []
+        queue['dedup_key'] = []
+        return queue
+    queue = queue.copy()
+    queue['photo_key'] = queue.image_path.map(source_photo_key)
+    centre_x = ((queue.x1 + queue.w / 2) / DEDUP_CENTRE_PX).round().astype(int)
+    centre_y = ((queue.y1 + queue.h / 2) / DEDUP_CENTRE_PX).round().astype(int)
+    queue['dedup_key'] = (queue.photo_key + '@'
+                          + centre_x.astype(str) + ',' + centre_y.astype(str))
+    return queue
+
+
+def propagate_decisions(queue: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """Copy each decision onto the unreviewed copies of the same ear."""
+    if 'dedup_key' not in queue.columns:
+        return queue, 0
+    decided = queue[queue.review != 'pending']
+    lookup = dict(zip(decided.dedup_key, decided.review))
+    pending = queue.review == 'pending'
+    matches = pending & queue.dedup_key.isin(lookup)
+    queue.loc[matches, 'review'] = queue.loc[matches, 'dedup_key'].map(lookup)
+    return queue, int(matches.sum())
+
+
 def cmd_propose(args: argparse.Namespace) -> None:
     from ultralytics import YOLO
 
@@ -145,6 +182,7 @@ def cmd_propose(args: argparse.Namespace) -> None:
         'image_path', 'x1', 'y1', 'w', 'h', 'confidence',
         'best_iou_with_human', 'category', 'review',
     ])
+    queue = add_dedup_keys(queue)
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     queue.to_csv(args.output, index=False)
 
@@ -228,6 +266,9 @@ def cmd_review(args: argparse.Namespace) -> None:
 
 def cmd_apply(args: argparse.Namespace) -> None:
     queue = pd.read_csv(args.queue)
+    queue, propagated = propagate_decisions(queue)
+    if propagated:
+        print(f'propagated {propagated} decisions to duplicate copies of the same photo')
     accepted = queue[(queue.review == 'accepted') & (queue.category != 'missed')]
     rejected_gt = queue[(queue.review == 'accepted') & (queue.category == 'missed')]
     # 'box_wrong' means the reviewer confirmed a real ear but the proposed

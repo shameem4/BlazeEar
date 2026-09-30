@@ -183,3 +183,50 @@ class TestApply:
         fix = out.with_name(out.stem + '_needs_box_fix.csv')
         assert fix.exists()
         assert len(pd.read_csv(fix)) == 1
+
+
+class TestDeduplication:
+    def test_copies_of_one_photo_share_a_dedup_key(self):
+        from relabel import add_dedup_keys
+        q = pd.DataFrame({
+            'image_path': ['ds/t/1-590-_jpg.rf.aaa.jpg', 'ds/t/1-590-_jpg.rf.bbb.jpg'],
+            'x1': [100, 104], 'y1': [200, 203], 'w': [40, 40], 'h': [80, 80],
+            'confidence': [0.8, 0.8], 'best_iou_with_human': [0.0, 0.0],
+            'category': ['new', 'new'], 'review': ['pending', 'pending'],
+        })
+        out = add_dedup_keys(q)
+        assert out.dedup_key.nunique() == 1
+
+    def test_two_ears_in_one_photo_stay_separate(self):
+        from relabel import add_dedup_keys
+        q = pd.DataFrame({
+            'image_path': ['ds/t/1-590-_jpg.rf.aaa.jpg'] * 2,
+            'x1': [100, 400], 'y1': [200, 200], 'w': [40, 40], 'h': [80, 80],
+            'confidence': [0.8, 0.8], 'best_iou_with_human': [0.0, 0.0],
+            'category': ['new', 'new'], 'review': ['pending', 'pending'],
+        })
+        assert add_dedup_keys(q).dedup_key.nunique() == 2
+
+    def test_a_decision_propagates_to_the_copies(self):
+        from relabel import add_dedup_keys, propagate_decisions
+        q = add_dedup_keys(pd.DataFrame({
+            'image_path': ['ds/t/1-590-_jpg.rf.aaa.jpg', 'ds/t/1-590-_jpg.rf.bbb.jpg'],
+            'x1': [100, 104], 'y1': [200, 203], 'w': [40, 40], 'h': [80, 80],
+            'confidence': [0.8, 0.8], 'best_iou_with_human': [0.0, 0.0],
+            'category': ['new', 'new'], 'review': ['accepted', 'pending'],
+        }))
+        out, n = propagate_decisions(q)
+        assert n == 1
+        assert (out.review == 'accepted').all()
+
+    def test_propagation_never_overwrites_a_real_decision(self):
+        from relabel import add_dedup_keys, propagate_decisions
+        q = add_dedup_keys(pd.DataFrame({
+            'image_path': ['ds/t/1-590-_jpg.rf.aaa.jpg', 'ds/t/1-590-_jpg.rf.bbb.jpg'],
+            'x1': [100, 104], 'y1': [200, 203], 'w': [40, 40], 'h': [80, 80],
+            'confidence': [0.8, 0.8], 'best_iou_with_human': [0.0, 0.0],
+            'category': ['new', 'new'], 'review': ['accepted', 'rejected'],
+        }))
+        out, n = propagate_decisions(q)
+        assert n == 0
+        assert list(out.review) == ['accepted', 'rejected']

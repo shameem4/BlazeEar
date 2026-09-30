@@ -24,7 +24,7 @@ import cv2
 import numpy as np
 import pandas as pd
 
-from relabel import human_boxes_by_image
+from relabel import add_dedup_keys, human_boxes_by_image
 
 TEMPLATE = Path(__file__).parent / 'utils' / 'review_template.html'
 
@@ -81,13 +81,33 @@ def main() -> None:
     parser.add_argument('--size', type=int, default=75, help='Items in this batch')
     parser.add_argument('--category', default='new', help="'new', 'conflict' or 'missed'")
     parser.add_argument('--min-conf', type=float, default=0.25)
+    parser.add_argument('--sort-by', choices=['size', 'confidence'], default='size',
+                        help='Size first by default: in the pilot it predicted whether a '
+                             'proposal becomes a usable label far better than confidence '
+                             '(accept rate 0.69 for the largest quartile against 0.17 for '
+                             'the smallest, while "is it a real ear" barely moved).')
+    parser.add_argument('--image-size', type=float, default=640.0)
     args = parser.parse_args()
 
     queue = pd.read_csv(args.queue)
+    if 'dedup_key' not in queue.columns:
+        queue = add_dedup_keys(queue)
     pending = queue[(queue.category == args.category)
                     & (queue.review == 'pending')
                     & (queue.confidence >= args.min_conf)]
-    pending = pending.sort_values('confidence', ascending=False)
+    if args.sort_by == 'size':
+        pending = pending.assign(
+            _size=pending[['w', 'h']].max(axis=1) / args.image_size
+        ).sort_values('_size', ascending=False).drop(columns='_size')
+    else:
+        pending = pending.sort_values('confidence', ascending=False)
+    # One representative per ear. Roboflow re-exports the same photo under
+    # several hashes, so without this the reviewer judges the same ear more
+    # than once; the decision is copied to the copies at apply time.
+    before = len(pending)
+    if 'dedup_key' in pending.columns:
+        pending = pending.drop_duplicates('dedup_key', keep='first')
+    duplicates_hidden = before - len(pending)
     total_pending = len(pending)
     rows = pending.head(args.size)
 
@@ -109,7 +129,10 @@ def main() -> None:
 
     size_mb = sum(f.stat().st_size for f in (out_dir / 'crops').glob('*.jpg')) / 1e6
     print(f'batch {args.batch}: {len(items)} items, {size_mb:.2f} MB of crops -> {out_dir}')
-    print(f'{remaining} still pending in category {args.category!r} after this batch')
+    print(f'{remaining} distinct ears still pending in category {args.category!r}')
+    if duplicates_hidden:
+        print(f'{duplicates_hidden} duplicate copies hidden; their decisions are '
+              f'copied from the representative at apply time')
     print('files:', ' '.join(sorted(p.name for p in (out_dir / "crops").glob("*.jpg"))[:3]), '...')
 
 

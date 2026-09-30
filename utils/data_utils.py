@@ -4,7 +4,9 @@ Utilities for loading annotation CSVs and creating train/val splits.
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
+from pathlib import Path
 from pathlib import Path
 from typing import DefaultDict, Dict, List, Sequence, Tuple, cast
 
@@ -45,6 +47,31 @@ def load_image_boxes_from_csv(csv_path: str | Path) -> tuple[list[str], dict[str
     return image_paths, dict(grouped)
 
 
+SOURCE_PHOTO_RE = re.compile(r"(.+?)_(jpg|jpeg|png)\.rf\.[0-9a-f]+\.", re.IGNORECASE)
+
+
+def source_photo_key(image_path: str) -> str:
+    """Identify the original photo behind a Roboflow export filename.
+
+    Roboflow re-exports the same source photo several times under different
+    hashes, with photometric alterations applied: `1-590-_jpg.rf.7212e68d….jpg`
+    and `1-590-_jpg.rf.ea4a5118….jpg` are the same scene. In this dataset 231
+    of 13482 files are such copies, covering 220 source photos.
+
+    They matter twice over. A per-file train/val split puts 53 source photos on
+    both sides, which is leakage nothing else detects; and a review queue shows
+    the same ear several times, which wastes the one resource relabelling is
+    actually limited by.
+
+    Falls back to the full path when the filename is not a Roboflow export.
+    """
+    path = Path(image_path)
+    match = SOURCE_PHOTO_RE.match(path.name)
+    if not match:
+        return str(image_path)
+    return f"{path.parent.parent.name}/{match.group(1)}"
+
+
 def base_source(source: str) -> str:
     """Strip the pseudo-label suffixes to get the originating dataset.
 
@@ -79,9 +106,11 @@ def split_dataframe_by_images(
             source is represented in both halves in proportion. Without it, a
             small source can land almost entirely on one side. Pass "source"
             and it is reduced with `base_source` first.
-        group_keys: Optional image -> group id. Images sharing a group id always
-            land on the same side; use it to keep near-duplicates together,
-            which a per-image split would otherwise separate into both halves.
+        group_keys: image -> group id. Images sharing a group id always land on
+            the same side. Defaults to `source_photo_key`, which groups the
+            Roboflow re-exports of one photo: without it 53 source photos in
+            this dataset appear in both halves, which is leakage nothing else
+            reports. Pass an empty dict to split strictly per file.
         shuffle_rows: Shuffle output row order. The previous implementation
             preserved the input order, which is source-by-source, so any prefix
             of val.csv was a single dataset -- that is how a 192-image
@@ -90,7 +119,8 @@ def split_dataframe_by_images(
     Returns:
         (train_df, val_df) with indices reset
 
-    Note: subject identity is not recoverable here. Every source is a Roboflow
+    Note: duplicate grouping is not subject grouping. Subject identity is not
+    recoverable here. Every source is a Roboflow
     export with hashed filenames, so the same person across several photos
     cannot be detected, and train/val may share subjects.
     """
@@ -101,7 +131,9 @@ def split_dataframe_by_images(
     if not image_ids:
         raise ValueError("No images found to split.")
 
-    group_of = {img: (group_keys or {}).get(img, img) for img in image_ids}
+    if group_keys is None:
+        group_keys = {img: source_photo_key(img) for img in image_ids}
+    group_of = {img: group_keys.get(img, img) for img in image_ids}
 
     strata: DefaultDict[str, list] = defaultdict(list)
     if stratify_column and stratify_column in df.columns:
