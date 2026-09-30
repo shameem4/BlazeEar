@@ -327,7 +327,7 @@ first time.
 - [x] **One implementation each of anchors, decode, and NMS.** Anchors are generated
       in 3 places, box decode exists in 5, NMS in 5, the geometry filter in 2.
       Commit `efea1f3` touched 15 files to change one conceptual threshold.
-- [ ] **Geometry filter policy.** `EAR_MAX_SIZE_FRAC = 0.55` rejects any ear filling
+- [x] **Geometry filter policy.** `EAR_MAX_SIZE_FRAC = 0.55` rejects any ear filling
       more than 55% of the frame — i.e. the earbud-fitting close-up that motivates
       the project. Make it configurable and default it off once precision no longer
       depends on it.
@@ -361,7 +361,10 @@ bit-identical preprocessing at four aspect ratios.
 
 ## P6 — Claims
 
-- [ ] Update `README.md` and issue a correction to the LinkedIn article once numbers
-      are re-measured. The current text claims trainable BatchNorm that is not in the
+- [~] `README.md` corrected: the withdrawn results, the BatchNorm claim, the
+      anchor measurements, the head initialization, and the stale
+      `data/raw/blazeear` root. Headline numbers stay withdrawn until the
+      retrain. **The LinkedIn article still needs its correction** — it carries
+      the same withdrawn 0.46/0.25 figures and the same BatchNorm claim. The current text claims trainable BatchNorm that is not in the
       model, and reports a mAP that is neither standard mAP nor measured against
       fully human labels.

@@ -30,9 +30,20 @@ This repository is a direct descendant of the sibling project `trainable_blazefa
 
 Once BlazeFace was trainable end‑to‑end, it became a stable platform for adapting the detector to other small, roughly face‑adjacent targets. Ears are similar enough to faces to benefit from the same anchor pyramid and receptive fields, but different enough to expose the limitations of existing ear datasets and off‑the‑shelf detectors.
 
+> **Correction (v2).** Until the v2 branch, `BlazeEar` built its entire backbone
+> from `BlazeBlock_WT` — the *folded* block, with BatchNorm baked into the conv
+> weights. `BlazeBlock`, the trainable-BatchNorm block this lineage exists to
+> provide, was never instantiated, so the shipped model had **no normalization
+> layers at all** and the central claim below was not true of it. Worse, the
+> conversion path was unreachable: `load_mediapipe_weights` chose it inside an
+> `except RuntimeError`, but `load_state_dict(strict=False)` does not raise on
+> missing keys, so loading into a BatchNorm backbone reported success while
+> leaving 160 keys missing. Both are fixed; eval-mode parity with the folded
+> model at initialization is now 1.2e-4 relative.
+
 What carried over unchanged:
 
-- The front‑detector backbone (`BlazeBlock_WT` stack), two‑scale heads, and 896‑anchor layout.  
+- The front‑detector backbone, two‑scale heads, and 896‑anchor layout.  
 - The training recipe from `vincent1bt/blazeface‑tensorflow`: anchor target encoding, hard negative mining, and SmoothL1 regression.  
 - Weight initialization via `load_mediapipe_weights()` and the same preprocessing/NMS conventions.
 
@@ -86,7 +97,7 @@ Resize to 128×128
 Conv 5×5 s=2, 24ch
         │
         ▼
-Backbone1: BlazeBlock_WT stack
+Backbone1: BlazeBlock stack
   → feature map 16×16×88
         │
    ┌────┴─────────────┐
@@ -100,7 +111,7 @@ Classifier_8          Regressor_8
    └──────┬───────────┘
           │
           ▼
-Backbone2: BlazeBlock_WT stack
+Backbone2: BlazeBlock stack
   → feature map 8×8×96
           │
    ┌────┴─────────────┐
@@ -128,6 +139,17 @@ Anchor pyramid:
 - Small scale: 16×16 grid with 2 anchors per cell (512 anchors).  
 - Large scale: 8×8 grid with 6 anchors per cell (384 anchors).  
 - Total: 896 anchors, each predicting 1 class score and 16 regression values (4 box + 12 keypoint coords).
+
+Anchor priors are fitted to the ear box statistics rather than inherited from
+MediaPipe. The original anchors were all `w = h = 1.0`, so the 896 anchors
+covered only 320 distinct positions with no scale or aspect prior at all;
+measured over 13477 human boxes, the closest anchor reached IoU 0.5 for 0.1% of
+ears. MediaPipe's own variable-size anchors reach 18.0%, and priors fitted by
+k-means reach 23.8%. Even fitted, most ears never reach IoU 0.5, because the
+limit is spatial — stride 8 spaces anchor centres 0.0625 apart for objects
+0.053 wide — so targets are assigned best-match per box rather than by an IoU
+threshold. A stride-4 head would raise that to 57.6% and is the largest
+remaining architectural gain.
 
 ---
 
@@ -224,13 +246,17 @@ The primary path is CSV training that mirrors the MediaPipe front detector setup
 python train_blazeear.py --csv-format \
   --train-data data/splits/train.csv \
   --val-data data/splits/val.csv \
-  --data-root data/raw/blazeear
+  --data-root data/raw
 ```
 
 Useful flags:
 
-- `--init-weights mediapipe|scratch`  
-  Load MediaPipe BlazeFace weights (`model_weights/blazeface.pth`) or random init.
+- `--init-weights mediapipe-backbone|mediapipe|scratch`  
+  Default `mediapipe-backbone` loads the backbone and re-initializes the
+  detection heads with a background prior. MediaPipe's head is calibrated for
+  the folded backbone's activation scale, and trainable BatchNorm renormalizes
+  the features under it: inherited, it starts at a median logit of -339 on
+  anchors holding an ear. Re-initialized, -4.8.
 - `--freeze-thaw`  
   Staged training: heads only → backbone2 → full model (see script defaults).
 - `--use-focal-loss --focal-alpha 0.25 --focal-gamma 2.0`  
@@ -253,14 +279,35 @@ tensorboard --logdir runs/logs
 
 ---
 
-## Training Results (current run)
+## Training Results
 
-From `runs/logs/BlazeEar/events.out.tfevents.*`:
+> **These figures were withdrawn.** The v2 branch found the measurement that
+> produced them to be wrong in several independent ways, and the model is being
+> retrained. Nothing below should be cited until that finishes.
 
-- Trained for **100 epochs** with cosine annealing LR from **1e‑4 → ~1e‑6**.  
-- Best validation **mAP@0.5 ≈ 0.46** (peak during training).  
-- Best validation **mean IoU ≈ 0.46**.  
-- Final validation snapshot: mAP@0.5 ≈ **0.25**, mean IoU ≈ **0.33**.  
+The previously reported "peak validation mAP@0.5 ≈ 0.46, declining to ≈ 0.25"
+was **a measurement artifact, not a training dynamic**. Per-epoch validation
+scored `200 // batch_size` batches while the final summary scored
+`500 // batch_size`, and `val.csv` preserved master-CSV row order, which is
+source-by-source — so a short prefix sampled one easy dataset. Holding the
+epoch-94 checkpoint completely fixed and varying only how many validation
+images are scored reproduces the whole "decline":
+
+| val images scored | mAP@0.5 |
+| --- | --- |
+| 96 | 0.5508 |
+| 192 | 0.4286 |
+| 480 | 0.2497 |
+| 2022 (all) | 0.2801 |
+
+The metric itself was also non-standard: VOC07 11-point AP computed per image
+and averaged, on images holding one or two boxes, which measures quantization
+more than detection. Pooled properly over the whole split, that same checkpoint
+scores **mAP@0.5 = 0.149**, or **0.213** against human-verified labels only.
+Around 38% of validation boxes were pose-model pseudo-labels that no detector
+reproduces — 97.8% of them have zero overlap with any human box.
+
+Corrected numbers will be published here after the retrain.
 
 Qualitative samples are exported to `runs/logs/debug_images/`. These PNGs show predicted boxes over diverse poses and occlusions and are useful for spotting failure modes (small ears, heavy occlusion, extreme profiles).
 
@@ -330,7 +377,7 @@ Example screenshot export:
 ```bash
 python utils/debug_training.py \
   --weights runs/checkpoints/BlazeEar_best.pth \
-  --data-root data/raw/blazeear \
+  --data-root data/raw \
   --csv data/splits/val.csv \
   --screenshot-count 20
 ```
@@ -400,6 +447,38 @@ python export_onnx.py \
 `detections` is `(num_detections, 5)` in `[ymin, xmin, ymax, xmax, score]` (normalized coords).
 
 ---
+
+## Evaluation
+
+`evaluate.py` scores a checkpoint over a whole split, pooling every detection
+into one precision/recall curve rather than averaging per-image AP, and breaks
+the result out by annotation provenance so pseudo-label agreement is never
+folded into the headline number.
+
+```bash
+python evaluate.py --checkpoint runs/checkpoints/BlazeEar_best.pth
+```
+
+Boxes from an untrusted source are scored as ignore regions in the other views,
+so excluding them does not turn a correctly-detected ear into a false positive.
+Checkpoints predating the v2 anchor change need `--legacy-anchors`.
+
+## Relabelling
+
+Most images here carry exactly one human-labelled ear (11084 of 13482), so the
+second ear is usually present but unlabelled — and hard negative mining selects
+the highest-scoring background anchors, which is precisely that ear.
+`relabel.py` closes the gap with human review rather than more pseudo-labels:
+
+```bash
+python relabel.py propose --weights <labeller>/best.pt
+python relabel.py review
+python relabel.py apply --output data/splits/master_relabelled.csv
+```
+
+A reviewer can also mark a real ear whose box is wrong (queued for correction,
+never merged) or one too degraded to learn from (merged as an ignore region, so
+it is neither a target nor a hard negative).
 
 ## Next Directions
 
