@@ -48,7 +48,15 @@ DEFAULT_EVAL_IOU_THRESHOLD = 0.5
 
 # Annotation provenance (data_prep.py writes these into annotation_source)
 # Human-verified boxes; everything else in the CSV is machine-generated.
-HUMAN_ANNOTATION_SOURCES = ("GT", "GT+EAR")
+HUMAN_ANNOTATION_SOURCES = ("GT", "GT+EAR", "GT+REVIEW")
+
+# Boxes a reviewer confirmed hold a real ear that is too blurred, small or
+# occluded to learn from. They are neither positives nor negatives: training
+# excludes their anchors from both the positive set and hard negative mining,
+# and evaluation neither rewards nor punishes a detection there. Including them
+# as labels teaches an unlearnable target; excluding them entirely turns a real
+# ear into a hard negative, which is the failure this dataset already had.
+IGNORE_ANNOTATION_SOURCE = "IGNORE"
 
 # Duplicate suppression (near-duplicate box filtering)
 NEAR_CENTER_DISTANCE_FRAC = 0.55

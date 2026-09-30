@@ -302,7 +302,7 @@ def augment_rotation(
     if len(bboxes) > 0:
         new_bboxes = []
         for box in bboxes:
-            ymin, xmin, ymax, xmax = box
+            ymin, xmin, ymax, xmax = box[:4]
             # Convert to pixel corners
             corners = np.array([
                 [xmin * w, ymin * h],
@@ -322,12 +322,16 @@ def augment_rotation(
             new_ymin = np.min(rotated_corners[:, 1]) / h
             new_ymax = np.max(rotated_corners[:, 1]) / h
             
-            # Clip and validate
+            # Clip and validate, preserving any trailing columns (e.g. an
+            # ignore flag) so parallel per-box metadata cannot desync from the
+            # boxes this augmentation drops.
             new_box = np.clip([new_ymin, new_xmin, new_ymax, new_xmax], 0, 1)
             if (new_box[2] - new_box[0]) > 0.02 and (new_box[3] - new_box[1]) > 0.02:
-                new_bboxes.append(new_box)
-        
-        bboxes = np.array(new_bboxes) if new_bboxes else np.zeros((0, 4), dtype=np.float32)
+                new_bboxes.append(np.concatenate([new_box, box[4:]]))
+
+        width = bboxes.shape[1]
+        bboxes = (np.array(new_bboxes, dtype=np.float32) if new_bboxes
+                  else np.zeros((0, width), dtype=np.float32))
     
     return rotated, bboxes
 
@@ -437,7 +441,7 @@ def augment_face_cutout(
     for idx in selected:
         if np.random.random() > occlusion_probability:
             continue
-        ymin, xmin, ymax, xmax = bboxes[idx]
+        ymin, xmin, ymax, xmax = bboxes[idx][:4]
         cy = (ymin + ymax) * 0.5 * h
         cx = (xmin + xmax) * 0.5 * w
         box_h = max(1.0, (ymax - ymin) * h)
@@ -492,7 +496,7 @@ def augment_targeted_ear_occlusion(
     coverage = _EarCoverage(bboxes, h, w, max_ear_coverage)
 
     for idx in selected:
-        ymin, xmin, ymax, xmax = bboxes[idx]
+        ymin, xmin, ymax, xmax = bboxes[idx][:4]
         y1 = int(np.clip(ymin * h, 0, h - 1))
         y2 = int(np.clip(ymax * h, y1 + 1, h))
         x1 = int(np.clip(xmin * w, 0, w - 1))

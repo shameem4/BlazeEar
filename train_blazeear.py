@@ -924,11 +924,17 @@ def create_model(
     """
     model = BlazeEar()
 
-    if init_weights == 'mediapipe':
+    if init_weights in ('mediapipe', 'mediapipe-backbone'):
+        heads = init_weights == 'mediapipe'
         weights_path_obj = Path(weights_path)
         if weights_path_obj.exists():
-            print(f'Loading MediaPipe weights from {weights_path_obj}')
-            missing, unexpected = load_mediapipe_weights(model, str(weights_path_obj), strict=False)
+            print(f'Loading MediaPipe weights from {weights_path_obj}'
+                  + ('' if heads else ' (backbone only)'))
+            missing, unexpected = load_mediapipe_weights(
+                model, str(weights_path_obj), strict=False, load_detection_heads=heads)
+            if not heads:
+                model.init_detection_heads()
+                print('  Detection heads re-initialized with a background prior')
             if missing:
                 print(f'  Missing keys: {len(missing)}')
             if unexpected:
@@ -960,8 +966,8 @@ def main():
                         help='Root directory for image paths (required for CSV)')
     
     # Model arguments
-    parser.add_argument('--init-weights', type=str, default='mediapipe',
-                        choices=['scratch', 'mediapipe'],
+    parser.add_argument('--init-weights', type=str, default='mediapipe-backbone',
+                        choices=['scratch', 'mediapipe', 'mediapipe-backbone'],
                         help='Weight initialization: scratch (random) or mediapipe (pretrained)')
     parser.add_argument('--weights-path', type=str, default=DEFAULT_WEIGHTS_PATH,
                         help='Path to MediaPipe weights file (used with --init-weights=mediapipe)')

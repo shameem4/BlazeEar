@@ -261,7 +261,8 @@ def assign_anchor_targets(
     boxes: np.ndarray,
     anchors: np.ndarray,
     top_k: int = 3,
-    ignore_iou: float = 0.35
+    ignore_iou: float = 0.35,
+    ignore_boxes: np.ndarray | None = None
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Assign ground-truth boxes to anchors, best-match first, with an ignore band.
@@ -288,6 +289,11 @@ def assign_anchor_targets(
         anchors: [A, 4] anchors as (x_center, y_center, w, h) normalized
         top_k: positives per ground-truth box
         ignore_iou: overlap above which a non-positive anchor is ignored
+        ignore_boxes: [I, 4] regions holding a real object that is not a usable
+            training target -- an ear too blurred or small to learn. Anchors on
+            them are excluded from both the positive set and hard negative
+            mining, so the model is neither taught to find them nor punished
+            for missing them.
 
     Returns:
         targets: [A, 5] of (class, ymin, xmin, ymax, xmax)
@@ -296,6 +302,14 @@ def assign_anchor_targets(
     num_anchors = len(anchors)
     targets = np.zeros((num_anchors, 5), dtype=np.float32)
     ignore = np.zeros(num_anchors, dtype=bool)
+    anchor_corners = anchors_to_corners(np.asarray(anchors, dtype=np.float32))
+
+    if ignore_boxes is not None and len(ignore_boxes):
+        regions = np.asarray(ignore_boxes, dtype=np.float32).reshape(-1, 4)
+        valid_regions = (regions[:, 2] > regions[:, 0]) & (regions[:, 3] > regions[:, 1])
+        regions = regions[valid_regions]
+        if len(regions):
+            ignore |= _iou_matrix(regions, anchor_corners).max(axis=0) >= ignore_iou
 
     boxes = np.asarray(boxes, dtype=np.float32).reshape(-1, 4)
     if len(boxes) == 0:
@@ -306,7 +320,7 @@ def assign_anchor_targets(
     if len(boxes) == 0:
         return targets, ignore
 
-    iou = _iou_matrix(boxes, anchors_to_corners(np.asarray(anchors, dtype=np.float32)))
+    iou = _iou_matrix(boxes, anchor_corners)
 
     k = int(min(max(1, top_k), num_anchors))
     candidate_anchors = np.argpartition(-iou, k - 1, axis=1)[:, :k]      # [G, k]
@@ -326,7 +340,7 @@ def assign_anchor_targets(
         targets[a, 1:] = boxes[candidate_gt[order]]
 
     positive = targets[:, 0] > 0.5
-    ignore = (iou.max(axis=0) >= ignore_iou) & ~positive
+    ignore = (ignore | (iou.max(axis=0) >= ignore_iou)) & ~positive
     return targets, ignore
 
 

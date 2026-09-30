@@ -28,7 +28,7 @@ from typing import Dict, List, Tuple
 import numpy as np
 import pandas as pd
 
-from utils.config import HUMAN_ANNOTATION_SOURCES
+from utils.config import HUMAN_ANNOTATION_SOURCES, IGNORE_ANNOTATION_SOURCE
 
 DEFAULT_QUEUE = 'data/relabel/proposals.csv'
 
@@ -235,6 +235,9 @@ def cmd_apply(args: argparse.Namespace) -> None:
     # training, which damages box regression more than the missing label costs
     # in recall, so it is recorded for a correction pass and never merged.
     box_wrong = queue[queue.review == 'box_wrong']
+    # A real ear too degraded to learn from: carried through as an ignore
+    # region rather than dropped, so it is not mined as a hard negative.
+    low_quality = queue[(queue.review == 'low_quality') & (queue.category != 'missed')]
 
     master = pd.read_csv(args.csv)
     keep = master
@@ -253,11 +256,22 @@ def cmd_apply(args: argparse.Namespace) -> None:
         'source': 'relabel',
         'confidence': accepted.confidence,
     })
-    combined = pd.concat([keep, additions], ignore_index=True)
+    ignores = pd.DataFrame({
+        'image_path': low_quality.image_path,
+        'x1': low_quality.x1.round().astype(int),
+        'y1': low_quality.y1.round().astype(int),
+        'w': low_quality.w.round().astype(int),
+        'h': low_quality.h.round().astype(int),
+        'annotation_source': IGNORE_ANNOTATION_SOURCE,
+        'source': 'relabel',
+        'confidence': low_quality.confidence,
+    })
+    combined = pd.concat([keep, additions, ignores], ignore_index=True)
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     combined.to_csv(args.output, index=False)
 
-    print(f'{len(keep)} kept + {len(additions)} reviewed additions -> {args.output}')
+    print(f'{len(keep)} kept + {len(additions)} reviewed additions '
+          f'+ {len(ignores)} ignore regions -> {args.output}')
     if len(box_wrong):
         path = Path(args.output).with_name(Path(args.output).stem + '_needs_box_fix.csv')
         box_wrong.to_csv(path, index=False)

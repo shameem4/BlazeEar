@@ -149,3 +149,32 @@ class TestPipeline(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestIgnoreRegionsSurviveTransforms(unittest.TestCase):
+    """
+    The ignore flag travels as a fifth column through resize and augmentation.
+    `_resize_and_pad` multiplied the whole array by the resize scale, which
+    turned a flag of 1.0 into 0.2 and silently reclassified the region as
+    ground truth: gt count rose and the region trained as a positive.
+    """
+
+    def test_resize_preserves_the_flag_column(self):
+        from dataloader import CSVDetectorDataset
+        dataset = CSVDetectorDataset(
+            str(ASSETS_ROOT / "test_data.csv"), str(ASSETS_ROOT), augment=False)
+        boxes = np.array([[0.2, 0.2, 0.4, 0.4, 0.0],
+                          [0.6, 0.6, 0.8, 0.8, 1.0]], dtype=np.float32)
+        image = np.zeros((480, 640, 3), dtype=np.uint8)
+        _, out = dataset._resize_and_pad(image, boxes.copy())
+        self.assertEqual(out.shape[1], 5)
+        np.testing.assert_allclose(out[:, 4], [0.0, 1.0], atol=1e-6)
+
+    def test_rotation_preserves_the_flag_column(self):
+        from utils import augmentation
+        boxes = np.array([[0.3, 0.3, 0.5, 0.5, 1.0]], dtype=np.float32)
+        np.random.seed(0)
+        _, out = augmentation.augment_rotation(
+            np.zeros((200, 200, 3), dtype=np.uint8), boxes.copy(), angle_range=(5, 5))
+        self.assertEqual(out.shape[1], 5)
+        self.assertEqual(float(out[0, 4]), 1.0)

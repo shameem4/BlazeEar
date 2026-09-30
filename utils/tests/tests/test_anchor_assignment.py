@@ -133,3 +133,46 @@ class TestIgnoreBand:
     def test_ignore_band_is_empty_without_boxes(self, anchors):
         _, ignore = assign_anchor_targets(np.zeros((0, 4), np.float32), anchors, ignore_iou=0.0)
         assert not ignore.any()
+
+
+class TestExplicitIgnoreRegions:
+    """
+    Regions holding a real but unlearnable ear (blurred, tiny, occluded). They
+    must be neither targets nor background: labelling them teaches an
+    unlearnable example, dropping them makes a real ear a hard negative.
+    """
+
+    def test_ignore_region_marks_anchors(self, anchors):
+        gt = box(0.10, 0.10, 0.20, 0.15)
+        region = box(0.60, 0.60, 0.80, 0.70)
+        _, without = assign_anchor_targets(gt, anchors)
+        _, with_region = assign_anchor_targets(gt, anchors, ignore_boxes=region)
+        assert with_region.sum() > without.sum()
+
+    def test_ignore_region_adds_no_positives(self, anchors):
+        gt = box(0.10, 0.10, 0.20, 0.15)
+        region = box(0.60, 0.60, 0.80, 0.70)
+        base, _ = assign_anchor_targets(gt, anchors)
+        with_region, _ = assign_anchor_targets(gt, anchors, ignore_boxes=region)
+        assert (base[:, 0] == with_region[:, 0]).all()
+
+    def test_positives_win_over_ignore_regions(self, anchors):
+        """An anchor assigned to a real box stays positive even under a region."""
+        gt = box(0.30, 0.30, 0.70, 0.70)
+        targets, ignore = assign_anchor_targets(gt, anchors, ignore_boxes=gt.copy())
+        assert (targets[:, 0] > 0.5).sum() == 3
+        assert not ((targets[:, 0] > 0.5) & ignore).any()
+
+    def test_degenerate_ignore_regions_are_dropped(self, anchors):
+        gt = box(0.10, 0.10, 0.20, 0.15)
+        bad = np.array([[0.5, 0.5, 0.5, 0.5]], dtype=np.float32)
+        _, a = assign_anchor_targets(gt, anchors)
+        _, b = assign_anchor_targets(gt, anchors, ignore_boxes=bad)
+        assert a.sum() == b.sum()
+
+    def test_ignore_only_image_has_no_positives(self, anchors):
+        targets, ignore = assign_anchor_targets(
+            np.zeros((0, 4), np.float32), anchors,
+            ignore_boxes=box(0.3, 0.3, 0.7, 0.7))
+        assert targets[:, 0].sum() == 0
+        assert ignore.sum() > 0

@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader, Dataset
 from utils import augmentation
 from utils.data_utils import split_dataframe_by_images
 from utils.anchor_utils import assign_anchor_targets, generate_anchors_from_priors
-from utils.config import ANCHOR_IGNORE_IOU, ANCHOR_TOP_K
+from utils.config import ANCHOR_IGNORE_IOU, ANCHOR_TOP_K, IGNORE_ANNOTATION_SOURCE
 
 
 def collate_detector_fn(batch: List[Dict]) -> Dict[str, torch.Tensor]:
@@ -102,8 +102,17 @@ class CSVDetectorDataset(Dataset):
             if not full_path.exists():
                 missing_files += 1
                 continue
-            boxes = group[["x1", "y1", "w", "h"]].values.astype(np.float32)
-            self.samples.append({"image_path": image_path_str, "boxes": boxes})
+            if "annotation_source" in group.columns:
+                is_ignore = group["annotation_source"] == IGNORE_ANNOTATION_SOURCE
+            else:
+                is_ignore = pd.Series(False, index=group.index)
+            boxes = group.loc[~is_ignore, ["x1", "y1", "w", "h"]].values.astype(np.float32)
+            ignore_boxes = group.loc[is_ignore, ["x1", "y1", "w", "h"]].values.astype(np.float32)
+            self.samples.append({
+                "image_path": image_path_str,
+                "boxes": boxes,
+                "ignore_boxes": ignore_boxes,
+            })
 
         if max_samples:
             self.samples = self.samples[:max_samples]
@@ -220,7 +229,10 @@ class CSVDetectorDataset(Dataset):
             abs_boxes[:, [0, 2]] *= orig_h
             abs_boxes[:, [1, 3]] *= orig_w
 
-            abs_boxes *= scale
+            # Only the coordinate columns. Scaling the whole array also scales
+            # any trailing per-box metadata, which silently turned an ignore
+            # flag of 1.0 into 0.2 and reclassified the box as ground truth.
+            abs_boxes[:, :4] *= scale
             abs_boxes[:, [0, 2]] += pad_top
             abs_boxes[:, [1, 3]] += pad_left
 
@@ -254,21 +266,31 @@ class CSVDetectorDataset(Dataset):
                 attempts += 1
                 continue
 
-            boxes_px = sample["boxes"]
             orig_h, orig_w = image.shape[:2]
-            if len(boxes_px) > 0:
-                x1 = boxes_px[:, 0]
-                y1 = boxes_px[:, 1]
-                w = boxes_px[:, 2]
-                h = boxes_px[:, 3]
 
-                ymin = np.clip(y1 / orig_h, 0, 1)
-                xmin = np.clip(x1 / orig_w, 0, 1)
-                ymax = np.clip((y1 + h) / orig_h, 0, 1)
-                xmax = np.clip((x1 + w) / orig_w, 0, 1)
-                bboxes = np.stack([ymin, xmin, ymax, xmax], axis=1).astype(np.float32)
-            else:
-                bboxes = np.zeros((0, 4), dtype=np.float32)
+            def _normalize(boxes_px: np.ndarray) -> np.ndarray:
+                if len(boxes_px) == 0:
+                    return np.zeros((0, 4), dtype=np.float32)
+                x1, y1, w, h = (boxes_px[:, 0], boxes_px[:, 1],
+                                boxes_px[:, 2], boxes_px[:, 3])
+                return np.stack([
+                    np.clip(y1 / orig_h, 0, 1), np.clip(x1 / orig_w, 0, 1),
+                    np.clip((y1 + h) / orig_h, 0, 1), np.clip((x1 + w) / orig_w, 0, 1),
+                ], axis=1).astype(np.float32)
+
+            gt = _normalize(sample["boxes"])
+            ignore_regions = _normalize(sample.get("ignore_boxes", np.zeros((0, 4))))
+
+            # Carry an ignore flag as a fifth column so the geometric
+            # augmentations, which drop and reorder boxes, cannot desync it
+            # from the boxes it describes.
+            flags = np.concatenate([
+                np.zeros((len(gt), 1), dtype=np.float32),
+                np.ones((len(ignore_regions), 1), dtype=np.float32),
+            ])
+            bboxes = np.concatenate([
+                np.concatenate([gt, ignore_regions], axis=0), flags
+            ], axis=1) if len(flags) else np.zeros((0, 5), dtype=np.float32)
 
             # Augment at native resolution, then letterbox once. Doing it the
             # other way round scaled and rotated an image that had already been
@@ -279,11 +301,16 @@ class CSVDetectorDataset(Dataset):
             image, bboxes = self._augment_image(image, bboxes)
             image, bboxes = self._resize_and_pad(image, bboxes)
 
+            is_ignore = bboxes[:, 4] > 0.5 if len(bboxes) else np.zeros(0, dtype=bool)
+            gt_boxes = bboxes[~is_ignore, :4]
+            ignore_boxes = bboxes[is_ignore, :4]
+
             anchor_targets, anchor_ignore = assign_anchor_targets(
-                bboxes,
+                gt_boxes,
                 self.anchors,
                 top_k=self.anchor_top_k,
                 ignore_iou=self.anchor_ignore_iou,
+                ignore_boxes=ignore_boxes,
             )
 
             image = np.ascontiguousarray(image)
@@ -298,7 +325,7 @@ class CSVDetectorDataset(Dataset):
                 "sample_index": idx,
                 "anchor_targets": torch.from_numpy(anchor_targets).float(),
                 "anchor_ignore": torch.from_numpy(anchor_ignore),
-                "gt_boxes": torch.from_numpy(bboxes).float()
+                "gt_boxes": torch.from_numpy(np.ascontiguousarray(gt_boxes)).float()
             }
 
         raise RuntimeError("No readable images remain in dataset.")

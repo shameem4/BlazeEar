@@ -6,6 +6,7 @@ BatchNorm folded into the conv weights, can be unfolded into trainable
 BatchNorm layers without changing what the network computes. These tests pin
 that, and pin the loading bug that made it untrue in practice.
 """
+import math
 from pathlib import Path
 
 import pytest
@@ -127,3 +128,44 @@ class TestParity:
         bn = model.backbone1[2].bn1
         assert bn.weight.grad is not None and torch.isfinite(bn.weight.grad).all()
         assert bn.weight.grad.abs().sum() > 0
+
+
+class TestHeadInitialization:
+    def test_prior_bias_starts_near_the_background_prior(self):
+        """
+        Every anchor should start at roughly p = 0.01, so the classifier begins
+        biased toward "no object" instead of wherever the inherited head sat.
+        """
+        model = BlazeEar()
+        model.init_detection_heads(prior_probability=0.01)
+        expected = -math.log((1 - 0.01) / 0.01)
+        for layer in (model.classifier_8, model.classifier_16):
+            assert torch.allclose(layer.bias, torch.full_like(layer.bias, expected), atol=1e-5)
+
+    def test_prior_probability_is_honoured(self):
+        model = BlazeEar()
+        model.init_detection_heads(prior_probability=0.5)
+        assert torch.allclose(model.classifier_8.bias,
+                              torch.zeros_like(model.classifier_8.bias), atol=1e-6)
+
+    def test_regressor_bias_is_zero(self):
+        model = BlazeEar()
+        model.init_detection_heads()
+        for layer in (model.regressor_8_box, model.regressor_16_box):
+            assert torch.allclose(layer.bias, torch.zeros_like(layer.bias))
+
+    @requires_weights
+    def test_backbone_only_load_leaves_heads_reinitialisable(self):
+        """
+        The inherited MediaPipe head is calibrated for folded-BN activation
+        scales; under trainable BatchNorm it produced a median logit of -339 on
+        ear anchors. Loading the backbone alone must not repopulate the heads.
+        """
+        model = BlazeEar()
+        load_mediapipe_weights(model, str(WEIGHTS), strict=False,
+                               load_detection_heads=False)
+        model.init_detection_heads()
+        model.train()
+        with torch.no_grad():
+            _, scores = model(torch.randn(4, 3, 128, 128) * 50 + 128)
+        assert abs(float(scores.median())) < 20, 'logits should start near the prior'
