@@ -494,14 +494,152 @@ async function createDetector(modelPath, options = {}) {
     return detector;
 }
 
+
+/**
+ * The two-stage pipeline: MediaPipe BlazeFace on the full frame, then the ear
+ * model on a square crop around each detected face.
+ *
+ * This is the design the measurements picked. Asking one 128x128 detector to
+ * find an ear in a whole frame gives it a median 14-pixel target; cropping to
+ * a face first makes that 32 pixels, and on images no model trained on the
+ * mAP@0.5 goes 0.3142 -> 0.5760.
+ *
+ * The cost is a recall ceiling: an ear whose face BlazeFace misses never
+ * reaches the second stage, which is about 4% of images at the default
+ * threshold. That is why the face threshold is lower than you might expect.
+ *
+ * The two stages do NOT share anchors -- the face graph carries MediaPipe's
+ * original squares, the ear graph the fitted ear priors -- but each has its
+ * own baked in, so nothing here has to know about that.
+ *
+ * These must stay in step with FACE_CROP_* in utils/config.py; the Python
+ * pipeline in evaluate_two_stage.py is the reference this mirrors.
+ */
+class BlazeEarTwoStage {
+    constructor(options = {}) {
+        this.expand = options.expand ?? 1.5;
+        this.faceThreshold = options.faceThreshold ?? 0.3;
+        this.maxFaces = options.maxFaces ?? 8;
+        this.iouThreshold = options.iouThreshold ?? 0.3;
+        this.face = new BlazeEarInference({
+            confidenceThreshold: this.faceThreshold,
+            iouThreshold: this.iouThreshold,
+        });
+        this.ear = new BlazeEarInference({
+            confidenceThreshold: options.confidenceThreshold ?? 0.70,
+            iouThreshold: this.iouThreshold,
+        });
+        this.isLoaded = false;
+    }
+
+    /**
+     * @param {string} facePath - URL of the BlazeFace graph
+     * @param {string} earPath - URL of the crop-trained ear graph
+     */
+    async load(facePath, earPath, sessionOptions = {}) {
+        await Promise.all([
+            this.face.load(facePath, sessionOptions),
+            this.ear.load(earPath, sessionOptions),
+        ]);
+        this.isLoaded = true;
+        return this;
+    }
+
+    /**
+     * A square window at `expand` times the face box, clipped to the frame.
+     * Square, because the ear model letterboxes its input anyway, and a
+     * non-square crop would just spend resolution on padding.
+     */
+    _cropWindow(face, frameWidth, frameHeight) {
+        const faceW = face.xmax - face.xmin;
+        const faceH = face.ymax - face.ymin;
+        // Clamp the side first so the window stays square wherever the frame
+        // allows it, then shift the centre to keep it inside.
+        const side = Math.min(
+            this.expand * Math.max(faceW, faceH), frameWidth, frameHeight);
+        const cx = (face.xmin + face.xmax) / 2;
+        const cy = (face.ymin + face.ymax) / 2;
+        const x0 = Math.round(Math.min(Math.max(cx - side / 2, 0), frameWidth - side));
+        const y0 = Math.round(Math.min(Math.max(cy - side / 2, 0), frameHeight - side));
+        return { x0, y0, side: Math.round(side) };
+    }
+
+    async detect(source) {
+        if (!this.isLoaded) {
+            throw new Error('Call load(facePath, earPath) before detect().');
+        }
+
+        const faces = await this.face.detect(source);
+        const { width, height } = this.face._getImageData(source);
+        if (faces.length === 0) {
+            // No face means no crop, and therefore no detections. This is the
+            // recall ceiling, reported rather than papered over: falling back
+            // to a full-frame pass was measured and is a wash, contributing
+            // about as many false positives as it recovers ears.
+            return Object.assign([], { faceCount: 0 });
+        }
+
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        const collected = [];
+
+        for (const face of faces.slice(0, this.maxFaces)) {
+            const { x0, y0, side } = this._cropWindow(face, width, height);
+            if (side < 2) continue;
+            canvas.width = side;
+            canvas.height = side;
+            ctx.clearRect(0, 0, side, side);
+            ctx.drawImage(source, x0, y0, side, side, 0, 0, side, side);
+
+            for (const ear of await this.ear.detect(canvas)) {
+                // Crop coordinates back into the original frame.
+                collected.push({
+                    ...ear,
+                    xmin: ear.xmin + x0, xmax: ear.xmax + x0,
+                    ymin: ear.ymin + y0, ymax: ear.ymax + y0,
+                });
+            }
+        }
+
+        // Overlapping face crops can each report the same ear.
+        const merged = this.ear._nms(
+            collected.sort((a, b) => b.confidence - a.confidence),
+            this.iouThreshold);
+        return Object.assign(merged, { faceCount: faces.length });
+    }
+
+    drawDetections(ctx, detections, options = {}) {
+        return this.ear.drawDetections(ctx, detections, options);
+    }
+
+    async dispose() {
+        await Promise.all([this.face.dispose(), this.ear.dispose()]);
+        this.isLoaded = false;
+    }
+}
+
+/**
+ * Load the two-stage pipeline.
+ * @returns {Promise<BlazeEarTwoStage>}
+ */
+async function createTwoStageDetector(facePath, earPath, options = {}) {
+    const detector = new BlazeEarTwoStage(options);
+    await detector.load(facePath, earPath);
+    return detector;
+}
+
 // Export for different module systems
 if (typeof module !== 'undefined' && module.exports) {
     // CommonJS
-    module.exports = { BlazeEarInference, createDetector };
+    module.exports = { BlazeEarInference, createDetector,
+                       BlazeEarTwoStage, createTwoStageDetector };
 } else if (typeof window !== 'undefined') {
     // Browser global
     window.BlazeEarInference = BlazeEarInference;
     window.createBlazeEarDetector = createDetector;
+    window.BlazeEarTwoStage = BlazeEarTwoStage;
+    window.createBlazeEarTwoStageDetector = createTwoStageDetector;
 }
 
-export { BlazeEarInference, createDetector };
+export { BlazeEarInference, createDetector,
+         BlazeEarTwoStage, createTwoStageDetector };

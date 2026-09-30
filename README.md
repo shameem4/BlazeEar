@@ -446,6 +446,22 @@ python export_onnx.py \
 
 `detections` is `(num_detections, 5)` in `[ymin, xmin, ymax, xmax, score]` (normalized coords).
 
+`export_onnx.py` inspects the checkpoint and builds the matching architecture,
+so pre-BatchNorm checkpoints still export.
+
+### Exporting the two-stage pipeline for the browser
+
+```bash
+python export_two_stage_web.py
+```
+
+This writes `docs/BlazeFace_web.onnx` and `docs/BlazeEar_web.onnx`, then runs
+each graph against the PyTorch model it came from and refuses to ship one that
+disagrees. The two graphs carry different anchors -- MediaPipe's squares and
+the fitted ear priors -- each baked into its own graph, because decoding either
+through the other's anchors gives boxes at the wrong scale rather than an
+error. See `docs/README.md` for the JavaScript side.
+
 ---
 
 ## Evaluation
@@ -479,6 +495,141 @@ python relabel.py apply --output data/splits/master_relabelled.csv
 A reviewer can also mark a real ear whose box is wrong (queued for correction,
 never merged) or one too degraded to learn from (merged as an ignore region, so
 it is neither a target nor a hard negative).
+
+---
+
+## v2: what changed, and what it was worth
+
+The v2 branch set out to fix correctness problems and ended up changing the
+architecture, because the measurements kept pointing at the same thing.
+
+### The headline
+
+Every checkpoint below is scored through one identical detection path, on the
+**279 images (355 ears, 12 sources) that no model in this repo's history ever
+trained on**. That set matters: the splits changed during v2, and 85.3% of the
+current validation images sit inside the *original* model's training set, so
+the obvious comparison would have measured memorisation.
+`make_common_heldout.py` builds it, using content-hash photo identity rather
+than filenames, because one photo appears under several Roboflow hashes.
+
+| model | mAP@0.5 | mAP@[.5:.95] | detection IoU |
+|---|---|---|---|
+| original (pre-v2) | 0.1790 | 0.0421 | 0.6189 |
+| v2 single-stage | 0.3142 | 0.0938 | 0.6558 |
+| **v2 two-stage** | **0.5760** | **0.2444** | **0.7234** |
+
+**3.2x on mAP@0.5, 5.8x on mAP@[.5:.95].** On the full 2021-image validation
+split the two v2 models read 0.3561 and 0.6336.
+
+Two honest caveats. 279 images is a small set -- treat a few points as noise,
+not the 3x. And the gain is not purely architectural: v2 also relabelled the
+data, and the evaluation ground truth is the relabelled set the original never
+trained against. Separating those would need the original design retrained on
+the new labels.
+
+### The architecture change
+
+The single biggest finding was a structural one. The median ear is **6.8 x 14.0
+px** once a full frame is squeezed into the 128x128 input, and **65.7% of ears
+are smaller than BlazeFace's smallest anchor**. The model was being asked to do
+something its anchor geometry could not express.
+
+MediaPipe does not work this way. Its pipelines run a coarse detector on the
+full frame and a fine model on a crop around each hit. Restoring that pattern
+-- BlazeFace, then a square crop at 1.5x the face box, then the ear model --
+raises the median ear to 32.5 px and accounts for most of the gain above.
+
+Stage one is MediaPipe's published BlazeFace weights, unmodified. Nothing about
+this deviates from MediaPipe; the original design had simply collapsed a
+two-stage pattern into one stage.
+
+The cost is a recall ceiling: an ear whose face is missed never reaches the
+second stage, about 4% of images. That is charged honestly in every number
+above -- those ears count as misses rather than leaving the denominator. A
+full-frame fallback on those images was measured and is a wash.
+
+See `make_face_crops.py`, `evaluate_two_stage.py`, and the P7 section of
+`V2_PLAN.md`.
+
+### Correctness fixes that came first
+
+None of this would have been measurable without fixing the measurement. In
+rough order of how much they mattered:
+
+- **The published "mAP 0.46 peak, declining to 0.25" was an artifact.** The
+  same fixed checkpoint reads 0.5508 / 0.4286 / 0.2497 / 0.2801 as the
+  validation prefix grows through 96 / 192 / 480 / 2022 images, because the
+  prefix was unshuffled and ordered by annotation source. Both figures are
+  withdrawn.
+- **A validation loop that scored one image.** Overlapping edits left the loop
+  body only reassigning variables, so everything after it ran once on the final
+  batch. Every validation number for a stretch of v2 was wrong.
+- **`load_mediapipe_weights` had a conversion path that never executed** --
+  160 missing keys, reported as success.
+- **73.5% of positive anchors sat inside `torch.clamp`'s exact-zero-gradient
+  dead zone** (median logit -1047).
+- **`augment_face_cutout` erased the ear entirely in 120 of 200 seeds** while
+  keeping the positive label.
+- **The geometry filter rejected 25.86% of real ears**, and ran in one of four
+  inference paths.
+- **Duplicate photos straddled the split.** Content hashing moved 121 photos
+  to one side; 4.1% of the corpus is duplicate files.
+- **POSE pseudo-labels are junk**, not a rescalable convention: 97.8% have zero
+  overlap with human boxes. They are ignore regions now.
+- **Hard-negative mining was starved** by a default of 1.5, giving 10 negatives
+  out of 894.
+
+### Consolidation
+
+- **Five NMS implementations became one.** They disagreed on the boundary case
+  and ran at three different IoU thresholds, so every reported mAP described
+  post-processing nothing deployed. Replacing the trainer's Python loop over
+  CUDA tensors also cut a validation pass from **50.4s to 8.9s at identical
+  mAP**.
+- **The test runner passed by not looking.** It drove `unittest` discovery over
+  a mostly pytest-style suite, reporting `Ran 51 tests ... OK` while `pytest`
+  ran 336. It delegates to pytest now.
+- Detection thresholds, the anchor count and grid sizes have one definition
+  each in `utils/config.py`, with a raise if the built anchor count ever
+  disagrees.
+
+Tests went from 41 to 344.
+
+### Reproducing the comparison
+
+```bash
+python make_common_heldout.py
+
+python evaluate_two_stage.py \
+  --csv data/splits/common_heldout.csv \
+  --checkpoint runs/checkpoints/BlazeEar_best.pth --legacy-anchors
+
+python evaluate_two_stage.py \
+  --csv data/splits/common_heldout.csv \
+  --checkpoint runs/checkpoints_v2/BlazeEar_best.pth \
+  --crop-checkpoint runs/checkpoints_crop/BlazeEar_best.pth
+```
+
+`--legacy-anchors` is needed for the pre-v2 checkpoint: it was trained against
+the original `w=h=1.0` squares, and decoding it through the fitted ear priors
+gives boxes at the wrong scale rather than an error.
+
+### Building the face-crop dataset
+
+```bash
+python make_face_crops.py --keep-empty-crops
+python split_face_crops.py
+python train_blazeear.py \
+  --train-data data/splits/crops_train.csv \
+  --val-data data/splits/crops_val.csv \
+  --data-root data/face_crops/ \
+  --checkpoint-dir runs/checkpoints_crop --log-dir runs/logs_crop
+```
+
+`--keep-empty-crops` matters: 29.6% of face crops contain no visible ear, and
+training without them leaves the model never having seen a face whose ears are
+hidden while being handed exactly that a third of the time at inference.
 
 ## Next Directions
 

@@ -91,11 +91,6 @@ class BlazeEarInference(nn.Module):
     
     # Anchor configuration
     NUM_ANCHORS = 896
-    SMALL_GRID = 16
-    BIG_GRID = 8
-    SMALL_ANCHORS_PER_CELL = 2
-    BIG_ANCHORS_PER_CELL = 6
-    
     def __init__(
         self,
         weights_path: Optional[Union[str, Path]] = None,
@@ -124,6 +119,13 @@ class BlazeEarInference(nn.Module):
         anchors = self._generate_anchors()
         self.register_buffer("anchors", anchors)
         
+        # Inspect the checkpoint before building, so the architecture matches.
+        self._use_batchnorm = True
+        if weights_path is not None and Path(weights_path).exists():
+            from blazebase import checkpoint_is_folded, load_checkpoint_state
+            self._use_batchnorm = not checkpoint_is_folded(
+                load_checkpoint_state(str(weights_path)))
+
         # Load model backbone
         self.model = self._create_model()
         
@@ -146,9 +148,15 @@ class BlazeEarInference(nn.Module):
         return get_anchors()
 
     def _create_model(self) -> nn.Module:
-        """Create the BlazeEar model backbone."""
+        """Create the backbone matching whatever the checkpoint holds.
+
+        MediaPipe's published weights are folded -- BatchNorm baked into the
+        conv weights -- while v2 checkpoints carry trainable BatchNorm. Building
+        one and loading the other raises, so the face stage of the two-stage
+        pipeline could not be constructed here at all.
+        """
         from blazeear import BlazeEar
-        return BlazeEar()
+        return BlazeEar(use_batchnorm=self._use_batchnorm)
     
     def _load_weights(self, weights_path: Union[str, Path]) -> None:
         """Load model weights from checkpoint file."""
