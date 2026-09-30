@@ -134,8 +134,12 @@ def main() -> None:
             gt_counts = batch['gt_box_counts'].to(device)
             sample_indices = batch['sample_index']
 
-            class_pred, anchor_pred = trainer._get_training_outputs(images)
-            scores = class_pred.squeeze(-1)
+            # _get_training_outputs returns raw logits; detection scores are
+            # probabilities. Forgetting this silently thresholds logits at the
+            # probability threshold, which is far stricter and quietly drops
+            # most detections.
+            class_logits, anchor_pred = trainer._get_training_outputs(images)
+            scores = torch.sigmoid(class_logits).squeeze(-1)
             decoded = trainer.loss_fn.decode_boxes(anchor_pred, trainer.reference_anchors)
 
             for b in range(images.shape[0]):

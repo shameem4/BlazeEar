@@ -365,6 +365,13 @@ class BlazeEarTrainer:
             scores: [896] per-anchor confidences (sigmoid already applied)
             decoded_boxes: [896, 4] decoded boxes [ymin, xmin, ymax, xmax]
         """
+        if scores.numel() and (scores.min() < 0.0 or scores.max() > 1.0):
+            raise ValueError(
+                "scores must be probabilities in [0, 1], got range "
+                f"[{scores.min():.3f}, {scores.max():.3f}]. _get_training_outputs "
+                "returns logits; apply sigmoid before calling this."
+            )
+
         candidate_k = min(self.max_map_candidates, scores.numel())
         candidate_scores, candidate_indices = torch.topk(scores, k=candidate_k)
         candidate_boxes = decoded_boxes[candidate_indices]
