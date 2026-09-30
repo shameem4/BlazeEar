@@ -13,7 +13,6 @@ derive from human GT labels, YOLO ear detector, pose detector, or a
 combination of automated sources.
 """
 import argparse
-import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, cast
@@ -647,14 +646,14 @@ def print_statistics(df: pd.DataFrame, split_name: str = "Dataset") -> None:
     right_count = (df['earside'] == 'right').sum()
     unknown_count = (df['earside'] == '').sum()
 
-    print(f"\nEar side breakdown:")
+    print("\nEar side breakdown:")
     print(f"  Left ears:    {left_count:,} ({100*left_count/max(num_ears,1):.1f}%)")
     print(f"  Right ears:   {right_count:,} ({100*right_count/max(num_ears,1):.1f}%)")
     print(f"  Unknown side: {unknown_count:,} ({100*unknown_count/max(num_ears,1):.1f}%)")
 
     # Source breakdown
     if 'source' in df.columns:
-        print(f"\nSource breakdown:")
+        print("\nSource breakdown:")
         for source, count in df['source'].value_counts().items():
             img_paths = cast(PandasSeries, df.loc[df['source'] == source, 'image_path'])
             img_count = int(img_paths.nunique())
@@ -666,7 +665,7 @@ def print_statistics(df: pd.DataFrame, split_name: str = "Dataset") -> None:
             print(f"  {source}: {count:,}")
 
     # Box size statistics
-    print(f"\nBounding box statistics:")
+    print("\nBounding box statistics:")
     print(f"  Width  - min: {df['w'].min()}, max: {df['w'].max()}, mean: {df['w'].mean():.1f}")
     print(f"  Height - min: {df['h'].min()}, max: {df['h'].max()}, mean: {df['h'].mean():.1f}")
     area = df['w'] * df['h']

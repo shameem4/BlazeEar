@@ -1,4 +1,3 @@
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -7,8 +6,6 @@ from typing import Tuple, List, Optional, Dict
 # Import from consolidated utils modules
 from utils.anchor_utils import (
     generate_reference_anchors,
-    assign_anchor_targets,
-    generate_anchors_from_priors,
     anchor_options,
 )
 
@@ -230,7 +227,6 @@ def load_mediapipe_weights(model: nn.Module,
         updated = dict(state_dict)
         total_coords = 16
         box_coords = 4
-        kp_coords = total_coords - box_coords
         for base, box_key, kp_key, anchors_per_cell in mapping:
             weight_key = f"{base}.weight"
             bias_key = f"{base}.bias"

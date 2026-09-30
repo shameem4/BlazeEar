@@ -39,7 +39,6 @@ def match_detections_to_ground_truth(
     if len(detections) == 0 or len(gt_boxes) == 0:
         return [], []
 
-    num_gt = len(gt_boxes)
     num_det = len(detections)
 
     # Convert gt_boxes from xywh to yxyx for vectorized IoU

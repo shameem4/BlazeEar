@@ -7,7 +7,6 @@ import argparse
 import csv
 import os
 import sys
-from pathlib import Path
 from PIL import Image
 
 
@@ -36,7 +35,7 @@ def validate_images_from_csv(csv_path, base_path=None):
         fieldnames = reader.fieldnames
         # Check if CSV has 'image_path' column
         if not fieldnames or 'image_path' not in fieldnames:
-            print(f"Error: CSV file must contain 'image_path' column")
+            print("Error: CSV file must contain 'image_path' column")
             print(f"Found columns: {fieldnames}")
             sys.exit(1)
 
@@ -82,7 +81,7 @@ def validate_images_from_csv(csv_path, base_path=None):
                 })
 
     # Print results
-    print(f"\nValidation Results:")
+    print("\nValidation Results:")
     print(f"Total unique images checked: {total_images}")
     print(f"Valid images: {total_images - len(invalid_images)}")
     print(f"Invalid images: {len(invalid_images)}")

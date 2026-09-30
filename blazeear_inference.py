@@ -1017,7 +1017,7 @@ if __name__ == "__main__":
         device=device,
     )
     
-    print(f"Pipeline loaded successfully!")
+    print("Pipeline loaded successfully!")
     print(f"  Confidence threshold: {pipeline.confidence_threshold}")
     print(f"  IoU threshold: {pipeline.iou_threshold}")
     print(f"  Input size: {pipeline.input_size}")
@@ -1042,7 +1042,7 @@ if __name__ == "__main__":
             for i, det in enumerate(detections):
                 print(f"    [{i}] box=({det[0]:.1f}, {det[1]:.1f}, {det[2]:.1f}, {det[3]:.1f}), conf={det[4]:.3f}")
         else:
-            print(f"  Error: Could not load image")
+            print("  Error: Could not load image")
     
     # Export if requested
     if args.export_onnx:

@@ -7,8 +7,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from pathlib import Path
-from pathlib import Path
-from typing import DefaultDict, Dict, List, Sequence, Tuple, cast
+from typing import DefaultDict, Dict, List, Tuple, cast
 
 import numpy as np
 import pandas as pd

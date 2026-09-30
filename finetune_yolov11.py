@@ -24,7 +24,7 @@ import os
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, List
+from typing import List
 
 import pandas as pd
 import torch

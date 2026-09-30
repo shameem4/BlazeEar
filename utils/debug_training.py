@@ -1,5 +1,4 @@
 import argparse
-import shutil
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Union
@@ -19,7 +18,6 @@ from tqdm import tqdm
 from dataloader import CSVDetectorDataset
 from utils.anchor_utils import assign_anchor_targets, generate_anchors_from_priors
 from blazeear import BlazeEar
-from blazedetector import BlazeDetector
 from blazebase import generate_reference_anchors
 from loss_functions import BlazeEarDetectionLoss, compute_mean_iou
 from utils import model_utils
@@ -363,6 +361,11 @@ def create_debug_visualization(
         gt_box_orig = np.zeros((0, 4), dtype=np.float32)
         gt_norm = np.zeros((0, 4), dtype=np.float32)
 
+    # The padded GT: ground truth pushed through resize_and_pad and mapped
+    # back. This was computed and then never drawn, so the overlay showed two
+    # of the three things its docstring promises -- and the padded GT is the
+    # one that reveals a resize or padding bug, which is the whole point of
+    # looking at this image.
     _, resized_boxes_norm = dataset._resize_and_pad(orig_image, gt_norm.copy())
     gt_resized_xy = convert_ymin_xmin_to_xyxy(resized_boxes_norm)
 
@@ -375,18 +378,15 @@ def create_debug_visualization(
         pad_top,
         pad_left
     )
-
     debug_image = cv2.cvtColor(orig_image.copy(), cv2.COLOR_RGB2BGR)
 
     comparison_np: Optional[np.ndarray] = None
-    mediapipe_count = 0
     if comparison_detector is not None:
         comparison_input = np.ascontiguousarray(orig_image)
         try:
             detections = comparison_detector.process(comparison_input)
             if detections is not None and detections.numel() > 0:
                 comparison_np = detections.detach().cpu().numpy()
-                mediapipe_count = len(comparison_np)
                 _log_info(f"{comparison_label}: {len(comparison_np)} detections")
         except Exception as exc:  # pragma: no cover - debug helper
             _log_warn(f"Secondary detector failed on sample {sample_idx}: {exc}")
@@ -394,25 +394,18 @@ def create_debug_visualization(
     for box in gt_box_orig:
         draw_box(debug_image, box, (0, 255, 0), "GT original")
 
-    decoded_np = decoded_boxes.detach().cpu().numpy()
     selected_indices, selected_scores = _select_top_indices(
         anchor_targets, class_predictions, top_indices, top_scores, top_k
     )
-    pred_boxes = convert_ymin_xmin_to_xyxy(decoded_np[selected_indices])
-    pred_boxes_on_orig = map_preprocessed_boxes_to_original(
-        pred_boxes,
-        (orig_h, orig_w),
-        dataset.target_size,
-        scale,
-        pad_top,
-        pad_left
-    )
+    # The top-k raw anchors are reported as text above, not drawn. Drawing
+    # them buries the image under boxes spanning most of the frame, because a
+    # high-scoring anchor need not decode to a tight box -- which is what the
+    # IoU column of that text report is for. The averaged-detector overlay
+    # below is the one worth looking at.
 
-    for rank, (box, score, anchor_idx) in enumerate(
-        zip(pred_boxes_on_orig, selected_scores, selected_indices)
-    ):
-        label = f"{primary_label} {rank} #{anchor_idx} {score:.2f}"
-        # draw_box(debug_image, box, (0, 0, 255), label)
+    for box in gt_resized_on_orig:
+        draw_box(debug_image, box, (0, 200, 200), "GT padded")
+
 
     if comparison_np is not None and comparison_np.size > 0:
         for det_idx, det in enumerate(comparison_np):
@@ -448,7 +441,6 @@ def create_debug_visualization(
 
     summary_lines = [
         f"GT: {gt_box_orig.shape[0]}",
-        # f"{comparison_label}: {mediapipe_count}",
         f"{averaged_label}: {averaged_count}"
     ]
     for idx, line in enumerate(summary_lines):

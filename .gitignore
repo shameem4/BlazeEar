@@ -9,3 +9,12 @@ data/face_crops/
 data/splits/face_crops.csv
 data/splits/crops_train.csv
 data/splits/crops_val.csv
+
+# Upstream YOLO checkpoints: Ultralytics downloads these on demand, and they
+# were tracked in three separate locations. The trained ear labeler
+# (model_weights/yolov11_ear_detector.pt) stays tracked -- it is not
+# reproducible without a GPU run.
+yolo11n.pt
+yolo11m.pt
+yolo26n.pt
+weights/
