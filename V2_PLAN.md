@@ -160,6 +160,37 @@ now drops these by default.
       sources, and `group_keys` keeps such clusters on one side when a hash map
       is supplied.
 
+### Pilot relabelling result (1200 of 13482 images)
+
+202 candidate ears reviewed by hand against the epoch-39 labeller:
+
+| decision | n | median conf | median size (max side / image) |
+| --- | --- | --- | --- |
+| accepted as a new label | 82 | 0.494 | 0.120 |
+| real but too degraded -> ignore region | 93 | 0.376 | 0.062 |
+| not an ear | 24 | 0.332 | 0.059 |
+| real ear, wrong box -> correction queue | 1 | 0.686 | 0.321 |
+| skipped | 2 | | |
+
+**87% of proposals sat on a real ear** (176 of 202); only 12% were genuine
+false positives. The labeller's precision is not the problem.
+
+Size separates the outcomes far better than confidence does: accepted ears have
+a median max side of 0.120 of the image against 0.062 for the degraded ones,
+while "is it a real ear" barely moves with confidence (90% above conf 0.5
+against 86% below it). Confidence predicts *quality*, not *existence*.
+
+That 0.062 figure matters architecturally. At 640px source those ears are about
+40px, which is **8px at the model's 128x128 input** — below what this
+architecture can resolve at all. Treating them as ignore regions is therefore
+not a concession but the only correct handling: as labels they are unlearnable
+noise, as background they are real ears the hard negative miner hunts. Raising
+input resolution, not anchor density, is what would make them detectable, and
+that breaks the BlazeFace premise.
+
+Human-verified boxes on the pilot went from 1.27 to 1.34 per image, and 1112
+POSE rows were dropped.
+
 ## P2 — Augmentation correctness
 
 - [x] **Order: geometric augs before resize/pad.** `dataloader.py:__getitem__` calls
