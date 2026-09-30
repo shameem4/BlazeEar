@@ -28,6 +28,8 @@ from typing import Iterable, List
 
 import pandas as pd
 import torch
+
+from utils.config import HUMAN_ANNOTATION_SOURCES
 from PIL import Image
 from tqdm import tqdm
 
@@ -68,6 +70,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--name", default=DEFAULT_RUN_NAME, help="Name for the Ultralytics run (sub-directory under project)")
     parser.add_argument("--link-images", action="store_true", help="Attempt to hard-link images instead of copying when building the YOLO dataset")
     parser.add_argument("--skip-prep", action="store_true", help="Skip dataset preparation if the output directory already exists")
+    parser.add_argument(
+        "--sources",
+        default="human",
+        help=(
+            "Which annotation_source values to train on: 'human' (GT and GT+EAR), "
+            "'all', or a comma-separated list. Defaults to human-verified boxes only. "
+            "POSE pseudo-labels are excluded by default: 97.8%% of them have zero "
+            "overlap with any human box in the same image, and inspection shows them "
+            "landing on eyebrows, hair and background objects."
+        )
+    )
+    parser.add_argument("--min-box-px", type=float, default=6.0,
+                        help="Drop boxes whose width or height is below this many pixels")
+    parser.add_argument("--min-box-area", type=float, default=100.0,
+                        help="Drop boxes whose area is below this many square pixels")
+    parser.add_argument("--min-aspect", type=float, default=0.15,
+                        help="Drop boxes with width/height below this (degenerate slivers)")
+    parser.add_argument("--max-aspect", type=float, default=2.0,
+                        help="Drop boxes with width/height above this")
     parser.add_argument(
         "--resume",
         action="store_true",
@@ -124,14 +145,46 @@ def convert_row(row, width: int, height: int) -> str | None:
     return f"0 {x_center:.6f} {y_center:.6f} {w_norm:.6f} {h_norm:.6f}"
 
 
+def filter_annotations(df: pd.DataFrame, args: argparse.Namespace) -> pd.DataFrame:
+    """Drop untrusted sources and geometrically implausible boxes.
+
+    A labeller is only as good as what it is trained on, so this is deliberately
+    strict: one annotation convention, no degenerate boxes.
+    """
+    before = len(df)
+
+    if args.sources != "all" and "annotation_source" in df.columns:
+        if args.sources == "human":
+            keep = set(HUMAN_ANNOTATION_SOURCES)
+        else:
+            keep = {s.strip() for s in args.sources.split(",") if s.strip()}
+        df = df[df["annotation_source"].isin(keep)]
+        print(f"  source filter ({args.sources}): {before} -> {len(df)} boxes")
+
+    after_source = len(df)
+    w = df["w"].astype(float)
+    h = df["h"].astype(float)
+    aspect = w / h.clip(lower=1e-6)
+    sane = (
+        (w >= args.min_box_px) & (h >= args.min_box_px)
+        & ((w * h) >= args.min_box_area)
+        & (aspect >= args.min_aspect) & (aspect <= args.max_aspect)
+    )
+    df = df[sane]
+    print(f"  geometry filter: {after_source} -> {len(df)} boxes")
+    return df
+
+
 def convert_split(
     csv_path: Path,
     split: str,
     data_root: Path,
     output_dir: Path,
-    link_images: bool
+    link_images: bool,
+    args: argparse.Namespace
 ) -> SplitStats:
-    df = pd.read_csv(csv_path)
+    print(f"Filtering {split} annotations from {csv_path}")
+    df = filter_annotations(pd.read_csv(csv_path), args)
     stats = SplitStats(split=split)
 
     if df.empty:
@@ -183,8 +236,8 @@ def prepare_dataset(args: argparse.Namespace) -> Path:
         print(f"Skipping dataset preparation, reusing {yaml_path}")
         return yaml_path
 
-    stats_train = convert_split(Path(args.train_csv), "train", Path(args.data_root), output_dir, args.link_images)
-    stats_val = convert_split(Path(args.val_csv), "val", Path(args.data_root), output_dir, args.link_images)
+    stats_train = convert_split(Path(args.train_csv), "train", Path(args.data_root), output_dir, args.link_images, args)
+    stats_val = convert_split(Path(args.val_csv), "val", Path(args.data_root), output_dir, args.link_images, args)
 
     print(
         f"Prepared {stats_train.images} train images/{stats_train.boxes} boxes; "

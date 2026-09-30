@@ -109,11 +109,40 @@ Evidence from `data/splits/master.csv`: 13482 images, 26567 boxes. 82% of images
 but unlabeled second ear, and hard-negative mining selects the highest-scoring
 background anchors — precisely that ear.
 
-- [ ] **Relabel the missing second ears.** Build a proposal + human-review pipeline:
-      auto-propose with `model_weights/yolov11_ear_detector.pt` and the pose model,
-      queue anything that disagrees with existing labels, review through
-      `utils/image_annotation_viewer.py`. Automated proposals are *proposals* —
-      the accept/reject pass is human work and is the schedule driver here.
+- [~] **Relabel the missing second ears.** An auto-labeller is viable: measured
+      against human-verified boxes on val, `model_weights/yolov11_ear_detector.pt`
+      scores mAP@0.5 **0.8554**, mAP@[.5:.95] 0.6104, matched-box IoU 0.8621 —
+      against BlazeEar's 0.1935 / 0.0476 / 0.6288. Do *not* use the pose model.
+      Step 1 (running): retrain the labeller on human-only, geometry-filtered
+      boxes via `finetune_yolov11.py --sources human`, since the shipped one was
+      trained on POSE boxes too (`convert_split` applied no source filter).
+      Step 2: propose on every image, queue disagreements with existing labels
+      for human accept/reject through `utils/image_annotation_viewer.py`.
+      The review pass is human work and is the schedule driver.
+
+### POSE pseudo-labels are junk, not a rescalable convention
+
+*Correction to the earlier entry in this plan.* From box statistics alone POSE
+looked like a tighter annotation convention (2.6x smaller median area). Checked
+properly against the human labels in the same image:
+
+- **97.8% of POSE boxes have zero overlap with any human box**; 0.0% reach IoU 0.5.
+- Median centre distance to the nearest human box: **5.34 human-box diagonals**.
+- Rendering them confirms it: POSE boxes land on eyebrows, hair above the ear,
+  and in one sampled image a blurry background object.
+
+Two independent detectors corroborate it. Both BlazeEar (0.0067) and the YOLO
+ear detector (0.0073) score ~zero against POSE boxes, *and the YOLO detector was
+trained on them* — they were inconsistent enough to wash out as noise rather
+than be learned. So they are misplaced, not mis-scaled: drop them, do not
+normalise them.
+
+### Human labels need a light sanity filter
+
+3.84% of human boxes (613 of 15972) are degenerate: under 6 px on a side, under
+100 px2 in area, or aspect outside 0.15-2.0. They concentrate in one source,
+*Ear Detection from Full Face image.v1i.coco*, at 6.8%. `finetune_yolov11.py`
+now drops these by default.
 - [ ] **Ignore band in anchor assignment.** Even with complete labels, anchors that
       overlap a GT box but lose assignment are currently trained as background.
       Exclude a middle IoU band from both the positive set and hard-negative mining.
