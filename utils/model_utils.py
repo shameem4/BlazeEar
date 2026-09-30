@@ -3,7 +3,6 @@ Model loading and device setup utilities.
 """
 import torch
 from blazeear import BlazeEar
-from utils.config import DEFAULT_NMS_IOU_THRESHOLD
 
 
 def setup_device() -> torch.device:
@@ -67,9 +66,6 @@ def load_model(
         model.eval()
         if hasattr(model, "generate_anchors"):
             model.generate_anchors(anchor_options)
-
-        if hasattr(model, "min_suppression_threshold"):
-            model.min_suppression_threshold = DEFAULT_NMS_IOU_THRESHOLD
 
         # Override detection threshold if specified
         if threshold is not None:

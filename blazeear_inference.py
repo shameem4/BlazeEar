@@ -16,7 +16,7 @@ Usage (Python):
     pipeline = BlazeEarInference(
         weights_path="runs/checkpoints/BlazeEar_best.pth",
         confidence_threshold=0.70,
-        iou_threshold=0.3,
+        iou_threshold=NMS_IOU_THRESHOLD,
         device="cuda"
     )
     
@@ -58,12 +58,13 @@ ONNX Export Options for JavaScript:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Tuple, Union, Optional, List, cast
+from typing import Tuple, Union, Optional
 
 import numpy as np
 import torch
+from utils.config import MAX_DETECTIONS, NMS_IOU_THRESHOLD
+from utils.nms import suppress_overlapping
 import torch.nn as nn
-import torch.nn.functional as F
 import torchvision.ops
 
 from utils.preprocess import resize_pad as shared_resize_pad
@@ -99,9 +100,9 @@ class BlazeEarInference(nn.Module):
         self,
         weights_path: Optional[Union[str, Path]] = None,
         confidence_threshold: float = 0.70,
-        iou_threshold: float = 0.3,
+        iou_threshold: float = NMS_IOU_THRESHOLD,
         input_size: int = 128,
-        max_detections: int = 100,
+        max_detections: int = MAX_DETECTIONS,
         device: Union[str, torch.device] = "cpu",
         score_clipping_thresh: float = 100.0,
     ):
@@ -288,72 +289,8 @@ class BlazeEarInference(nn.Module):
             kept_boxes: Tensor of shape (M, 4)
             kept_scores: Tensor of shape (M,)
         """
-        if boxes.shape[0] == 0:
-            return boxes, scores
-        
-        # Convert [ymin, xmin, ymax, xmax] to [xmin, ymin, xmax, ymax] for torchvision
-        boxes_xyxy = boxes[:, [1, 0, 3, 2]]
-        
-        # Apply NMS
-        try:
-            import torchvision.ops
-            keep_idx = torchvision.ops.nms(boxes_xyxy, scores, self.iou_threshold)
-        except ImportError:
-            # Fallback: simple NMS implementation
-            keep_idx = self._simple_nms(boxes_xyxy, scores)
-        
-        # Limit to max detections
-        if len(keep_idx) > self.max_detections:
-            keep_idx = keep_idx[:self.max_detections]
-        
-        return boxes[keep_idx], scores[keep_idx]
-    
-    def _simple_nms(
-        self,
-        boxes: torch.Tensor,
-        scores: torch.Tensor
-    ) -> torch.Tensor:
-        """Simple NMS implementation as fallback."""
-        order = torch.argsort(scores, descending=True)
-        keep = []
-        
-        while len(order) > 0:
-            i = order[0].item()
-            keep.append(i)
-            
-            if len(order) == 1:
-                break
-            
-            # Compute IoU with remaining boxes
-            remaining = order[1:]
-            ious = self._compute_iou(boxes[i], boxes[remaining])
-            
-            # Keep boxes with IoU below threshold
-            mask = ious <= self.iou_threshold
-            order = remaining[mask]
-        
-        return torch.tensor(keep, dtype=torch.long, device=boxes.device)
-    
-    def _compute_iou(
-        self,
-        box: torch.Tensor,
-        boxes: torch.Tensor
-    ) -> torch.Tensor:
-        """Compute IoU between one box and multiple boxes."""
-        # Intersection
-        x1 = torch.maximum(box[0], boxes[:, 0])
-        y1 = torch.maximum(box[1], boxes[:, 1])
-        x2 = torch.minimum(box[2], boxes[:, 2])
-        y2 = torch.minimum(box[3], boxes[:, 3])
-        
-        inter_area = torch.clamp(x2 - x1, min=0) * torch.clamp(y2 - y1, min=0)
-        
-        # Union
-        box_area = (box[2] - box[0]) * (box[3] - box[1])
-        boxes_area = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
-        union_area = box_area + boxes_area - inter_area
-        
-        return inter_area / (union_area + 1e-6)
+        return suppress_overlapping(
+            boxes, scores, self.iou_threshold, self.max_detections)
     
     def denormalize_detections(
         self,
@@ -666,9 +603,9 @@ class BlazeEarInferenceExportable(nn.Module):
         model: nn.Module,
         anchors: torch.Tensor,
         confidence_threshold: float = 0.70,
-        iou_threshold: float = 0.3,
+        iou_threshold: float = NMS_IOU_THRESHOLD,
         input_size: int = 128,
-        max_detections: int = 100,
+        max_detections: int = MAX_DETECTIONS,
         score_clipping_thresh: float = 100.0,
     ):
         super().__init__()
@@ -913,9 +850,9 @@ class BlazeEarEndToEndExportable(nn.Module):
         model: nn.Module,
         anchors: torch.Tensor,
         confidence_threshold: float = 0.70,
-        iou_threshold: float = 0.3,
+        iou_threshold: float = NMS_IOU_THRESHOLD,
         input_size: int = 128,
-        max_detections: int = 100,
+        max_detections: int = MAX_DETECTIONS,
         score_clipping_thresh: float = 100.0,
     ):
         super().__init__()

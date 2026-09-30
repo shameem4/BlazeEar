@@ -8,7 +8,12 @@ import torch.nn.functional as F
 from blazebase import BlazeBlock, BlazeBlock_WT
 from blazedetector import BlazeDetector
 from utils.anchor_utils import get_anchors
-from utils.config import EAR_GEOMETRY_FILTER_ENABLED
+from utils.config import (
+    DETECTION_SCORE_THRESHOLD,
+    EAR_GEOMETRY_FILTER_ENABLED,
+    NMS_IOU_THRESHOLD,
+    TOTAL_ANCHORS,
+)
 from utils.detection_filters import filter_by_geometry
 
 
@@ -56,15 +61,15 @@ class BlazeEar(BlazeDetector):
         # These are the settings from the MediaPipe example graph
         # mediapipe/graphs/face_detection/face_detection_mobile_gpu.pbtxt
         self.num_classes = 1
-        self.num_anchors = 896
+        self.num_anchors = TOTAL_ANCHORS
         self.num_coords = 16  # Box + keypoints (MediaPipe layout)
         self.score_clipping_thresh = 100.0
         self.x_scale = 128.0
         self.y_scale = 128.0
         self.h_scale = 128.0
         self.w_scale = 128.0
-        self.min_score_thresh = 0.70
-        self.min_suppression_threshold = 0.3
+        self.min_score_thresh = DETECTION_SCORE_THRESHOLD
+        self.min_suppression_threshold = NMS_IOU_THRESHOLD
         self.num_keypoints = 6  # Keep keypoint outputs (untrained without labels)
 
         # These settings are for converting detections to ROIs which can then

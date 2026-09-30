@@ -14,7 +14,6 @@ import argparse
 import os
 
 import cv2
-import numpy as np
 import pandas as pd
 import torch
 
@@ -27,10 +26,10 @@ from utils.config import (
     FACE_CROP_MAX_FACES,
     FACE_CROP_THRESHOLD,
     HUMAN_ANNOTATION_SOURCES,
-    IGNORE_ANNOTATION_SOURCE,
     NEGATIVE_ANNOTATION_SOURCE,
 )
-from utils.detection_eval import DetectionEvaluator, pairwise_iou
+from utils.detection_eval import DetectionEvaluator
+from utils.nms import suppress_overlapping
 
 
 def load_ear_model(path, score_threshold, device):
@@ -42,29 +41,6 @@ def load_ear_model(path, score_threshold, device):
     # The fitted ear priors, the same set the dataloader and loss use.
     model.generate_anchors({})
     return model
-
-
-def nms(boxes, scores, iou_threshold=0.3):
-    """Greedy NMS over yxyx boxes, used to merge overlapping face crops."""
-    if not len(scores):
-        return boxes, scores
-    order = torch.argsort(scores, descending=True)
-    boxes, scores = boxes[order], scores[order]
-    keep = []
-    alive = torch.ones(len(scores), dtype=torch.bool)
-    for i in range(len(scores)):
-        if not alive[i]:
-            continue
-        keep.append(i)
-        if i + 1 >= len(scores):
-            break
-        overlap = pairwise_iou(boxes[i:i + 1], boxes[i + 1:])[0]
-        # Keep at `<=`, so suppression is strictly above the threshold, as in
-        # blazedetector, blazeear_inference and the trainer. This started as
-        # `<`, which suppressed one boundary case the other four paths keep.
-        alive[i + 1:] &= overlap <= iou_threshold
-    keep = torch.tensor(keep, dtype=torch.long)
-    return boxes[keep], scores[keep]
 
 
 def detect_single_stage(model, image):
@@ -99,7 +75,9 @@ def detect_two_stage(face_detector, ear_model, image, expand, max_faces):
         all_scores.append(scores)
     if not all_boxes:
         return torch.zeros((0, 4)), torch.zeros((0,)), len(faces)
-    boxes, scores = nms(torch.cat(all_boxes), torch.cat(all_scores))
+    # One crop per face means overlapping crops can each report the same ear.
+    boxes, scores = suppress_overlapping(
+        torch.cat(all_boxes), torch.cat(all_scores))
     return boxes, scores, len(faces)
 
 

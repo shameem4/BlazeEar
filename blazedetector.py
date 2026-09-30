@@ -1,8 +1,8 @@
 import numpy as np
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import cv2
+
+from utils.config import MAX_DETECTIONS
+from utils.nms import nms_indices
 
 from blazebase import BlazeBase
 from utils.iou import intersect_torch, jaccard_torch, overlap_similarity_torch
@@ -39,7 +39,7 @@ class BlazeDetector(BlazeBase):
 
     # Cap on detections returned per image, matching BlazeEarInference so the
     # two paths cannot disagree on how many boxes survive.
-    max_detections: int = 100
+    max_detections: int = MAX_DETECTIONS
 
 
     def _preprocess(self, x):
@@ -251,12 +251,15 @@ class BlazeDetector(BlazeBase):
 
         # 4. Non-maximum suppression to remove overlapping detections:
         filtered_detections = []
-        for i in range(len(detections)):
-            ears = self._hard_non_max_suppression(detections[i])
-            ears = torch.stack(ears) if len(ears) > 0 else torch.zeros((0, 5))
-            if ears.shape[0] > self.max_detections:
-                ears = ears[:self.max_detections]
-            filtered_detections.append(ears)
+        for image_detections in detections:
+            if image_detections.shape[0] == 0:
+                filtered_detections.append(
+                    torch.zeros((0, 5), device=image_detections.device))
+                continue
+            keep = nms_indices(
+                image_detections[:, :4], image_detections[:, 4],
+                self.min_suppression_threshold, self.max_detections)
+            filtered_detections.append(image_detections[keep][:, :5])
 
         return filtered_detections
 
@@ -342,46 +345,6 @@ class BlazeDetector(BlazeBase):
             h_scale=self.h_scale,
             num_keypoints=getattr(self, "num_keypoints", 0),
         )
-
-    def _hard_non_max_suppression(self, detections: torch.Tensor) -> list[torch.Tensor]:
-        """Standard hard NMS: keep the highest-scoring detection and suppress
-        all overlapping boxes above the IoU threshold.
-
-        Unlike weighted NMS, this does not blend coordinates or average
-        confidence scores, which avoids creating phantom detections from
-        clusters of weak false positives.
-
-        The input detections should be a Tensor of shape (count, num_coords+1).
-
-        Returns a list of PyTorch tensors, one for each detected ear.
-        """
-        if len(detections) == 0:
-            return []
-
-        output_detections = []
-
-        # Sort the detections from highest to lowest score.
-        remaining = torch.argsort(detections[:, 4], descending=True)
-
-        while len(remaining) > 0:
-            detection = detections[remaining[0]]
-            output_detections.append(detection)
-
-            if len(remaining) == 1:
-                break
-
-            # Compute IoU between the kept detection and all remaining.
-            first_box = detection[:4]
-            other_boxes = detections[remaining[1:], :4]
-            ious = self.overlap_similarity(first_box, other_boxes)
-            ious = torch.nan_to_num(ious, nan=0.0, posinf=0.0, neginf=0.0)
-
-            # Keep only boxes that do NOT overlap enough with the kept one.
-            keep_mask = ious <= self.min_suppression_threshold
-            remaining = remaining[1:][keep_mask]
-
-        return output_detections
-
 
     # IOU functions now use utils.iou module
 

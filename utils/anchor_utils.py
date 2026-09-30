@@ -21,6 +21,8 @@ from typing import Tuple
 import numpy as np
 import torch
 
+from utils.config import BIG_GRID_SIZE, SMALL_GRID_SIZE, TOTAL_ANCHORS
+
 
 # =============================================================================
 # Reference Anchor Generation
@@ -200,8 +202,8 @@ anchor_options = {
 def generate_anchors_from_priors(
     small_priors=None,
     big_priors=None,
-    small_grid: int = 16,
-    big_grid: int = 8
+    small_grid: int = SMALL_GRID_SIZE,
+    big_grid: int = BIG_GRID_SIZE
 ) -> torch.Tensor:
     """
     Build the 896-anchor tensor from explicit (width, height) priors.
@@ -229,6 +231,17 @@ def generate_anchors_from_priors(
             for x in centres:
                 for w, h in priors:
                     anchors.append([float(x), float(y), float(w), float(h)])
+
+    # The anchor count is also declared in utils/config.TOTAL_ANCHORS and
+    # asserted against by BlazeEar.generate_anchors. Nothing enforced that they
+    # agreed, and a decode built on a different count produces boxes at the
+    # wrong scale rather than an error, so make the mismatch loud here.
+    if (small_grid, big_grid) == (SMALL_GRID_SIZE, BIG_GRID_SIZE) \
+            and len(anchors) != TOTAL_ANCHORS:
+        raise ValueError(
+            f'built {len(anchors)} anchors at the configured grid sizes but '
+            f'TOTAL_ANCHORS is {TOTAL_ANCHORS}; the priors and the declared '
+            'anchor count disagree')
 
     return torch.tensor(anchors, dtype=torch.float32)
 

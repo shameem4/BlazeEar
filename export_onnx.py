@@ -12,15 +12,17 @@ import argparse
 import importlib.util
 import sys
 from pathlib import Path
-from typing import Any, Dict, Tuple, cast
+from typing import Any, Tuple, cast
 import warnings
 
 import torch
 import torch.nn as nn
 import torchvision
 
+from blazebase import checkpoint_is_folded, load_checkpoint_state
 from blazeear import BlazeEar
 from utils.box_utils import yxyx_to_xyxy
+from utils.config import DETECTION_SCORE_THRESHOLD, NMS_IOU_THRESHOLD
 
 
 class BlazeEarONNXWrapper(nn.Module):
@@ -98,22 +100,6 @@ class BlazeEarDetectionsWrapper(nn.Module):
         return torch.cat((final_boxes, final_scores), dim=-1)  # (N, 5) yxyx + score
 
 
-def _unwrap_checkpoint(obj: Any) -> Dict[str, torch.Tensor]:
-    if isinstance(obj, dict) and "model_state_dict" in obj:
-        state_dict = obj["model_state_dict"]
-    else:
-        state_dict = obj
-
-    if not isinstance(state_dict, dict) or not state_dict:
-        raise ValueError("Checkpoint does not look like a PyTorch state_dict.")
-
-    first_key = next(iter(state_dict.keys()))
-    if isinstance(first_key, str) and first_key.startswith("module."):
-        state_dict = {k.removeprefix("module."): v for k, v in state_dict.items()}
-
-    return state_dict
-
-
 def export_onnx(
     checkpoint_path: Path,
     output_path: Path,
@@ -123,8 +109,8 @@ def export_onnx(
     fallback: bool = True,
     verbose: bool = False,
     postprocess: bool = False,
-    score_thresh: float = 0.70,
-    iou_thresh: float = 0.3,
+    score_thresh: float = DETECTION_SCORE_THRESHOLD,
+    iou_thresh: float = NMS_IOU_THRESHOLD,
     topk: int = 200,
 ) -> None:
     if not fallback and importlib.util.find_spec("onnxscript") is None:
@@ -134,9 +120,14 @@ def export_onnx(
             "(Or run without `--no-fallback` to allow a legacy fallback.)"
         )
 
-    model = BlazeEar()
-    checkpoint_obj = torch.load(str(checkpoint_path), map_location="cpu")
-    state_dict = _unwrap_checkpoint(checkpoint_obj)
+    # Build whichever architecture the checkpoint was written from. Without
+    # this, a pre-BatchNorm checkpoint raises on load and the current one
+    # exports through a path that was never checked against it.
+    state_dict = load_checkpoint_state(str(checkpoint_path))
+    folded = checkpoint_is_folded(state_dict)
+    if folded:
+        print("Checkpoint predates the BatchNorm switch; exporting the folded model.")
+    model = BlazeEar(use_batchnorm=not folded)
     model.load_state_dict(state_dict, strict=True)
     model.eval()
 

@@ -28,9 +28,15 @@ DEFAULT_SAVE_EVERY = 10
 
 # Model parameters
 DEFAULT_INPUT_SIZE = 128
-DEFAULT_DETECTION_THRESHOLD = 0.70
-DEFAULT_TRAIN_THRESHOLD = 0.3
-DEFAULT_NMS_IOU_THRESHOLD = 0.35
+
+# Detection post-processing. One value each, shared by every path that turns
+# raw anchors into detections. These were previously spread across five
+# implementations at three different IoU thresholds (0.3 in the model, 0.35
+# forced by utils/model_utils, 0.5 in the trainer's evaluation), which meant
+# the reported mAP measured post-processing that nothing deployed used.
+DETECTION_SCORE_THRESHOLD = 0.70
+NMS_IOU_THRESHOLD = 0.3
+MAX_DETECTIONS = 100
 
 # Debug/inference defaults
 DEFAULT_DEBUG_WEIGHTS = DEFAULT_BEST_CHECKPOINT

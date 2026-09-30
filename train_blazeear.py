@@ -45,6 +45,7 @@ from utils.anchor_utils import get_anchors
 from dataloader import create_dataloader
 from loss_functions import BlazeEarDetectionLoss, compute_mean_iou
 from utils.detection_eval import DetectionEvaluator
+from utils.nms import nms_indices
 from utils.config import (
     DEFAULT_BEST_CHECKPOINT,
     DEFAULT_BATCH_SIZE,
@@ -54,17 +55,14 @@ from utils.config import (
     DEFAULT_INPUT_SIZE,
     DEFAULT_LEARNING_RATE,
     DEFAULT_LOG_DIR,
-    DEFAULT_NMS_IOU_THRESHOLD,
+    MAX_DETECTIONS,
+    NMS_IOU_THRESHOLD,
     DEFAULT_NUM_WORKERS,
     DEFAULT_SAVE_EVERY,
     DEFAULT_TRAIN_CSV,
     DEFAULT_VAL_CSV,
     DEFAULT_WEIGHTS_PATH,
     DEFAULT_WEIGHT_DECAY,
-    DUPLICATE_SUPPRESSION_ENABLED,
-    NEAR_CENTER_DISTANCE_FRAC,
-    NEAR_MIN_AREA_RATIO,
-    NEAR_MIN_COVERAGE,
 )
 
 
@@ -99,7 +97,7 @@ class BlazeEarTrainer:
         scale: int = 128,
         compute_train_map: bool = False,
         eval_score_threshold: float = 0.1,
-        nms_iou_threshold: float = DEFAULT_NMS_IOU_THRESHOLD,
+        nms_iou_threshold: float = NMS_IOU_THRESHOLD,
         max_eval_detections: int = 75,
         metric_threshold: float = 0.45,
         use_amp: bool = True
@@ -175,10 +173,6 @@ class BlazeEarTrainer:
         self.max_eval_detections = max_eval_detections
         self.max_map_candidates = 200
         self.metric_threshold = metric_threshold
-        self.duplicate_suppression = DUPLICATE_SUPPRESSION_ENABLED
-        self.duplicate_center_distance_frac = NEAR_CENTER_DISTANCE_FRAC
-        self.duplicate_min_area_ratio = NEAR_MIN_AREA_RATIO
-        self.duplicate_min_coverage = NEAR_MIN_COVERAGE
     
     def _get_training_outputs(self, images: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
@@ -243,112 +237,21 @@ class BlazeEarTrainer:
         union = area1[:, None] + area2[None, :] - intersection
         return intersection / (union + 1e-6)
 
-    @staticmethod
-    def _boxes_are_near_xyxy(
-        candidate: torch.Tensor,
-        boxes: torch.Tensor,
-        max_center_distance_frac: float,
-        min_area_ratio: float
-    ) -> torch.Tensor:
-        """Return mask for boxes whose centers and areas nearly match candidate."""
-        if boxes.numel() == 0:
-            return torch.zeros((0,), dtype=torch.bool, device=candidate.device)
-
-        cand_h = torch.clamp(candidate[2] - candidate[0], min=1e-6)
-        cand_w = torch.clamp(candidate[3] - candidate[1], min=1e-6)
-        cand_area = cand_h * cand_w
-        cand_center_y = (candidate[0] + candidate[2]) / 2.0
-        cand_center_x = (candidate[1] + candidate[3]) / 2.0
-
-        box_h = torch.clamp(boxes[:, 2] - boxes[:, 0], min=1e-6)
-        box_w = torch.clamp(boxes[:, 3] - boxes[:, 1], min=1e-6)
-        box_area = box_h * box_w
-        box_center_y = (boxes[:, 0] + boxes[:, 2]) / 2.0
-        box_center_x = (boxes[:, 1] + boxes[:, 3]) / 2.0
-
-        center_distance = torch.sqrt(
-            (cand_center_y - box_center_y) ** 2 + (cand_center_x - box_center_x) ** 2
-        )
-        max_dim = torch.maximum(
-            torch.maximum(cand_h, cand_w),
-            torch.maximum(box_h, box_w)
-        )
-        center_close = center_distance <= (max_center_distance_frac * max_dim)
-
-        min_area = torch.minimum(cand_area, box_area)
-        max_area = torch.maximum(cand_area, box_area)
-        area_ratio = min_area / (max_area + 1e-6)
-
-        return center_close & (area_ratio >= min_area_ratio)
-
-    @staticmethod
-    def _box_covers_target_xyxy(
-        candidate: torch.Tensor,
-        boxes: torch.Tensor,
-        min_coverage: float
-    ) -> torch.Tensor:
-        """Return mask for boxes where candidate covers most of the target area."""
-        if boxes.numel() == 0:
-            return torch.zeros((0,), dtype=torch.bool, device=candidate.device)
-
-        y_min = torch.maximum(candidate[0], boxes[:, 0])
-        x_min = torch.maximum(candidate[1], boxes[:, 1])
-        y_max = torch.minimum(candidate[2], boxes[:, 2])
-        x_max = torch.minimum(candidate[3], boxes[:, 3])
-
-        inter_h = torch.clamp(y_max - y_min, min=0)
-        inter_w = torch.clamp(x_max - x_min, min=0)
-        inter_area = inter_h * inter_w
-
-        target_area = torch.clamp((boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1]), min=1e-6)
-        coverage = inter_area / target_area
-        return coverage >= min_coverage
-
     def _nms(
         self,
         boxes: torch.Tensor,
         scores: torch.Tensor,
         iou_threshold: float
     ) -> torch.Tensor:
+        """Indices to keep, via the one shared suppression.
+
+        This was a Python while-loop over CUDA tensors, run once per
+        validation image, which synchronised the GPU on every iteration and
+        dominated epoch time. It also disagreed with the deployed paths on the
+        IoU threshold, so the reported mAP described post-processing that
+        nothing shipped.
         """
-        Basic Non-Maximum Suppression to mimic MediaPipe evaluation pipeline.
-        """
-        if boxes.numel() == 0:
-            return torch.empty(0, dtype=torch.long, device=boxes.device)
-
-        order = torch.argsort(scores, descending=True)
-        keep: List[torch.Tensor] = []
-
-        while order.numel() > 0 and len(keep) < self.max_eval_detections:
-            current = order[0]
-            keep.append(current)
-
-            if order.numel() == 1:
-                break
-
-            remaining = order[1:]
-            current_box = boxes[current]
-            remaining_boxes = boxes[remaining]
-            ious = self._pairwise_iou(
-                current_box.unsqueeze(0),
-                remaining_boxes
-            ).squeeze(0)
-
-            suppress_mask = ious > iou_threshold
-            if self.duplicate_suppression:
-                # Off by default: no inference path does this, so enabling it
-                # here alone makes the reported metric measure a pipeline that
-                # is never deployed.
-                suppress_mask = suppress_mask | self._box_covers_target_xyxy(
-                    current_box, remaining_boxes, self.duplicate_min_coverage
-                ) | self._boxes_are_near_xyxy(
-                    current_box, remaining_boxes,
-                    self.duplicate_center_distance_frac, self.duplicate_min_area_ratio
-                )
-            mask = ~suppress_mask
-            order = remaining[mask]
-
-        return torch.stack(keep) if keep else torch.empty(0, dtype=torch.long, device=boxes.device)
+        return nms_indices(boxes, scores, iou_threshold, self.max_eval_detections)
 
     def _detections_for_image(
         self,
@@ -531,7 +434,6 @@ class BlazeEarTrainer:
             'positive_anchor_iou': 0.0
         }
         
-        batch_time = time.time()
         
         for batch_idx, batch in enumerate(self.train_loader):
             # Move data to device
@@ -626,7 +528,6 @@ class BlazeEarTrainer:
                       f'Pos Acc: {last_metrics["positive_acc"]:.4f} | '
                       f'Bg Acc: {last_metrics["background_acc"]:.4f}'
                     ,end='')
-                batch_time = time.time()
         
         print()  # New line after epoch
         
@@ -846,13 +747,14 @@ class BlazeEarTrainer:
         
         for epoch in range(start_epoch, start_epoch + num_epochs):
             self.epoch = epoch
-            epoch_start = time.time()
             
             epoch_str = f'{epoch + 1:03d}/{start_epoch + num_epochs}'
             print(f'\nEpoch {epoch_str}')
             
             # Train
+            train_started = time.time()
             train_results = self.train_epoch()
+            train_seconds = time.time() - train_started
             
             # Update learning rate
             if self.scheduler:
@@ -865,20 +767,26 @@ class BlazeEarTrainer:
                 f'Pos Acc: {train_results["positive_acc"]:.4f} | '
                 f'Bg Acc: {train_results["background_acc"]:.4f} | '
                 f'IoU: {train_results["positive_anchor_iou"]:.4f} | '
-                f'mAP: {train_results["map_50"]:.4f}')
+                f'mAP: {train_results["map_50"]:.4f} | '
+                f'{train_seconds:.0f}s')
             
             # Validate over the whole split. Subsetting here previously took an
             # unshuffled prefix, which is ordered by annotation source, so the
             # selection signal came from a single source.
             if self.val_loader and (epoch + 1) % validate_every == 0:
+                # Timed separately: per-epoch validation, not the training
+                # step, is what dominates wall time on this model.
+                val_started = time.time()
                 val_results = self.validate(compute_map=val_compute_map)
+                val_seconds = time.time() - val_started
                 print(f'  Val   | Loss: {val_results["total"]:.5f} | '
                         f'Pos Acc: {val_results["positive_acc"]:.4f} | '
                         f'Bg Acc: {val_results["background_acc"]:.4f} | '
                         f'AnchIoU: {val_results["positive_anchor_iou"]:.4f} | '
                         f'DetIoU: {val_results.get("detection_iou", 0.0):.4f} | '
                         f'mAP50: {val_results["map_50"]:.4f} | '
-                        f'mAP50-95: {val_results.get("map_50_95", 0.0):.4f}'
+                        f'mAP50-95: {val_results.get("map_50_95", 0.0):.4f} | '
+                        f'{val_seconds:.0f}s'
                       )
                 
                 # Select on detection quality, not loss. Validation loss is
@@ -1030,9 +938,11 @@ def main():
                         help='Score threshold used when measuring train-time metrics (balances precision/recall)')
     parser.add_argument('--eval-score-threshold', type=float, default=0.1,
                         help='Minimum score for a detection to be considered during evaluation')
-    parser.add_argument('--eval-nms-threshold', type=float, default=0.5,
+    parser.add_argument('--eval-nms-threshold', type=float,
+                        default=NMS_IOU_THRESHOLD,
                         help='IoU threshold for NMS when computing mAP/IoU')
-    parser.add_argument('--max-eval-detections', type=int, default=75,
+    parser.add_argument('--max-eval-detections', type=int,
+                        default=MAX_DETECTIONS,
                         help='Maximum number of candidate detections kept per image before scoring metrics')
     parser.add_argument('--train-map', action='store_true',
                         help='Compute mAP during training (slower)')
