@@ -512,3 +512,35 @@ The set is lopsided in crop space, though: `(0.114, 0.245)` alone claims 55.9%
 of ears as its best match, while the smallest prior and the two largest claim
 2.4% between them. Reallocating those three is an optimization worth trying
 only if the two-stage approach is adopted.
+
+### Result: the two-stage pipeline nearly doubles mAP
+
+Scored end to end by `evaluate_two_stage.py` over the full 2021-image
+validation split, in ORIGINAL image pixels against all 2414 human ears, with
+both models run through an identical detection path. Ears in the 4.1% of
+images where BlazeFace finds no face count as misses:
+
+| pipeline | mAP@0.5 | mAP@[.5:.95] | detection IoU |
+|---|---|---|---|
+| single-stage (full frame) | 0.3561 | 0.1171 | 0.6677 |
+| **two-stage (face -> crop -> ear)** | **0.6336** | **0.2783** | **0.7276** |
+| two-stage + full-frame fallback | 0.6335 | 0.2780 | 0.7268 |
+
++78% on mAP@0.5 and +138% on mAP@[.5:.95], while *paying* a 4.1% recall
+ceiling. The single-stage figure reproduces the 0.3566 the trainer reported
+for that checkpoint, which is the check that the comparison is fair.
+
+Localisation improves more than detection does, which is the signature of the
+resolution argument being the right one: the median ear goes from 14.0 px to
+32.5 px at the 128 px input, and a box regressed at 32 px is simply a better
+box.
+
+The full-frame fallback is a wash (0.6335 against 0.6336). On images with no
+detected face the full-frame model contributes about as many false positives
+as it recovers true ears, so the recall ceiling is better closed by lowering
+the face threshold than by falling back.
+
+So the answer to "are we doing something wrong": yes, but not in the weights.
+MediaPipe's BlazeFace weights and architecture were never the problem. Asking
+one 128 px detector to find a 14 px part in a whole frame was. Restoring the
+two-stage pattern MediaPipe actually uses recovers most of the gap.
