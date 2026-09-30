@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from blazebase import BlazeBlock, BlazeBlock_WT
 from blazedetector import BlazeDetector
 from utils.anchor_utils import get_anchors
+from utils.config import EAR_GEOMETRY_FILTER_ENABLED
 from utils.detection_filters import filter_by_geometry
 
 
@@ -191,8 +192,11 @@ class BlazeEar(BlazeDetector):
         normalized_ear_detections = self.predict_on_image(img2)
         ear_detections = self.denormalize_detections(normalized_ear_detections, scale, pad)
 
-        # Geometric post-filter: reject implausible aspect ratios and sizes
-        if ear_detections.numel() > 0:
+        # Geometric post-filter, off by default. When it was on, it rejected
+        # 25.86% of real ears; it also ran here and in the browser but in
+        # neither BlazeEarInference nor the exported graph, so the four paths
+        # disagreed on the same weights.
+        if EAR_GEOMETRY_FILTER_ENABLED and ear_detections.numel() > 0:
             dets_np = ear_detections.cpu().numpy()
             dets_np = filter_by_geometry(dets_np, frame.shape[0], frame.shape[1])
             ear_detections = torch.from_numpy(dets_np).to(ear_detections.device)

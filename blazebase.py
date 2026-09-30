@@ -553,3 +553,26 @@ class BlazeBase(nn.Module):
         theta = torch.atan2(y0-y1, x0-x1) - self.theta0
         return xc, yc, scale, theta
 
+
+
+def checkpoint_is_folded(state_dict: Dict[str, torch.Tensor]) -> bool:
+    """
+    True when a state dict comes from the BatchNorm-folded (BlazeBlock_WT) model.
+
+    Checkpoints written before the BatchNorm switch store `convs.0.weight` per
+    block; the trainable model stores `dw_conv.weight` and `bn1.*`. Loading one
+    into the other raises, which is correct but unhelpful for a caller that just
+    wants to score an old checkpoint, so callers use this to build the matching
+    architecture.
+    """
+    return any('.convs.0.weight' in key for key in state_dict)
+
+
+def load_checkpoint_state(path: str) -> Dict[str, torch.Tensor]:
+    """Read a checkpoint and return its weights, unwrapping training metadata."""
+    checkpoint = torch.load(path, map_location='cpu', weights_only=False)
+    if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+        checkpoint = checkpoint['model_state_dict']
+    if any(k.startswith('module.') for k in checkpoint):
+        checkpoint = {k.removeprefix('module.'): v for k, v in checkpoint.items()}
+    return checkpoint

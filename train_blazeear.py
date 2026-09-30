@@ -61,6 +61,7 @@ from utils.config import (
     DEFAULT_VAL_CSV,
     DEFAULT_WEIGHTS_PATH,
     DEFAULT_WEIGHT_DECAY,
+    DUPLICATE_SUPPRESSION_ENABLED,
     NEAR_CENTER_DISTANCE_FRAC,
     NEAR_MIN_AREA_RATIO,
     NEAR_MIN_COVERAGE,
@@ -174,6 +175,7 @@ class BlazeEarTrainer:
         self.max_eval_detections = max_eval_detections
         self.max_map_candidates = 200
         self.metric_threshold = metric_threshold
+        self.duplicate_suppression = DUPLICATE_SUPPRESSION_ENABLED
         self.duplicate_center_distance_frac = NEAR_CENTER_DISTANCE_FRAC
         self.duplicate_min_area_ratio = NEAR_MIN_AREA_RATIO
         self.duplicate_min_coverage = NEAR_MIN_COVERAGE
@@ -332,19 +334,17 @@ class BlazeEarTrainer:
                 remaining_boxes
             ).squeeze(0)
 
-            coverage_mask = self._box_covers_target_xyxy(
-                current_box,
-                remaining_boxes,
-                self.duplicate_min_coverage
-            )
-            near_mask = self._boxes_are_near_xyxy(
-                current_box,
-                remaining_boxes,
-                self.duplicate_center_distance_frac,
-                self.duplicate_min_area_ratio
-            )
-
-            suppress_mask = (ious > iou_threshold) | coverage_mask | near_mask
+            suppress_mask = ious > iou_threshold
+            if self.duplicate_suppression:
+                # Off by default: no inference path does this, so enabling it
+                # here alone makes the reported metric measure a pipeline that
+                # is never deployed.
+                suppress_mask = suppress_mask | self._box_covers_target_xyxy(
+                    current_box, remaining_boxes, self.duplicate_min_coverage
+                ) | self._boxes_are_near_xyxy(
+                    current_box, remaining_boxes,
+                    self.duplicate_center_distance_frac, self.duplicate_min_area_ratio
+                )
             mask = ~suppress_mask
             order = remaining[mask]
 

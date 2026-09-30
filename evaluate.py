@@ -31,6 +31,7 @@ from typing import Dict, List
 import pandas as pd
 import torch
 
+from blazebase import checkpoint_is_folded, load_checkpoint_state
 from blazeear import BlazeEar
 from dataloader import create_dataloader
 from utils.config import (
@@ -78,6 +79,9 @@ def main() -> None:
                         help='Detections below this are discarded before scoring. '
                              'Keep it low: average precision needs the full curve.')
     parser.add_argument('--nms-threshold', type=float, default=0.5)
+    parser.add_argument('--legacy-anchors', action='store_true',
+                        help='Decode with the original w=h=1.0 anchors. Required to '
+                             'score checkpoints trained before the anchor change.')
     args = parser.parse_args()
 
     device = args.device if torch.cuda.is_available() or args.device == 'cpu' else 'cpu'
@@ -91,9 +95,16 @@ def main() -> None:
     if not sources_by_image:
         print('No annotation_source column found; reporting the "all" view only.')
 
-    model = BlazeEar()
-    checkpoint = torch.load(args.checkpoint, map_location='cpu', weights_only=False)
-    state = checkpoint.get('model_state_dict', checkpoint) if isinstance(checkpoint, dict) else checkpoint
+    # Build whichever architecture the checkpoint was written from, so
+    # pre-BatchNorm checkpoints stay scoreable.
+    state = load_checkpoint_state(args.checkpoint)
+    folded = checkpoint_is_folded(state)
+    if folded:
+        print('Checkpoint predates the BatchNorm switch; building the folded model.')
+        print('Note: it was also trained against w=h=1.0 anchors, so its decode '
+              'differs from current training. Scores are not comparable to a '
+              'checkpoint trained after the anchor change.')
+    model = BlazeEar(use_batchnorm=not folded)
     model.load_state_dict(state)
 
     # Reuse the trainer's detection path so evaluation cannot drift from the
@@ -106,6 +117,11 @@ def main() -> None:
         eval_score_threshold=args.score_threshold, nms_iou_threshold=args.nms_threshold,
         use_amp=False,
     )
+    if args.legacy_anchors:
+        from utils.anchor_utils import generate_reference_anchors
+        legacy, _, _ = generate_reference_anchors(fixed_anchor_size=True)
+        trainer.reference_anchors = legacy.float().to(device)
+        print('Decoding with legacy w=h=1.0 anchors.')
     trainer.model.eval()
 
     active_views = {k: v for k, v in VIEWS.items() if k == 'all' or sources_by_image}

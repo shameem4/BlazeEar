@@ -36,11 +36,16 @@ class BlazeEarInference {
     constructor(options = {}) {
         this.confidenceThreshold = options.confidenceThreshold ?? 0.70;
         this.iouThreshold = options.iouThreshold ?? 0.3;
-        // Geometric filter thresholds (aspect ratio = width/height)
-        this.minAspectRatio = options.minAspectRatio ?? 0.35;
-        this.maxAspectRatio = options.maxAspectRatio ?? 1.4;
-        this.minSizeFrac = options.minSizeFrac ?? 0.03;
-        this.maxSizeFrac = options.maxSizeFrac ?? 0.55;
+        // Geometric filter, off by default to match the Python paths. With the
+        // previous bounds it rejected 25.86% of real ears, and it ran only here
+        // and in BlazeEar.process, so the deployed page and the measured
+        // pipeline disagreed. Bounds are the 0.5/99.5 percentiles of the real
+        // box distribution.
+        this.geometryFilterEnabled = options.geometryFilterEnabled ?? false;
+        this.minAspectRatio = options.minAspectRatio ?? 0.14;
+        this.maxAspectRatio = options.maxAspectRatio ?? 2.57;
+        this.minSizeFrac = options.minSizeFrac ?? 0.022;
+        this.maxSizeFrac = options.maxSizeFrac ?? 0.733;
         this.inputSize = 128;
         this.session = null;
         this.isLoaded = false;
@@ -410,6 +415,7 @@ class BlazeEarInference {
      * @private
      */
     _filterByGeometry(detections, imageWidth, imageHeight) {
+        if (!this.geometryFilterEnabled) return detections;
         const maxDim = Math.max(imageWidth, imageHeight);
         return detections.filter(det => {
             const w = det.xmax - det.xmin;

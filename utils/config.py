@@ -56,12 +56,31 @@ NEAR_MIN_AREA_RATIO = 0.35
 NEAR_MIN_COVERAGE = 0.8
 
 # Geometric post-filters (false positive rejection)
-# Aspect ratio (width/height) bounds for plausible ear detections
-EAR_MIN_ASPECT_RATIO = 0.35  # ears are taller than wide at minimum
-EAR_MAX_ASPECT_RATIO = 1.4   # nearly square to slightly wider than tall
-# Min/max size as fraction of image max dimension
-EAR_MIN_SIZE_FRAC = 0.03     # reject tiny spurious detections
-EAR_MAX_SIZE_FRAC = 0.55     # reject implausibly large boxes
+#
+# OFF by default. These were compensating for a detector that flooded the frame
+# with false positives, and they paid for it in recall: measured against 15630
+# geometry-sane human boxes in master.csv, the previous bounds
+# (aspect 0.35-1.4, size_frac 0.03-0.55) rejected 25.86% of REAL ears --
+# 18.92% from the lower aspect bound alone, because ears are tall (median
+# aspect 0.50, 0.5th percentile 0.141).
+#
+# The bounds below are the 0.5/99.5 percentiles of the real distribution, so
+# enabling the filter costs about 1% of true ears rather than a quarter. They
+# are correspondingly loose, which is the honest conclusion: there is no
+# geometric rule that separates this detector's false positives from real ears.
+# Fix precision in the model, not here.
+EAR_GEOMETRY_FILTER_ENABLED = False
+EAR_MIN_ASPECT_RATIO = 0.14
+EAR_MAX_ASPECT_RATIO = 2.57
+EAR_MIN_SIZE_FRAC = 0.022
+EAR_MAX_SIZE_FRAC = 0.733
+
+# Extra duplicate suppression beyond IoU NMS (centre-distance and coverage
+# tests). OFF by default, and it must stay consistent across paths: it was
+# previously applied only in the trainer's evaluation NMS and in no inference
+# path, so reported metrics were computed with suppression that deployment
+# never performed.
+DUPLICATE_SUPPRESSION_ENABLED = False
 
 # Anchor priors, as (width, height) normalized to the model input.
 #
