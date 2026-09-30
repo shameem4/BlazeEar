@@ -65,6 +65,14 @@ IGNORE_ANNOTATION_SOURCE = "IGNORE"
 # inference roughly a third of the crops it is handed are exactly that.
 NEGATIVE_ANNOTATION_SOURCE = "NEGATIVE"
 
+# Two-stage pipeline: MediaPipe BlazeFace on the full frame, then the ear model
+# on a square crop around each face. The dataset builder and the evaluator must
+# agree on these, or evaluation crops differently than training did and the
+# pipeline is scored on inputs it never saw.
+FACE_CROP_EXPAND = 1.5        # crop side, in multiples of the face box
+FACE_CROP_THRESHOLD = 0.3     # face score floor; this sets the recall ceiling
+FACE_CROP_MAX_FACES = 8
+
 # Duplicate suppression (near-duplicate box filtering)
 NEAR_CENTER_DISTANCE_FRAC = 0.55
 NEAR_MIN_AREA_RATIO = 0.35

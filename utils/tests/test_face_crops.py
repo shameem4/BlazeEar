@@ -118,3 +118,32 @@ class TestRemapBoxes:
     def test_the_annotation_source_survives_the_move(self):
         out, _ = remap_boxes(rows((120, 130, 20, 40, 'GT+REVIEW')), (100, 100, 200))
         assert out[0]['annotation_source'] == 'GT+REVIEW'
+
+
+class TestSharedDefaults:
+    """
+    The dataset builder and the evaluator have to crop identically. When they
+    drifted, evaluation used face threshold 0.5 against a dataset built at
+    0.3, so the pipeline was scored on crops it had never been trained on and
+    stranded 13% of images instead of 3.6%.
+    """
+
+    def test_both_scripts_take_their_defaults_from_config(self):
+        import evaluate_two_stage
+        import make_face_crops
+        from utils import config
+        for module in (make_face_crops, evaluate_two_stage):
+            defaults = {a.dest: a.default
+                        for a in module.build_parser()._actions}
+            assert defaults['expand'] == config.FACE_CROP_EXPAND
+            assert defaults['face_threshold'] == config.FACE_CROP_THRESHOLD
+            assert defaults['max_faces'] == config.FACE_CROP_MAX_FACES
+
+    def test_the_face_detector_defaults_to_the_shared_threshold(self):
+        import inspect
+
+        from make_face_crops import load_face_detector
+        from utils.config import FACE_CROP_THRESHOLD
+        signature = inspect.signature(load_face_detector)
+        assert signature.parameters['score_threshold'].default == FACE_CROP_THRESHOLD
+

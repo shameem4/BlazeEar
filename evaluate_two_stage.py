@@ -23,6 +23,9 @@ from blazebase import checkpoint_is_folded, load_checkpoint_state
 from make_face_crops import crop_window, load_face_detector
 from utils.config import (
     DEFAULT_DATA_ROOT,
+    FACE_CROP_EXPAND,
+    FACE_CROP_MAX_FACES,
+    FACE_CROP_THRESHOLD,
     HUMAN_ANNOTATION_SOURCES,
     IGNORE_ANNOTATION_SOURCE,
     NEGATIVE_ANNOTATION_SOURCE,
@@ -115,7 +118,7 @@ def ground_truth(rows):
     return to_tensor(gt), to_tensor(ignore)
 
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--csv', default='data/splits/val_v2.csv')
     parser.add_argument('--data-root', default=DEFAULT_DATA_ROOT)
@@ -126,12 +129,18 @@ def main():
     parser.add_argument('--fallback', action='store_true',
                         help='on images with no detected face, fall back to '
                              'the full-frame model from --checkpoint')
-    parser.add_argument('--expand', type=float, default=1.5)
-    parser.add_argument('--face-threshold', type=float, default=0.5)
-    parser.add_argument('--max-faces', type=int, default=8)
+    parser.add_argument('--expand', type=float, default=FACE_CROP_EXPAND)
+    parser.add_argument('--face-threshold', type=float,
+                        default=FACE_CROP_THRESHOLD)
+    parser.add_argument('--max-faces', type=int, default=FACE_CROP_MAX_FACES)
     parser.add_argument('--score-threshold', type=float, default=0.01)
     parser.add_argument('--limit', type=int, default=0)
     parser.add_argument('--device', default='cuda')
+    return parser
+
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
     if not args.checkpoint and not args.crop_checkpoint:
         parser.error('pass --checkpoint, --crop-checkpoint, or both')

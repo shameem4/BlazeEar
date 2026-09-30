@@ -23,6 +23,9 @@ from blazebase import load_mediapipe_weights
 from utils.anchor_utils import generate_reference_anchors
 from utils.config import (
     DEFAULT_DATA_ROOT,
+    FACE_CROP_EXPAND,
+    FACE_CROP_MAX_FACES,
+    FACE_CROP_THRESHOLD,
     HUMAN_ANNOTATION_SOURCES,
     IGNORE_ANNOTATION_SOURCE,
     NEGATIVE_ANNOTATION_SOURCE,
@@ -33,7 +36,7 @@ FACE_WEIGHTS = 'model_weights/blazeface.pth'
 MIN_VISIBLE_FRACTION = 0.5
 
 
-def load_face_detector(score_threshold=0.5, device='cuda'):
+def load_face_detector(score_threshold=FACE_CROP_THRESHOLD, device='cuda'):
     """MediaPipe's front-facing BlazeFace, at its original anchor geometry.
 
     The v2 ear anchors are fitted to ear boxes, so the face detector has to
@@ -197,22 +200,26 @@ def build(args):
     return pd.DataFrame(out_rows)
 
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--csv', default='data/splits/master_relabelled.csv')
     parser.add_argument('--data-root', default=DEFAULT_DATA_ROOT)
     parser.add_argument('--out-images', default='data/face_crops')
     parser.add_argument('--out-csv', default='data/splits/face_crops.csv')
-    parser.add_argument('--expand', type=float, default=1.5,
+    parser.add_argument('--expand', type=float, default=FACE_CROP_EXPAND,
                         help='square crop side, in multiples of the face box')
-    parser.add_argument('--face-threshold', type=float, default=0.5)
-    parser.add_argument('--max-faces', type=int, default=8)
+    parser.add_argument('--face-threshold', type=float,
+                        default=FACE_CROP_THRESHOLD)
+    parser.add_argument('--max-faces', type=int, default=FACE_CROP_MAX_FACES)
     parser.add_argument('--keep-empty-crops', action='store_true',
                         help='write crops that contain no ear, as negatives')
     parser.add_argument('--limit', type=int, default=0)
     parser.add_argument('--device', default='cuda')
-    args = parser.parse_args()
+    return parser
 
+
+def main():
+    args = build_parser().parse_args()
     result = build(args)
     if len(result):
         columns = ['image_path', 'x1', 'y1', 'w', 'h', 'earside', 'source',
