@@ -175,8 +175,9 @@ if __name__ == "__main__":
                 detections.cpu().numpy() if hasattr(detections, 'cpu') else np.asarray(detections)
             )
         detections_np = np.asarray(detections_np)
-        detections_np = filter_by_geometry(detections_np, img.shape[0], img.shape[1])
-        detections_np = filter_duplicate_detections(detections_np)
+        # No extra filtering here: process() already applies whatever
+        # utils.config enables, and filtering again only in the demos made them
+        # show different boxes than the pipeline being measured.
 
         # Create display image
         display_img = img.copy()

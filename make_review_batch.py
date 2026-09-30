@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 from pathlib import Path
 
@@ -136,8 +137,15 @@ def main() -> None:
 
     remaining = total_pending - len(items)
     page = TEMPLATE.read_text(encoding='utf-8')
+    # Key the stored decisions to this exact set of items.
+    fingerprint = hashlib.sha1(
+        ','.join(str(item['id']) for item in items).encode()
+    ).hexdigest()[:10]
+    set_key = f'b{args.batch}_{fingerprint}'
+
     page = (page
             .replace('__ITEMS__', json.dumps(items, separators=(',', ':')))
+            .replace('__SETKEY__', set_key)
             .replace('__BATCH__', str(args.batch))
             .replace('__REMAINING__', str(max(0, remaining))))
     (out_dir / 'index.html').write_text(page, encoding='utf-8')
@@ -148,6 +156,7 @@ def main() -> None:
     else:
         size_mb = sum(f.stat().st_size for f in (out_dir / 'crops').glob('*.jpg')) / 1e6
         print(f'batch {args.batch}: {len(items)} items, {size_mb:.2f} MB of crops -> {out_dir}')
+    print(f'decisions stored under collection reviews_{set_key}')
     print(f'{remaining} distinct ears still pending in category {args.category!r}')
     if duplicates_hidden:
         print(f'{duplicates_hidden} duplicate copies hidden; their decisions are '

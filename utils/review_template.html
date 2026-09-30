@@ -135,6 +135,11 @@
 <script>
 const ITEMS = __ITEMS__;
 const REMAINING = __REMAINING__;
+// Decisions are stored per item SET, not per batch number. Regenerating a
+// batch (say to remove duplicates) changes which items it holds, and a
+// number-only key made the new page read the old batch's decisions, mark its
+// own items done and jump straight to the summary.
+const COLLECTION = 'reviews___SETKEY__';
 const $ = id => document.getElementById(id);
 const decided = new Map();      // id -> decision
 const history = [];
@@ -193,7 +198,7 @@ async function decide(decision){
   render();
   if (!db || !writable) return;
   try {
-    await db.collection('reviews_b__BATCH__').doc(String(it.id)).set({
+    await db.collection(COLLECTION).doc(String(it.id)).set({
       decision, conf: it.conf, image_path: it.image_path,
       x1: it.x1, y1: it.y1, w: it.w, h: it.h, at: new Date().toISOString(),
     });
@@ -212,7 +217,7 @@ function undo(){
   decided.delete(it.id);
   pos = back;
   render();
-  if (db && writable) db.collection('reviews_b__BATCH__').doc(String(it.id)).delete().catch(()=>{});
+  if (db && writable) db.collection(COLLECTION).doc(String(it.id)).delete().catch(()=>{});
 }
 
 $('bYes').addEventListener('click', ()=>decide('accepted'));
@@ -239,7 +244,7 @@ render();
     return;
   }
   try {
-    const snap = await db.collection('reviews_b__BATCH__').get();
+    const snap = await db.collection(COLLECTION).get();
     snap.docs.forEach(d => {
       const body = d.data();
       if (body && body.decision) decided.set(Number(d.id), body.decision);

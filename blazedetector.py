@@ -37,6 +37,10 @@ class BlazeDetector(BlazeBase):
     # Training mode flag
     _training_mode: bool = False
 
+    # Cap on detections returned per image, matching BlazeEarInference so the
+    # two paths cannot disagree on how many boxes survive.
+    max_detections: int = 100
+
 
     def _preprocess(self, x):
         """Converts the image pixels to the range [-1, 1] (MediaPipe convention)."""
@@ -222,6 +226,10 @@ class BlazeDetector(BlazeBase):
         Each detection is a PyTorch tensor consisting of 5 numbers:
             - ymin, xmin, ymax, xmax
             - confidence score
+
+        Keypoint columns are not returned. The regressor still predicts them,
+        but nothing supervises them, so emitting 12 untrained coordinates made
+        this path's output shape differ from every other one for no benefit.
         """
         if isinstance(x, np.ndarray):
             x = torch.from_numpy(x).permute((0, 3, 1, 2))
@@ -245,7 +253,9 @@ class BlazeDetector(BlazeBase):
         filtered_detections = []
         for i in range(len(detections)):
             ears = self._hard_non_max_suppression(detections[i])
-            ears = torch.stack(ears) if len(ears) > 0 else torch.zeros((0, int(self.num_coords)+1))
+            ears = torch.stack(ears) if len(ears) > 0 else torch.zeros((0, 5))
+            if ears.shape[0] > self.max_detections:
+                ears = ears[:self.max_detections]
             filtered_detections.append(ears)
 
         return filtered_detections
@@ -311,7 +321,7 @@ class BlazeDetector(BlazeBase):
         # detections, process them one at a time using a loop.
         output_detections = []
         for i in range(raw_box_tensor.shape[0]):
-            boxes = detection_boxes[i, mask[i]]
+            boxes = detection_boxes[i, mask[i]][:, :4]
             scores = detection_scores[i, mask[i]].unsqueeze(dim=-1)
             output_detections.append(torch.cat((boxes, scores), dim=-1))
 
@@ -351,7 +361,7 @@ class BlazeDetector(BlazeBase):
         output_detections = []
 
         # Sort the detections from highest to lowest score.
-        remaining = torch.argsort(detections[:, self.num_coords], descending=True)
+        remaining = torch.argsort(detections[:, 4], descending=True)
 
         while len(remaining) > 0:
             detection = detections[remaining[0]]

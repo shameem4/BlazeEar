@@ -923,7 +923,9 @@ class BlazeEarTrainer:
 
 def create_model(
     init_weights: str = 'mediapipe',
-    weights_path: str = DEFAULT_WEIGHTS_PATH
+    weights_path: str = DEFAULT_WEIGHTS_PATH,
+    use_batchnorm: bool = True,
+    init_checkpoint: str | None = None
 ) -> BlazeEar:
     """
     Create BlazeEar model with specified weight initialization.
@@ -937,7 +939,23 @@ def create_model(
     Returns:
         BlazeEar model
     """
-    model = BlazeEar()
+    model = BlazeEar(use_batchnorm=use_batchnorm)
+
+    if init_checkpoint:
+        # Warm start from an existing BlazeEar rather than from BlazeFace. The
+        # features are already ear-adapted, which BlazeFace's are not.
+        state = load_checkpoint_state(init_checkpoint)
+        folded_ckpt = checkpoint_is_folded(state)
+        if folded_ckpt != (not use_batchnorm):
+            raise SystemExit(
+                f'{init_checkpoint} is the '
+                f'{"folded" if folded_ckpt else "BatchNorm"} architecture but the '
+                f'model is the {"folded" if not use_batchnorm else "BatchNorm"} one. '
+                'Pass --no-batchnorm to match, or pick another checkpoint.'
+            )
+        model.load_state_dict(state)
+        print(f'Initialized from {init_checkpoint}')
+        return model
 
     if init_weights in ('mediapipe', 'mediapipe-backbone'):
         heads = init_weights == 'mediapipe'
@@ -984,6 +1002,16 @@ def main():
     parser.add_argument('--init-weights', type=str, default='mediapipe-backbone',
                         choices=['scratch', 'mediapipe', 'mediapipe-backbone'],
                         help='Weight initialization: scratch (random) or mediapipe (pretrained)')
+    parser.add_argument('--no-batchnorm', dest='use_batchnorm', action='store_false',
+                        help='Build the MediaPipe-faithful folded backbone with no '
+                             'normalization layers. Trainable BatchNorm renormalises by '
+                             'batch statistics, which discards the activation scales the '
+                             'pretrained weights were calibrated for: measured, the train-'
+                             'mode output differs from the folded model by 97% relative.')
+    parser.set_defaults(use_batchnorm=True)
+    parser.add_argument('--init-checkpoint', type=str, default=None,
+                        help='Warm start from an existing BlazeEar checkpoint instead of '
+                             'BlazeFace weights.')
     parser.add_argument('--weights-path', type=str, default=DEFAULT_WEIGHTS_PATH,
                         help='Path to MediaPipe weights file (used with --init-weights=mediapipe)')
     parser.add_argument('--no-freeze-keypoint-heads', action='store_true',
@@ -1110,7 +1138,9 @@ def main():
     # Create model with requested initialization
     model = create_model(
         init_weights=args.init_weights,
-        weights_path=args.weights_path
+        weights_path=args.weights_path,
+        use_batchnorm=args.use_batchnorm,
+        init_checkpoint=args.init_checkpoint
     )
     compile_fn = getattr(torch, "compile", None)
     if args.use_compile and callable(compile_fn):
