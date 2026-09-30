@@ -148,6 +148,18 @@ EAR_ANCHOR_PRIORS_BIG = (
     (0.748, 1.017),
 )
 
+# Hard-negative mining. The negative budget per image is
+# (mean positives per image) * this ratio, floored at
+# LossFunction.min_negatives_per_image.
+#
+# This was 1.5, which starves the loss: ANCHOR_TOP_K = 3 gives about 2.3
+# positive anchors per image, so 1.5 yielded max(3, 10) = 10 negatives out of
+# the 894 available, and the model settled at 0.34 background accuracy against
+# 0.42 positive. Every run since has passed --hard-negative-ratio 50 by hand;
+# a default that has to be overridden on every invocation to work is just a
+# bug with a workaround, so it is now the measured value.
+HARD_NEGATIVE_RATIO = 50.0
+
 # Anchor assignment
 ANCHOR_TOP_K = 3          # positives per ground-truth box
 ANCHOR_IGNORE_IOU = 0.35  # non-positive anchors above this are neither pos nor neg

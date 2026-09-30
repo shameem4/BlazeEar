@@ -55,6 +55,7 @@ from utils.config import (
     DEFAULT_INPUT_SIZE,
     DEFAULT_LEARNING_RATE,
     DEFAULT_LOG_DIR,
+    HARD_NEGATIVE_RATIO,
     MAX_DETECTIONS,
     NMS_IOU_THRESHOLD,
     DEFAULT_NUM_WORKERS,
@@ -964,7 +965,8 @@ def main():
                         help='Weight for background classification loss')
     parser.add_argument('--positive-classification-weight', type=float, default=70.0,
                         help='Weight for positive classification loss (encourages confident positives)')
-    parser.add_argument('--hard-negative-ratio', type=float, default=1.5,
+    parser.add_argument('--hard-negative-ratio', type=float,
+                        default=HARD_NEGATIVE_RATIO,
                         help='Ratio of negatives to positives in hard mining')
     parser.set_defaults(use_focal_loss=True)
     

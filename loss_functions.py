@@ -11,10 +11,13 @@ Based on vincent1bt/blazeface-tensorflow loss implementation:
 - Loss formula: detection_loss * 150 + background_loss * 35 + positive_loss * 35
 """
 
+from typing import Dict, Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, Optional
+
+from utils.config import HARD_NEGATIVE_RATIO
 
 from utils.metrics import compute_mean_iou_torch, compute_map_torch
 from utils.box_utils import decode_boxes as _decode_boxes_util
@@ -37,7 +40,7 @@ class BlazeEarDetectionLoss(nn.Module):
     
     def __init__(
         self,
-        hard_negative_ratio: float = 1.0,
+        hard_negative_ratio: float = HARD_NEGATIVE_RATIO,
         detection_weight: float = 150.0,
         classification_weight: float = 35.0,
         scale: int = 128,
@@ -50,7 +53,10 @@ class BlazeEarDetectionLoss(nn.Module):
     ):
         """
         Args:
-            hard_negative_ratio: Ratio of negatives to positives for hard mining
+            hard_negative_ratio: Ratio of negatives to positives for hard mining.
+                The budget is derived from the batch's MEAN positive count, so
+                changing the share of all-background images in the data also
+                changes mining strength on the images that do have ears.
             detection_weight: Weight for box regression loss
             classification_weight: Weight for both positive and background loss
             scale: Image scale for decoding (128 for front model)
