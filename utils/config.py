@@ -98,6 +98,11 @@ NEAR_MIN_COVERAGE = 0.8
 # are correspondingly loose, which is the honest conclusion: there is no
 # geometric rule that separates this detector's false positives from real ears.
 # Fix precision in the model, not here.
+#
+# Only BlazeEar.process reads this. The exported ONNX graph cannot express the
+# filter and the browser demo does not implement it, so turning it on makes
+# the Python path and the deployed graph disagree by construction rather than
+# by oversight. Treat it as a diagnostic switch, not a pipeline stage.
 EAR_GEOMETRY_FILTER_ENABLED = False
 EAR_MIN_ASPECT_RATIO = 0.14
 EAR_MAX_ASPECT_RATIO = 2.57

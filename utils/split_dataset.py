@@ -1,8 +1,16 @@
-"""                                                                                                    
-Simple utility to create a train/val split from a CSV annotation file.
+"""Create a train/val split from a CSV annotation file.
 
-Images are kept intact across splits by grouping on the image column
-(`image_path` by default).
+Two things this has to do, both of which cost a real measurement to learn:
+
+Group by photo, not by file. Roboflow re-exports one photo under several
+hashes with photometric alterations, so splitting per file put the same scene
+on both sides -- 121 photos straddled train and val. `split_dataframe_by_images`
+defaults to the content-hash photo index for this.
+
+Stratify by source. Without it a small source can land entirely in train, and
+nothing reports that it is unmeasured. That is how an evaluation slice ordered
+by source produced a metric that moved with the slice size, which is the
+artifact behind the withdrawn "mAP 0.46 declining to 0.25" claim.
 """
 from __future__ import annotations
 
@@ -27,7 +35,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--csv",
         type=str,
-        default="data/raw/blazeface/fixed_images.csv",
+        default="data/splits/master_relabelled.csv",
         help="Path to the full annotation CSV",
     )
     parser.add_argument(
@@ -66,6 +74,13 @@ def parse_args() -> argparse.Namespace:
         default="val.csv",
         help="Filename to use for the validation split inside the output directory",
     )
+    parser.add_argument(
+        "--stratify-column",
+        type=str,
+        default="source",
+        help="Column to stratify on, so a small source still reaches "
+             "validation. Pass an empty string to disable.",
+    )
     return parser.parse_args()
 
 
@@ -91,7 +106,11 @@ def main() -> None:
     )
 
     train_df, val_df = split_dataframe_by_images(
-        df, image_column=args.image_column, val_fraction=args.val_fraction, random_seed=args.seed
+        df,
+        image_column=args.image_column,
+        val_fraction=args.val_fraction,
+        random_seed=args.seed,
+        stratify_column=args.stratify_column or None,
     )
 
     output_dir = Path(args.output_dir)

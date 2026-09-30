@@ -24,7 +24,6 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from utils import model_utils, drawing, metrics, config
-from utils.detection_filters import filter_duplicate_detections, filter_by_geometry
 from utils.data_utils import load_image_boxes_from_csv
 
 

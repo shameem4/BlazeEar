@@ -1,23 +1,24 @@
+"""Run the test suite.
+
+This used to drive `unittest` discovery, which only collects TestCase
+subclasses. Most of this suite is written in pytest style -- plain classes,
+fixtures, parametrised cases -- so discovery silently skipped 12 of the 17
+files and reported `Ran 51 tests ... OK` while pytest ran 336. A runner that
+passes by not looking is worse than no runner, so this one delegates.
+"""
+import subprocess
 import sys
-import unittest
 from pathlib import Path
 
 
 def main() -> int:
-    """Discover and run all unit tests under tests/tests."""
-    script_dir = Path(__file__).parent
-    # Go up two levels: tests -> utils -> repo_root
-    repo_root = script_dir.parent.parent
-    if str(repo_root) not in sys.path:
-        sys.path.insert(0, str(repo_root))
-
-    tests_dir = script_dir / "tests"
-    loader = unittest.TestLoader()
-    suite = loader.discover(start_dir=str(tests_dir), pattern="test_*.py")
-    runner = unittest.TextTestRunner(verbosity=2)
-    result = runner.run(suite)
-    return 0 if result.wasSuccessful() else 1
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    return subprocess.call(
+        [sys.executable, '-m', 'pytest', str(repo_root / 'utils' / 'tests'),
+         *sys.argv[1:]],
+        cwd=str(repo_root),
+    )
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     sys.exit(main())
