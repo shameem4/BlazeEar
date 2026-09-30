@@ -5,4 +5,7 @@ nul
 /utils/__pycache__
 model_weights/yolo11x-pose.pt
 /runs
-data/face_crops_*/
+data/face_crops/
+data/splits/face_crops.csv
+data/splits/crops_train.csv
+data/splits/crops_val.csv

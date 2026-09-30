@@ -399,3 +399,97 @@ bit-identical preprocessing at four aspect ratios.
       the same withdrawn 0.46/0.25 figures and the same BatchNorm claim. The current text claims trainable BatchNorm that is not in the
       model, and reports a mAP that is neither standard mAP nor measured against
       fully human labels.
+
+## P7 — The MediaPipe two-stage pipeline: face, then ear
+
+MediaPipe does not ask one 128 px detector to find a small part in a whole
+frame. It runs a coarse detector on the full frame and a fine model on a crop
+around each hit. BlazeEar was built as the first half of that pattern doing
+both jobs, and P4's measured ceiling says why that hurts: the median ear is
+6.8 x 14.0 px once a full frame is squeezed into the 128 px input, and 65.7%
+of ears are smaller than BlazeFace's smallest anchor.
+
+### The genuine MediaPipe face weights work unchanged as stage one
+
+`model_weights/blazeface.pth` loaded into `BlazeEar(use_batchnorm=False)` with
+the original square anchors (`fixed_anchor_size=True`, NOT the fitted ear
+priors) detects faces on this dataset without retraining. At threshold 0.3 it
+finds a face in 96.4% of the 13482 images, 1.42 faces per image.
+
+The anchor set matters: decoding face predictions through the fitted ear
+priors produces boxes at the wrong scale rather than an error.
+
+### Where the ear sits relative to the face — measured over 500 images
+
+Offsets are in face-box units, from the face centre:
+
+| quantity | p50 | p90 | p95 |
+|---|---|---|---|
+| \|dx\| | 0.51 | 1.95 | 2.73 |
+| \|dy\| | 0.18 | 0.91 | 1.54 |
+
+Ear size relative to the face box: width 0.16, height 0.35. So a square crop
+at 1.5x the face box puts the ear at 0.35/1.5 = 23% of the crop height, which
+is 30 px at the 128 px input against 14 px for the full frame.
+
+### Reach against resolution
+
+Measured over all 13482 images, at face threshold 0.3, counting *distinct*
+ears:
+
+| expansion | crops | distinct ear reach | median ear at 128 px |
+|---|---|---|---|
+| 1.25x | — | 69.7% | 34.2 px |
+| 1.5x | 19185 | 86.8% | 32.5 px |
+| 2.0x | — | 86.5% | 25.6 px |
+
+1.5x is the pick: it reaches as many ears as 2.0x at 1.3x the resolution.
+
+Two earlier figures of mine were wrong and are withdrawn:
+
+- **"81.9% reach" was inflated.** `ears_kept` summed per crop, so every ear
+  landing in two overlapping face crops counted twice. Counting distinct ears
+  gives 79.1% at face threshold 0.5, not 81.9%.
+- **The containment plateau of "77-87%" was an artifact** of matching every
+  ear to the single highest-scoring face. In a crowd the other people's ears
+  are far from that one face. Matching each ear to its nearest detected face,
+  and then to any crop, raises 1.5x containment from 72.7% to 86.8%.
+
+### The face threshold, not the expansion, sets the recall ceiling
+
+An ear whose face is missed never reaches stage two. Over 600 images at 1.5x:
+
+| face threshold | images with no face | distinct ear reach | crops per image |
+|---|---|---|---|
+| 0.5 | 13.2% | 79.1% | 1.12 |
+| 0.3 | 4.2% | 86.1% | 1.45 |
+| 0.2 | 0.8% | 89.5% | 1.87 |
+
+Ear height is flat across all three (~29 px), so lowering the threshold is
+free resolution-wise and buys 10 points of reach for 0.75 extra crops per
+image. 0.3 is the chosen default; 0.2 is available for recall-critical use.
+
+`evaluate_two_stage.py --fallback` closes the remaining gap by running the
+full-frame model on images where no face is found, so the ceiling disappears
+while the crop stage keeps its resolution advantage everywhere else.
+
+### Training without the ear-free crops was a real train/test skew
+
+29.6% of the face crops contain no visible ear. The first crop dataset
+dropped them, so the model would never have trained on a face whose ears are
+hidden while being handed exactly that in roughly a third of crops at
+inference. They are now kept as background images.
+
+The dataloader keys on annotation rows, so an image with no boxes was simply
+absent from the dataset. `NEGATIVE_ANNOTATION_SOURCE` marks a placeholder row
+that keeps the image and contributes neither a box nor an ignore region --
+which is the distinction that matters, since an IGNORE row would stop the
+model being scored on that ground, and a background image is precisely ground
+it must be scored on and stay silent over.
+
+### Scoring
+
+Crop-space mAP flatters the pipeline by hiding its own recall ceiling, so
+`evaluate_two_stage.py` scores end to end in ORIGINAL image pixels against
+every human ear. An ear stranded in an image with no detected face counts as
+a miss rather than leaving the denominator.

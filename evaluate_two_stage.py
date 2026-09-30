@@ -25,6 +25,7 @@ from utils.config import (
     DEFAULT_DATA_ROOT,
     HUMAN_ANNOTATION_SOURCES,
     IGNORE_ANNOTATION_SOURCE,
+    NEGATIVE_ANNOTATION_SOURCE,
 )
 from utils.detection_eval import DetectionEvaluator, pairwise_iou
 
@@ -35,6 +36,8 @@ def load_ear_model(path, score_threshold, device):
     model.load_state_dict(state)
     model.eval().to(device)
     model.min_score_thresh = score_threshold
+    # The fitted ear priors, the same set the dataloader and loss use.
+    model.generate_anchors({})
     return model
 
 
@@ -67,6 +70,11 @@ def detect_single_stage(model, image):
 
 
 def detect_two_stage(face_detector, ear_model, image, expand, max_faces):
+    """Ear detections in original-frame coordinates, via one crop per face.
+
+    Returns the face count as well, because an image with no face is where the
+    pipeline's recall ceiling lives and the caller decides what to do about it.
+    """
     with torch.no_grad():
         faces = face_detector.process(
             cv2.cvtColor(image, cv2.COLOR_BGR2RGB)).cpu().numpy()
@@ -92,9 +100,13 @@ def detect_two_stage(face_detector, ear_model, image, expand, max_faces):
 def ground_truth(rows):
     gt, ignore = [], []
     for row in rows.itertuples(index=False):
+        source = str(row.annotation_source)
+        # A placeholder row marks a background image; it is not a box.
+        if source == NEGATIVE_ANNOTATION_SOURCE:
+            continue
         box = [float(row.y1), float(row.x1),
                float(row.y1) + float(row.h), float(row.x1) + float(row.w)]
-        if str(row.annotation_source) in HUMAN_ANNOTATION_SOURCES:
+        if source in HUMAN_ANNOTATION_SOURCES:
             gt.append(box)
         else:
             ignore.append(box)
@@ -111,6 +123,9 @@ def main():
                         help='ear model trained on full frames')
     parser.add_argument('--crop-checkpoint', default=None,
                         help='ear model trained on face crops')
+    parser.add_argument('--fallback', action='store_true',
+                        help='on images with no detected face, fall back to '
+                             'the full-frame model from --checkpoint')
     parser.add_argument('--expand', type=float, default=1.5)
     parser.add_argument('--face-threshold', type=float, default=0.5)
     parser.add_argument('--max-faces', type=int, default=8)
@@ -139,8 +154,14 @@ def main():
         evaluators['single-stage'] = DetectionEvaluator()
     if crop_model:
         evaluators['two-stage'] = DetectionEvaluator()
+    fallback = single if (args.fallback and single) else None
+    if args.fallback and not single:
+        parser.error('--fallback needs --checkpoint to fall back to')
+    if fallback:
+        evaluators['two-stage+fallback'] = DetectionEvaluator()
     no_face = 0
     images = 0
+    human_ears = 0
 
     for image_path, rows in groups:
         image = cv2.imread(os.path.join(args.data_root, str(image_path)))
@@ -148,6 +169,7 @@ def main():
             continue
         images += 1
         gt, ignore = ground_truth(rows)
+        human_ears += len(gt)
         if single:
             boxes, scores = detect_single_stage(single, image)
             evaluators['single-stage'].add_image(boxes, scores, gt,
@@ -158,10 +180,15 @@ def main():
             no_face += (n_faces == 0)
             evaluators['two-stage'].add_image(boxes, scores, gt,
                                               ignore_boxes=ignore)
+            if fallback:
+                if n_faces == 0:
+                    boxes, scores = detect_single_stage(fallback, image)
+                evaluators['two-stage+fallback'].add_image(
+                    boxes, scores, gt, ignore_boxes=ignore)
         if images % 200 == 0:
             print(f'  {images} images', flush=True)
 
-    print(f'\n{images} images, {int(frame.annotation_source.isin(HUMAN_ANNOTATION_SOURCES).sum())} human ears')
+    print(f'\n{images} images, {human_ears} human ears')
     if crop_model:
         print(f'face detector found nothing in {no_face} '
               f'({100 * no_face / max(images, 1):.1f}%) -- a hard recall ceiling')

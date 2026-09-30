@@ -58,6 +58,13 @@ HUMAN_ANNOTATION_SOURCES = ("GT", "GT+EAR", "GT+REVIEW")
 # ear into a hard negative, which is the failure this dataset already had.
 IGNORE_ANNOTATION_SOURCE = "IGNORE"
 
+# A row that exists only so its image reaches the dataloader, carrying no box
+# and no ignore region: a pure background image the model should learn to stay
+# silent on. Face crops that contain no ear are the case this was added for --
+# without them the crop model never sees a face whose ears are hidden, yet at
+# inference roughly a third of the crops it is handed are exactly that.
+NEGATIVE_ANNOTATION_SOURCE = "NEGATIVE"
+
 # Duplicate suppression (near-duplicate box filtering)
 NEAR_CENTER_DISTANCE_FRAC = 0.55
 NEAR_MIN_AREA_RATIO = 0.35

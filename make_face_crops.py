@@ -25,6 +25,7 @@ from utils.config import (
     DEFAULT_DATA_ROOT,
     HUMAN_ANNOTATION_SOURCES,
     IGNORE_ANNOTATION_SOURCE,
+    NEGATIVE_ANNOTATION_SOURCE,
 )
 
 FACE_WEIGHTS = 'model_weights/blazeface.pth'
@@ -71,7 +72,7 @@ def remap_boxes(rows, window):
     """
     x0, y0, side = window
     out, demoted = [], 0
-    for row in rows:
+    for index, row in enumerate(rows):
         x1, y1, w, h = float(row.x1), float(row.y1), float(row.w), float(row.h)
         source = str(row.annotation_source)
         cx, cy = x1 + w / 2, y1 + h / 2
@@ -91,6 +92,7 @@ def remap_boxes(rows, window):
             'w': int(round(cw)), 'h': int(round(ch)),
             'earside': row.earside, 'source': row.source,
             'annotation_source': source, 'confidence': row.confidence,
+            'source_row': index,
         })
     return out, demoted
 
@@ -105,7 +107,7 @@ def build(args):
     out_rows = []
     stats = {'images': 0, 'no_face': 0, 'faces': 0, 'crops': 0,
              'ears_total': 0, 'ears_kept': 0, 'ears_no_face': 0,
-             'ears_demoted': 0}
+             'ears_demoted': 0, 'empty_crops': 0, 'windows': 0}
     heights = []
 
     os.makedirs(args.out_images, exist_ok=True)
@@ -118,6 +120,7 @@ def build(args):
         human = [r for r in rows
                  if str(r.annotation_source) in HUMAN_ANNOTATION_SOURCES]
         stats['ears_total'] += len(human)
+        reached = set()
 
         with torch.no_grad():
             faces = detector.process(
@@ -131,12 +134,23 @@ def build(args):
         stem = os.path.splitext(os.path.basename(str(image_path)))[0]
         subdir = str(image_path).split('/')[0].replace(' ', '_')
         for index, face in enumerate(faces[:args.max_faces]):
+            stats['windows'] += 1
             window = crop_window(face, args.expand, image.shape)
             mapped, demoted = remap_boxes(rows, window)
             kept = [m for m in mapped
                     if m['annotation_source'] in HUMAN_ANNOTATION_SOURCES]
-            if not kept and not args.keep_empty_crops:
-                continue
+            if not kept:
+                stats['empty_crops'] += 1
+                if not args.keep_empty_crops:
+                    continue
+                # A crop with no ear still has to reach the dataloader, which
+                # keys on rows, so it carries one placeholder row.
+                mapped = mapped + [{
+                    'x1': 0, 'y1': 0, 'w': 0, 'h': 0, 'earside': 'none',
+                    'source': 'face_crop',
+                    'annotation_source': NEGATIVE_ANNOTATION_SOURCE,
+                    'confidence': 0.0, 'source_row': -1,
+                }]
             x0, y0, side = window
             patch = image[y0:y0 + side, x0:x0 + side]
             if patch.size == 0:
@@ -146,16 +160,18 @@ def build(args):
             cv2.imwrite(os.path.join(args.out_images, name), patch,
                         [cv2.IMWRITE_JPEG_QUALITY, 95])
             stats['crops'] += 1
-            stats['ears_kept'] += len(kept)
+            reached.update(m['source_row'] for m in kept)
             for m in kept:
                 heights.append(128.0 * m['h'] / side)
             for m in mapped:
+                m.pop('source_row', None)
                 m['image_path'] = name
                 m['origin_image'] = image_path
                 m['crop_x0'], m['crop_y0'], m['crop_side'] = x0, y0, side
                 out_rows.append(m)
             stats['ears_demoted'] += demoted
 
+        stats['ears_kept'] += len(reached)
         if stats['images'] % 500 == 0:
             print(f"  {stats['images']} images, {stats['crops']} crops",
                   flush=True)
@@ -166,7 +182,11 @@ def build(args):
           f"({100 * stats['no_face'] / max(stats['images'], 1):.1f}%)")
     print(f"crops written     {stats['crops']}")
     print(f"ears in source    {stats['ears_total']}")
-    print(f"ears in crops     {stats['ears_kept']} ({100 * reach:.1f}% reach)")
+    print(f"distinct ears     {stats['ears_kept']} ({100 * reach:.1f}% reach)")
+    print(f"crops per image   {stats['crops'] / max(stats['images'], 1):.2f}")
+    print(f"crops with no ear {stats['empty_crops']} "
+          f"({100 * stats['empty_crops'] / max(stats['windows'], 1):.1f}% "
+          f"of windows) -- negatives unless --keep-empty-crops")
     print(f"  lost, no face   {stats['ears_no_face']}")
     print(f"  clipped to ignore {stats['ears_demoted']}")
     if heights:

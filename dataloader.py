@@ -15,7 +15,12 @@ from torch.utils.data import DataLoader, Dataset
 from utils import augmentation
 from utils.data_utils import split_dataframe_by_images
 from utils.anchor_utils import assign_anchor_targets, generate_anchors_from_priors
-from utils.config import ANCHOR_IGNORE_IOU, ANCHOR_TOP_K, IGNORE_ANNOTATION_SOURCE
+from utils.config import (
+    ANCHOR_IGNORE_IOU,
+    ANCHOR_TOP_K,
+    IGNORE_ANNOTATION_SOURCE,
+    NEGATIVE_ANNOTATION_SOURCE,
+)
 
 
 def collate_detector_fn(batch: List[Dict]) -> Dict[str, torch.Tensor]:
@@ -104,6 +109,11 @@ class CSVDetectorDataset(Dataset):
                 continue
             if "annotation_source" in group.columns:
                 is_ignore = group["annotation_source"] == IGNORE_ANNOTATION_SOURCE
+                # Placeholder rows keep an all-background image in the set
+                # without contributing a box or an ignore region.
+                group = group.loc[
+                    group["annotation_source"] != NEGATIVE_ANNOTATION_SOURCE]
+                is_ignore = is_ignore.reindex(group.index, fill_value=False)
             else:
                 is_ignore = pd.Series(False, index=group.index)
             boxes = group.loc[~is_ignore, ["x1", "y1", "w", "h"]].values.astype(np.float32)
@@ -118,7 +128,10 @@ class CSVDetectorDataset(Dataset):
             self.samples = self.samples[:max_samples]
 
         total_boxes = sum(len(sample["boxes"]) for sample in self.samples)
+        negatives = sum(1 for sample in self.samples if not len(sample["boxes"]))
         print(f"Loaded {len(self.samples)} images ({total_boxes} boxes) from {self.csv_path}")
+        if negatives:
+            print(f"  of which {negatives} carry no box, as background images")
         if missing_files:
             print(f"Skipped {missing_files} entries with missing files in {self.csv_path}")
 
