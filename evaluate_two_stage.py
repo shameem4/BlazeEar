@@ -1,0 +1,179 @@
+"""Score the two-stage face->crop->ear pipeline end to end.
+
+Both stages are scored in ORIGINAL image pixels against every human ear in
+the image, so an ear whose face BlazeFace missed counts as a miss rather than
+quietly leaving the denominator. That is the only comparison that means
+anything: crop-space numbers flatter the pipeline by hiding its own recall
+ceiling.
+
+Pass --checkpoint alone for the single-stage baseline, --crop-checkpoint
+alone for the pipeline, or both to print them side by side through an
+identical detection path.
+"""
+import argparse
+import os
+
+import cv2
+import numpy as np
+import pandas as pd
+import torch
+
+from blazeear import BlazeEar
+from blazebase import checkpoint_is_folded, load_checkpoint_state
+from make_face_crops import crop_window, load_face_detector
+from utils.config import (
+    DEFAULT_DATA_ROOT,
+    HUMAN_ANNOTATION_SOURCES,
+    IGNORE_ANNOTATION_SOURCE,
+)
+from utils.detection_eval import DetectionEvaluator, pairwise_iou
+
+
+def load_ear_model(path, score_threshold, device):
+    state = load_checkpoint_state(path)
+    model = BlazeEar(use_batchnorm=not checkpoint_is_folded(state))
+    model.load_state_dict(state)
+    model.eval().to(device)
+    model.min_score_thresh = score_threshold
+    return model
+
+
+def nms(boxes, scores, iou_threshold=0.3):
+    """Greedy NMS over yxyx boxes, used to merge overlapping face crops."""
+    if not len(scores):
+        return boxes, scores
+    order = torch.argsort(scores, descending=True)
+    boxes, scores = boxes[order], scores[order]
+    keep = []
+    alive = torch.ones(len(scores), dtype=torch.bool)
+    for i in range(len(scores)):
+        if not alive[i]:
+            continue
+        keep.append(i)
+        if i + 1 >= len(scores):
+            break
+        overlap = pairwise_iou(boxes[i:i + 1], boxes[i + 1:])[0]
+        alive[i + 1:] &= overlap < iou_threshold
+    keep = torch.tensor(keep, dtype=torch.long)
+    return boxes[keep], scores[keep]
+
+
+def detect_single_stage(model, image):
+    with torch.no_grad():
+        det = model.process(cv2.cvtColor(image, cv2.COLOR_BGR2RGB)).cpu()
+    if not len(det):
+        return torch.zeros((0, 4)), torch.zeros((0,))
+    return det[:, :4].float(), det[:, 4].float()
+
+
+def detect_two_stage(face_detector, ear_model, image, expand, max_faces):
+    with torch.no_grad():
+        faces = face_detector.process(
+            cv2.cvtColor(image, cv2.COLOR_BGR2RGB)).cpu().numpy()
+    all_boxes, all_scores = [], []
+    for face in faces[:max_faces]:
+        x0, y0, side = crop_window(face, expand, image.shape)
+        patch = image[y0:y0 + side, x0:x0 + side]
+        if patch.size == 0:
+            continue
+        boxes, scores = detect_single_stage(ear_model, patch)
+        if not len(scores):
+            continue
+        # Crop coordinates back to the original frame.
+        boxes = boxes + torch.tensor([y0, x0, y0, x0], dtype=torch.float32)
+        all_boxes.append(boxes)
+        all_scores.append(scores)
+    if not all_boxes:
+        return torch.zeros((0, 4)), torch.zeros((0,)), len(faces)
+    boxes, scores = nms(torch.cat(all_boxes), torch.cat(all_scores))
+    return boxes, scores, len(faces)
+
+
+def ground_truth(rows):
+    gt, ignore = [], []
+    for row in rows.itertuples(index=False):
+        box = [float(row.y1), float(row.x1),
+               float(row.y1) + float(row.h), float(row.x1) + float(row.w)]
+        if str(row.annotation_source) in HUMAN_ANNOTATION_SOURCES:
+            gt.append(box)
+        else:
+            ignore.append(box)
+    to_tensor = lambda b: (torch.tensor(b, dtype=torch.float32) if b
+                           else torch.zeros((0, 4)))
+    return to_tensor(gt), to_tensor(ignore)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--csv', default='data/splits/val_v2.csv')
+    parser.add_argument('--data-root', default=DEFAULT_DATA_ROOT)
+    parser.add_argument('--checkpoint', default=None,
+                        help='ear model trained on full frames')
+    parser.add_argument('--crop-checkpoint', default=None,
+                        help='ear model trained on face crops')
+    parser.add_argument('--expand', type=float, default=1.5)
+    parser.add_argument('--face-threshold', type=float, default=0.5)
+    parser.add_argument('--max-faces', type=int, default=8)
+    parser.add_argument('--score-threshold', type=float, default=0.01)
+    parser.add_argument('--limit', type=int, default=0)
+    parser.add_argument('--device', default='cuda')
+    args = parser.parse_args()
+    if not args.checkpoint and not args.crop_checkpoint:
+        parser.error('pass --checkpoint, --crop-checkpoint, or both')
+
+    frame = pd.read_csv(args.csv)
+    groups = list(frame.groupby('image_path', sort=False))
+    if args.limit:
+        groups = groups[:args.limit]
+
+    single = (load_ear_model(args.checkpoint, args.score_threshold, args.device)
+              if args.checkpoint else None)
+    crop_model = (load_ear_model(args.crop_checkpoint, args.score_threshold,
+                                 args.device)
+                  if args.crop_checkpoint else None)
+    face_detector = (load_face_detector(args.face_threshold, args.device)
+                     if crop_model else None)
+
+    evaluators = {}
+    if single:
+        evaluators['single-stage'] = DetectionEvaluator()
+    if crop_model:
+        evaluators['two-stage'] = DetectionEvaluator()
+    no_face = 0
+    images = 0
+
+    for image_path, rows in groups:
+        image = cv2.imread(os.path.join(args.data_root, str(image_path)))
+        if image is None:
+            continue
+        images += 1
+        gt, ignore = ground_truth(rows)
+        if single:
+            boxes, scores = detect_single_stage(single, image)
+            evaluators['single-stage'].add_image(boxes, scores, gt,
+                                                 ignore_boxes=ignore)
+        if crop_model:
+            boxes, scores, n_faces = detect_two_stage(
+                face_detector, crop_model, image, args.expand, args.max_faces)
+            no_face += (n_faces == 0)
+            evaluators['two-stage'].add_image(boxes, scores, gt,
+                                              ignore_boxes=ignore)
+        if images % 200 == 0:
+            print(f'  {images} images', flush=True)
+
+    print(f'\n{images} images, {int(frame.annotation_source.isin(HUMAN_ANNOTATION_SOURCES).sum())} human ears')
+    if crop_model:
+        print(f'face detector found nothing in {no_face} '
+              f'({100 * no_face / max(images, 1):.1f}%) -- a hard recall ceiling')
+    header = f'{"pipeline":14s} {"mAP@0.5":>9s} {"mAP@[.5:.95]":>13s} {"det IoU":>9s}'
+    print()
+    print(header)
+    print('-' * len(header))
+    for name, evaluator in evaluators.items():
+        m = evaluator.compute()
+        print(f'{name:14s} {m["map_50"]:9.4f} {m["map_50_95"]:13.4f} '
+              f'{m["detection_iou"]:9.4f}')
+
+
+if __name__ == '__main__':
+    main()
