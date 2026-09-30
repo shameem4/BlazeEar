@@ -16,7 +16,8 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
-from dataloader import CSVDetectorDataset, encode_boxes_to_anchors, flatten_anchor_targets
+from dataloader import CSVDetectorDataset
+from utils.anchor_utils import assign_anchor_targets, generate_anchors_from_priors
 from blazeear import BlazeEar
 from blazedetector import BlazeDetector
 from blazebase import generate_reference_anchors
@@ -128,8 +129,8 @@ def aligned_iou(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
 def run_anchor_unit_tests() -> None:
     _log_subheading("Anchor sanity checks")
     box = np.array([[0.4, 0.4, 0.6, 0.6]], dtype=np.float32)
-    small, big = encode_boxes_to_anchors(box, input_size=128)
-    targets = flatten_anchor_targets(small, big)
+    anchors = generate_anchors_from_priors().numpy()
+    targets, _ = assign_anchor_targets(box, anchors)
     positives = np.where(targets[:, 0] == 1)[0]
     if positives.size == 0:
         raise AssertionError("No anchors assigned to centered box")
@@ -143,8 +144,7 @@ def run_anchor_unit_tests() -> None:
         [0.1, 0.1, 0.2, 0.2],
         [0.7, 0.7, 0.85, 0.85]
     ], dtype=np.float32)
-    small, big = encode_boxes_to_anchors(multi_boxes, input_size=128)
-    targets = flatten_anchor_targets(small, big)
+    targets, _ = assign_anchor_targets(multi_boxes, anchors)
     assigned = np.where(targets[:, 0] == 1)[0]
     if assigned.size < 2:
         raise AssertionError("Not all boxes were assigned to anchors")

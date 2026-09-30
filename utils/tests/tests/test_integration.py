@@ -15,8 +15,8 @@ import torch
 
 from dataloader import (
     CSVDetectorDataset,
-    encode_boxes_to_anchors,
-    flatten_anchor_targets,
+    assign_anchor_targets,
+    generate_anchors_from_priors,
     create_dataloader,
 )
 from blazeear import BlazeEar
@@ -125,8 +125,7 @@ class TestDataToLossPipeline(unittest.TestCase):
         gt_box = np.array([[0.3, 0.3, 0.6, 0.6]], dtype=np.float32)  # ymin, xmin, ymax, xmax
         
         # Encode to anchors
-        small_targets, big_targets = encode_boxes_to_anchors(gt_box, input_size=128)
-        anchor_targets = flatten_anchor_targets(small_targets, big_targets)
+        anchor_targets, _ = assign_anchor_targets(gt_box, generate_anchors_from_priors().numpy())
         
         # Find positive anchor
         positive_mask = anchor_targets[:, 0] == 1
@@ -443,8 +442,7 @@ class TestAnchorEncodingIntegration(unittest.TestCase):
             [0.2, 0.2, 0.6, 0.6],    # Large: 40% of image
         ], dtype=np.float32)
         
-        small_targets, big_targets = encode_boxes_to_anchors(boxes, input_size=128)
-        anchor_targets = flatten_anchor_targets(small_targets, big_targets)
+        anchor_targets, _ = assign_anchor_targets(boxes, generate_anchors_from_priors().numpy())
         
         positive_indices = np.where(anchor_targets[:, 0] == 1)[0]
         
@@ -472,8 +470,7 @@ class TestAnchorEncodingIntegration(unittest.TestCase):
             [0.0, 0.45, 0.1, 0.55],  # Left edge center
         ], dtype=np.float32)
         
-        small_targets, big_targets = encode_boxes_to_anchors(edge_boxes, input_size=128)
-        anchor_targets = flatten_anchor_targets(small_targets, big_targets)
+        anchor_targets, _ = assign_anchor_targets(edge_boxes, generate_anchors_from_priors().numpy())
         
         # Should not crash and should produce valid targets
         self.assertEqual(anchor_targets.shape, (896, 5))

@@ -143,7 +143,7 @@ normalise them.
 100 px2 in area, or aspect outside 0.15-2.0. They concentrate in one source,
 *Ear Detection from Full Face image.v1i.coco*, at 6.8%. `finetune_yolov11.py`
 now drops these by default.
-- [ ] **Ignore band in anchor assignment.** Even with complete labels, anchors that
+- [x] **Ignore band in anchor assignment.** Even with complete labels, anchors that
       overlap a GT box but lose assignment are currently trained as background.
       Exclude a middle IoU band from both the positive set and hard-negative mining.
 - [ ] **Stratify the split** by `annotation_source`, and by subject identity
@@ -246,7 +246,7 @@ prediction is, so no clamping is needed and nothing destabilises.
       fallback that never fires. Switch to `BlazeBlock`, load MediaPipe weights via
       `unfold_conv_bn`, and add a test asserting eval-mode output parity with the
       folded model at initialization.
-- [ ] **Variable-size anchors.** *Not a one-line flag.* `encode_boxes_to_anchors`
+- [x] **Variable-size anchors.** *Not a one-line flag.* `encode_boxes_to_anchors`
       ignores the anchor tensor entirely: it hardcodes square anchors of 0.0625 /
       0.125 and emits targets per grid *cell* (`[16,16,5]`), which
       `flatten_anchor_targets` repeats ×2 and ×6 — so all anchors in a cell share one
@@ -256,6 +256,40 @@ prediction is, so no clamping is needed and nothing destabilises.
       the variable-size path.
 - [ ] **Retrain**, once P1–P3 are in. Invalidates every checkpoint in
       `runs/checkpoints/` and all five ONNX files in `docs/`.
+
+### Anchor priors: measured, and the choice revised
+
+Best-IoU between each of 13477 human ground-truth ears and its closest anchor:
+
+| anchors | median best-IoU | >=0.5 | >=0.35 |
+| --- | --- | --- | --- |
+| fixed w=h=1.0 (original) | 0.006 | 0.1% | 0.2% |
+| MediaPipe variable-size | 0.234 | 18.0% | 36.4% |
+| **fitted to ear statistics (now used)** | **0.372** | 23.8% | 54.7% |
+| all 8 fitted priors on the 16x16 grid | 0.441 | 40.5% | 62.1% |
+| 4 fitted priors on a stride-4 grid | 0.530 | 57.6% | 81.8% |
+
+The selected option was "enable the existing variable-size path". Measured, that
+reaches only 18% of ears at IoU 0.5, because MediaPipe's priors are square and
+span 0.148-0.866 while ears here are small and tall (median 0.053 x 0.108) --
+the smallest square prior is wider than a median ear is tall. Priors fitted by
+k-means to the actual box statistics dominate it on every column at identical
+cost and identical exported shape, so those are the default. Switch back with
+`generate_reference_anchors(fixed_anchor_size=False)`.
+
+Two things follow from the table:
+
+1. **IoU-thresholded assignment is not viable on this architecture.** Even with
+   fitted priors, 76% of ears never reach IoU 0.5 with any anchor, so a 0.5
+   threshold would discard them. Assignment is therefore best-match per box
+   (top-k), which supervises every box regardless of prior quality.
+2. **The ceiling is spatial, not prior quality.** Stride 8 spaces anchor centres
+   0.0625 apart for objects 0.053 wide. A stride-4 head roughly doubles the
+   fraction of ears reaching IoU 0.5. That changes the exported graph, so it is
+   not done here, but it is the single highest-value architecture change left.
+
+`ANCHOR_TOP_K` is 3, against the old encoder's effective 12 positives per box
+(one per cell, repeated 2x and 6x). Worth a sweep during the retrain.
 
 ## P5 — Inference parity
 

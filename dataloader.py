@@ -14,7 +14,8 @@ from torch.utils.data import DataLoader, Dataset
 
 from utils import augmentation
 from utils.data_utils import split_dataframe_by_images
-from utils.anchor_utils import encode_boxes_to_anchors, flatten_anchor_targets
+from utils.anchor_utils import assign_anchor_targets, generate_anchors_from_priors
+from utils.config import ANCHOR_IGNORE_IOU, ANCHOR_TOP_K
 
 
 def collate_detector_fn(batch: List[Dict]) -> Dict[str, torch.Tensor]:
@@ -38,8 +39,10 @@ def collate_detector_fn(batch: List[Dict]) -> Dict[str, torch.Tensor]:
             [int(sample.get("sample_index", -1)) for sample in batch], dtype=torch.long
         ),
         "anchor_targets": torch.stack([sample["anchor_targets"] for sample in batch]),
-        "small_anchors": torch.stack([sample["small_anchors"] for sample in batch]),
-        "big_anchors": torch.stack([sample["big_anchors"] for sample in batch]),
+        "anchor_ignore": torch.stack([
+            sample.get("anchor_ignore", torch.zeros(sample["anchor_targets"].shape[0], dtype=torch.bool))
+            for sample in batch
+        ]),
         "gt_boxes": gt_boxes,
         "gt_box_counts": gt_counts
     }
@@ -62,7 +65,9 @@ class CSVDetectorDataset(Dataset):
         target_size: Tuple[int, int] = (128, 128),
         augment: bool = True,
         max_samples: Optional[int] = None,
-        augment_max_side: int = 256
+        augment_max_side: int = 256,
+        anchor_top_k: int = ANCHOR_TOP_K,
+        anchor_ignore_iou: float = ANCHOR_IGNORE_IOU
     ):
         # Avoid oversubscribing CPU threads in DataLoader workers.
         try:
@@ -76,6 +81,11 @@ class CSVDetectorDataset(Dataset):
         self.target_size = target_size
         self.augment = augment
         self.augment_max_side = int(augment_max_side)
+        # One anchor tensor for the whole dataset; assignment is driven by it
+        # rather than by hardcoded per-cell square sizes.
+        self.anchors = generate_anchors_from_priors().numpy()
+        self.anchor_top_k = int(anchor_top_k)
+        self.anchor_ignore_iou = float(anchor_ignore_iou)
 
         df = pd.read_csv(self.csv_path)
         required_cols = {"image_path", "x1", "y1", "w", "h"}
@@ -269,8 +279,12 @@ class CSVDetectorDataset(Dataset):
             image, bboxes = self._augment_image(image, bboxes)
             image, bboxes = self._resize_and_pad(image, bboxes)
 
-            small_anchors, big_anchors = encode_boxes_to_anchors(bboxes, input_size=self.target_size[0])
-            anchor_targets = flatten_anchor_targets(small_anchors, big_anchors)
+            anchor_targets, anchor_ignore = assign_anchor_targets(
+                bboxes,
+                self.anchors,
+                top_k=self.anchor_top_k,
+                ignore_iou=self.anchor_ignore_iou,
+            )
 
             image = np.ascontiguousarray(image)
             image = torch.from_numpy(image).permute(2, 0, 1).float()
@@ -283,8 +297,7 @@ class CSVDetectorDataset(Dataset):
                 # self.samples[idx]["boxes"].
                 "sample_index": idx,
                 "anchor_targets": torch.from_numpy(anchor_targets).float(),
-                "small_anchors": torch.from_numpy(small_anchors).float(),
-                "big_anchors": torch.from_numpy(big_anchors).float(),
+                "anchor_ignore": torch.from_numpy(anchor_ignore),
                 "gt_boxes": torch.from_numpy(bboxes).float()
             }
 

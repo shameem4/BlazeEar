@@ -530,6 +530,9 @@ class BlazeEarTrainer:
             # Move data to device
             images = batch['image'].to(self.device)
             anchor_targets = batch['anchor_targets'].to(self.device)
+            anchor_ignore = batch.get('anchor_ignore')
+            if anchor_ignore is not None:
+                anchor_ignore = anchor_ignore.to(self.device)
             gt_boxes_tensor = batch.get('gt_boxes')
             gt_box_counts = batch.get('gt_box_counts')
             if gt_boxes_tensor is not None and gt_box_counts is not None:
@@ -548,7 +551,8 @@ class BlazeEarTrainer:
                     class_logits,
                     anchor_predictions,
                     anchor_targets,
-                    self.reference_anchors
+                    self.reference_anchors,
+                    anchor_ignore=anchor_ignore
                 )
 
             total_loss = losses["total"]
@@ -668,6 +672,12 @@ class BlazeEarTrainer:
                     break
                 images = batch['image'].to(self.device)
                 anchor_targets = batch['anchor_targets'].to(self.device)
+                anchor_ignore = batch.get('anchor_ignore')
+                if anchor_ignore is not None:
+                    anchor_ignore = anchor_ignore.to(self.device)
+            anchor_ignore = batch.get('anchor_ignore')
+            if anchor_ignore is not None:
+                anchor_ignore = anchor_ignore.to(self.device)
                 gt_boxes_tensor = batch.get('gt_boxes')
                 gt_box_counts = batch.get('gt_box_counts')
                 if gt_boxes_tensor is not None and gt_box_counts is not None:
@@ -683,7 +693,8 @@ class BlazeEarTrainer:
                         class_logits,
                         anchor_predictions,
                         anchor_targets,
-                        self.reference_anchors
+                        self.reference_anchors,
+                        anchor_ignore=anchor_ignore
                     )
                 
                 metrics = self._compute_metrics(

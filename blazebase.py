@@ -7,9 +7,8 @@ from typing import Tuple, List, Optional, Dict
 # Import from consolidated utils modules
 from utils.anchor_utils import (
     generate_reference_anchors,
-    encode_boxes_to_anchors,
-    flatten_anchor_targets,
-    flatten_anchor_targets_torch,
+    assign_anchor_targets,
+    generate_anchors_from_priors,
     anchor_options,
 )
 

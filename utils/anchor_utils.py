@@ -3,8 +3,14 @@ Unified anchor generation and encoding utilities.
 
 Consolidates anchor-related functions from blazebase.py and dataloader.py:
 - Reference anchor generation for BlazeFace (896 anchors)
-- Box-to-anchor encoding for training
-- Anchor target flattening
+- Anchor generation from explicit (width, height) priors
+- Per-anchor target assignment with an ignore band
+
+The previous cell-based encoder (encode_boxes_to_anchors / flatten_anchor_targets)
+has been removed. It emitted one target per grid *cell* and repeated it 2x and 6x,
+so every anchor in a cell necessarily shared a target and per-anchor priors could
+not be expressed; it also hardcoded square anchor sizes instead of reading the
+anchor tensor, so the two could silently disagree. Use assign_anchor_targets.
 
 MediaPipe convention: boxes are [ymin, xmin, ymax, xmax] normalized to [0, 1]
 """
@@ -167,219 +173,6 @@ def generate_reference_anchors(
 # Box-to-Anchor Encoding (for training data preparation)
 # =============================================================================
 
-def _compute_iou_vectorized(
-    box: np.ndarray,
-    anchor_boxes: np.ndarray
-) -> np.ndarray:
-    """
-    Compute IoU between one box and multiple anchor boxes (vectorized).
-    
-    Args:
-        box: [4] single box [ymin, xmin, ymax, xmax]
-        anchor_boxes: [N, 4] anchor boxes [ymin, xmin, ymax, xmax]
-        
-    Returns:
-        [N] IoU values
-    """
-    # Intersection
-    ymin = np.maximum(box[0], anchor_boxes[:, 0])
-    xmin = np.maximum(box[1], anchor_boxes[:, 1])
-    ymax = np.minimum(box[2], anchor_boxes[:, 2])
-    xmax = np.minimum(box[3], anchor_boxes[:, 3])
-    
-    inter_h = np.maximum(0, ymax - ymin)
-    inter_w = np.maximum(0, xmax - xmin)
-    intersection = inter_h * inter_w
-    
-    # Areas
-    box_area = (box[2] - box[0]) * (box[3] - box[1])
-    anchor_area = (anchor_boxes[:, 2] - anchor_boxes[:, 0]) * (anchor_boxes[:, 3] - anchor_boxes[:, 1])
-    union = box_area + anchor_area - intersection
-    
-    return np.where(union > 0, intersection / union, 0.0)
-
-
-def _assign_box_to_grid(
-    box_coords: np.ndarray,
-    encoded_box: np.ndarray,
-    coords: np.ndarray,
-    anchor_size: float,
-    anchor_tensor: np.ndarray,
-    occupied_ious: np.ndarray,
-    input_size: int,
-    min_iou: float,
-    max_matches: int
-) -> None:
-    """
-    Assign a single box to the best available anchor cell (vectorized).
-    
-    Args:
-        box_coords: [ymin, xmin, ymax, xmax] normalized box
-        encoded_box: [class, ymin, xmin, ymax, xmax] encoded target
-        coords: Grid coordinates (16 or 8 values)
-        anchor_size: Size of anchor (0.0625 or 0.125)
-        anchor_tensor: [grid, grid, 5] output tensor to fill
-        occupied_ious: [grid, grid] IoU values for occupied cells
-        input_size: Image size for IoU computation
-    """
-    grid_size = coords.shape[0]
-    
-    # Build all anchor boxes at once using broadcasting
-    # coords is [grid_size], we need [grid_size, grid_size] for y and x
-    y_coords = coords[:, np.newaxis]  # [grid_size, 1]
-    x_coords = coords[np.newaxis, :]  # [1, grid_size]
-    
-    # Broadcast to [grid_size, grid_size, 4]
-    anchor_ymin = (y_coords - anchor_size) * input_size
-    anchor_xmin = (x_coords - anchor_size) * input_size
-    anchor_ymax = (y_coords + anchor_size) * input_size
-    anchor_xmax = (x_coords + anchor_size) * input_size
-    
-    anchor_boxes = np.stack([
-        np.broadcast_to(anchor_ymin, (grid_size, grid_size)),
-        np.broadcast_to(anchor_xmin, (grid_size, grid_size)),
-        np.broadcast_to(anchor_ymax, (grid_size, grid_size)),
-        np.broadcast_to(anchor_xmax, (grid_size, grid_size))
-    ], axis=-1).reshape(-1, 4)  # [grid_size*grid_size, 4]
-    
-    # Compute all IoUs at once
-    box_scaled = box_coords * input_size
-    iou_flat = _compute_iou_vectorized(box_scaled, anchor_boxes)
-    iou_grid = iou_flat.reshape(grid_size, grid_size)
-
-    flat_indices = np.argsort(iou_grid.ravel())[::-1]
-
-    assigned = 0
-    min_iou = max(0.0, float(min_iou))
-    max_matches = max(1, int(max_matches))
-
-    for flat_idx in flat_indices:
-        iou = iou_grid.ravel()[flat_idx]
-        if iou <= 0:
-            break
-        if assigned > 0 and iou < min_iou:
-            break
-        y_idx, x_idx = divmod(flat_idx, grid_size)
-        if occupied_ious[y_idx, x_idx] == 0 or iou > occupied_ious[y_idx, x_idx]:
-            anchor_tensor[y_idx, x_idx] = encoded_box
-            occupied_ious[y_idx, x_idx] = iou
-            assigned += 1
-            if assigned >= max_matches:
-                return
-
-    if assigned == 0 and flat_indices.size > 0:
-        best_flat = flat_indices[0]
-        best_iou = iou_grid.ravel()[best_flat]
-        if best_iou > 0:
-            y_idx, x_idx = divmod(best_flat, grid_size)
-            if best_iou > occupied_ious[y_idx, x_idx]:
-                anchor_tensor[y_idx, x_idx] = encoded_box
-                occupied_ious[y_idx, x_idx] = best_iou
-
-
-def encode_boxes_to_anchors(
-    boxes: np.ndarray,
-    input_size: int = 128,
-    min_iou: float = 0.2,
-    max_small_matches: int = 3,
-    max_big_matches: int = 2
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Encode normalized boxes into MediaPipe anchor grids.
-    
-    Boxes should be in [ymin, xmin, ymax, xmax] format, normalized to [0, 1].
-    
-    Args:
-        boxes: [N, 4] array of boxes in [ymin, xmin, ymax, xmax] format
-        input_size: Input image size (default 128)
-        
-    Returns:
-        small_anchors: [16, 16, 5] targets for 16x16 grid
-        big_anchors: [8, 8, 5] targets for 8x8 grid
-    """
-    small_size = 0.0625
-    big_size = 0.125
-    small_coords = np.linspace(0.03125, 0.96875, 16, dtype=np.float32)
-    big_coords = np.linspace(0.0625, 0.9375, 8, dtype=np.float32)
-
-    small_anchor = np.zeros((16, 16, 5), dtype=np.float32)
-    big_anchor = np.zeros((8, 8, 5), dtype=np.float32)
-    small_ious = np.zeros((16, 16), dtype=np.float32)
-    big_ious = np.zeros((8, 8), dtype=np.float32)
-
-    for box in boxes:
-        # box format: [ymin, xmin, ymax, xmax]
-        encoded = np.array([1.0, box[0], box[1], box[2], box[3]], dtype=np.float32)
-        _assign_box_to_grid(
-            box,
-            encoded,
-            small_coords,
-            small_size,
-            small_anchor,
-            small_ious,
-            input_size,
-            min_iou,
-            max_small_matches
-        )
-        _assign_box_to_grid(
-            box,
-            encoded,
-            big_coords,
-            big_size,
-            big_anchor,
-            big_ious,
-            input_size,
-            min_iou,
-            max_big_matches
-        )
-
-    return small_anchor, big_anchor
-
-
-def flatten_anchor_targets(
-    small_anchors: np.ndarray,
-    big_anchors: np.ndarray
-) -> np.ndarray:
-    """
-    Flatten anchor targets to (896, 5) layout.
-    
-    Args:
-        small_anchors: [16, 16, 5] from 16x16 grid
-        big_anchors: [8, 8, 5] from 8x8 grid
-        
-    Returns:
-        [896, 5] array with repeated anchors per cell
-    """
-    # Small: 16x16 grid with 2 anchors per cell -> 512
-    small_flat = np.repeat(small_anchors.reshape(-1, 5), 2, axis=0)
-    # Big: 8x8 grid with 6 anchors per cell -> 384
-    big_flat = np.repeat(big_anchors.reshape(-1, 5), 6, axis=0)
-    return np.concatenate([small_flat, big_flat], axis=0)
-
-
-def flatten_anchor_targets_torch(
-    small_targets: np.ndarray,
-    big_targets: np.ndarray
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    """
-    Flatten anchor targets to match model output shape and return as tensors.
-    
-    Args:
-        small_targets: [16, 16, 5] from 16x16 grid
-        big_targets: [8, 8, 5] from 8x8 grid
-        
-    Returns:
-        classes: [896] tensor of class labels (0 or 1)
-        coords: [896, 4] tensor of box coordinates [ymin, xmin, ymax, xmax]
-    """
-    all_targets = flatten_anchor_targets(small_targets, big_targets)
-    
-    classes = torch.from_numpy(all_targets[:, 0])  # [896]
-    coords = torch.from_numpy(all_targets[:, 1:])  # [896, 4]
-    
-    return classes, coords
-
-
 # =============================================================================
 # Anchor Options (MediaPipe configuration)
 # =============================================================================
@@ -398,3 +191,140 @@ anchor_options = {
     "interpolated_scale_aspect_ratio": 1.0,
     "fixed_anchor_size": True,
 }
+
+
+# =============================================================================
+# Anchor generation from explicit priors
+# =============================================================================
+
+def generate_anchors_from_priors(
+    small_priors=None,
+    big_priors=None,
+    small_grid: int = 16,
+    big_grid: int = 8
+) -> torch.Tensor:
+    """
+    Build the 896-anchor tensor from explicit (width, height) priors.
+
+    Keeps the MediaPipe layout -- `small_grid**2 * len(small_priors)` anchors
+    followed by `big_grid**2 * len(big_priors)` -- so the exported graph shape
+    and the decode convention are unchanged; only the w/h priors differ.
+
+    Returns:
+        [A, 4] tensor of (x_center, y_center, width, height), normalized.
+    """
+    from utils.config import EAR_ANCHOR_PRIORS_SMALL, EAR_ANCHOR_PRIORS_BIG
+
+    small_priors = EAR_ANCHOR_PRIORS_SMALL if small_priors is None else small_priors
+    big_priors = EAR_ANCHOR_PRIORS_BIG if big_priors is None else big_priors
+
+    step_small = 1.0 / (2 * small_grid)
+    step_big = 1.0 / (2 * big_grid)
+    small_centres = np.linspace(step_small, 1.0 - step_small, small_grid)
+    big_centres = np.linspace(step_big, 1.0 - step_big, big_grid)
+
+    anchors = []
+    for centres, priors in ((small_centres, small_priors), (big_centres, big_priors)):
+        for y in centres:
+            for x in centres:
+                for w, h in priors:
+                    anchors.append([float(x), float(y), float(w), float(h)])
+
+    return torch.tensor(anchors, dtype=torch.float32)
+
+
+def anchors_to_corners(anchors: np.ndarray) -> np.ndarray:
+    """(x, y, w, h) -> [ymin, xmin, ymax, xmax], matching the box convention."""
+    x, y, w, h = anchors[:, 0], anchors[:, 1], anchors[:, 2], anchors[:, 3]
+    return np.stack([y - h / 2, x - w / 2, y + h / 2, x + w / 2], axis=1)
+
+
+def _iou_matrix(boxes: np.ndarray, anchor_corners: np.ndarray) -> np.ndarray:
+    """IoU between [G, 4] boxes and [A, 4] anchors, both [ymin, xmin, ymax, xmax]."""
+    if len(boxes) == 0:
+        return np.zeros((0, len(anchor_corners)), dtype=np.float32)
+
+    ymin = np.maximum(boxes[:, None, 0], anchor_corners[None, :, 0])
+    xmin = np.maximum(boxes[:, None, 1], anchor_corners[None, :, 1])
+    ymax = np.minimum(boxes[:, None, 2], anchor_corners[None, :, 2])
+    xmax = np.minimum(boxes[:, None, 3], anchor_corners[None, :, 3])
+
+    inter = np.clip(ymax - ymin, 0, None) * np.clip(xmax - xmin, 0, None)
+    area_b = ((boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1]))[:, None]
+    area_a = ((anchor_corners[:, 2] - anchor_corners[:, 0])
+              * (anchor_corners[:, 3] - anchor_corners[:, 1]))[None, :]
+    union = np.clip(area_b + area_a - inter, 1e-12, None)
+    return (inter / union).astype(np.float32)
+
+
+def assign_anchor_targets(
+    boxes: np.ndarray,
+    anchors: np.ndarray,
+    top_k: int = 3,
+    ignore_iou: float = 0.35
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Assign ground-truth boxes to anchors, best-match first, with an ignore band.
+
+    Assignment is per anchor and driven by the actual anchor tensor, rather than
+    per grid *cell* with hardcoded square sizes. The previous encoder produced a
+    [16,16,5] / [8,8,5] target that was then repeated 2x and 6x, so every anchor
+    in a cell necessarily shared one target and per-anchor priors could not be
+    expressed at all.
+
+    Each box claims its `top_k` highest-IoU anchors, so every box gets
+    supervision regardless of how poorly the priors fit -- necessary here, since
+    only 23.8% of ears reach IoU 0.5 with even fitted priors on this grid.
+    Conflicts go to the box with the higher IoU.
+
+    Anchors that are not positive but overlap some box by at least `ignore_iou`
+    are marked ignore: excluded from the positive set *and* from hard negative
+    mining. Without this, an anchor overlapping an ear at IoU 0.9 that merely
+    lost the top-k race is trained as background, and hard negative mining
+    specifically seeks out such high-scoring "negatives".
+
+    Args:
+        boxes: [G, 4] ground truth, [ymin, xmin, ymax, xmax] normalized
+        anchors: [A, 4] anchors as (x_center, y_center, w, h) normalized
+        top_k: positives per ground-truth box
+        ignore_iou: overlap above which a non-positive anchor is ignored
+
+    Returns:
+        targets: [A, 5] of (class, ymin, xmin, ymax, xmax)
+        ignore:  [A] bool, True where the anchor is neither positive nor negative
+    """
+    num_anchors = len(anchors)
+    targets = np.zeros((num_anchors, 5), dtype=np.float32)
+    ignore = np.zeros(num_anchors, dtype=bool)
+
+    boxes = np.asarray(boxes, dtype=np.float32).reshape(-1, 4)
+    if len(boxes) == 0:
+        return targets, ignore
+
+    valid = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
+    boxes = boxes[valid]
+    if len(boxes) == 0:
+        return targets, ignore
+
+    iou = _iou_matrix(boxes, anchors_to_corners(np.asarray(anchors, dtype=np.float32)))
+
+    k = int(min(max(1, top_k), num_anchors))
+    candidate_anchors = np.argpartition(-iou, k - 1, axis=1)[:, :k]      # [G, k]
+    candidate_gt = np.repeat(np.arange(len(boxes)), k)
+    candidate_anchors = candidate_anchors.reshape(-1)
+    candidate_iou = iou[candidate_gt, candidate_anchors]
+
+    # Strongest claim wins each anchor.
+    assigned_iou = np.full(num_anchors, -1.0, dtype=np.float32)
+    for order in np.argsort(-candidate_iou):
+        a = candidate_anchors[order]
+        score = candidate_iou[order]
+        if score <= 0.0 or score <= assigned_iou[a]:
+            continue
+        assigned_iou[a] = score
+        targets[a, 0] = 1.0
+        targets[a, 1:] = boxes[candidate_gt[order]]
+
+    positive = targets[:, 0] > 0.5
+    ignore = (iou.max(axis=0) >= ignore_iou) & ~positive
+    return targets, ignore

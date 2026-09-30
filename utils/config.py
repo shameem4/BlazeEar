@@ -62,3 +62,39 @@ EAR_MAX_ASPECT_RATIO = 1.4   # nearly square to slightly wider than tall
 # Min/max size as fraction of image max dimension
 EAR_MIN_SIZE_FRAC = 0.03     # reject tiny spurious detections
 EAR_MAX_SIZE_FRAC = 0.55     # reject implausibly large boxes
+
+# Anchor priors, as (width, height) normalized to the model input.
+#
+# The MediaPipe defaults are square and span 0.148-0.866, sized for faces. Ears
+# are small and tall: median 0.053 wide by 0.108 high in this dataset. Measured
+# best-IoU between a ground-truth ear and its closest anchor, over 13477 human
+# boxes in train.csv:
+#
+#   fixed (w=h=1.0, the original)   median 0.006   0.1% reach IoU 0.5
+#   MediaPipe variable-size         median 0.234  18.0% reach IoU 0.5
+#   the fitted priors below         median 0.372  23.8% reach IoU 0.5
+#
+# Even fitted priors leave most ears under IoU 0.5, because the binding
+# constraint is spatial: stride 8 spaces anchor centres 0.0625 apart for objects
+# 0.053 wide. That is why assignment is best-match per box rather than
+# IoU-thresholded. A stride-4 head would raise the ceiling substantially
+# (median 0.530, 57.6% at IoU 0.5) but changes the exported graph.
+#
+# Produced by k-means (k=8) over human-verified box (w, h), ordered by area.
+# The two smallest go on the 16x16 grid, the rest on the 8x8 grid.
+EAR_ANCHOR_PRIORS_SMALL = (
+    (0.027, 0.044),
+    (0.049, 0.095),
+)
+EAR_ANCHOR_PRIORS_BIG = (
+    (0.069, 0.161),
+    (0.136, 0.156),
+    (0.114, 0.245),
+    (0.228, 0.395),
+    (0.507, 0.696),
+    (0.748, 1.017),
+)
+
+# Anchor assignment
+ANCHOR_TOP_K = 3          # positives per ground-truth box
+ANCHOR_IGNORE_IOU = 0.35  # non-positive anchors above this are neither pos nor neg

@@ -7,8 +7,8 @@ import torch
 
 from dataloader import (
     CSVDetectorDataset,
-    encode_boxes_to_anchors,
-    flatten_anchor_targets,
+    assign_anchor_targets,
+    generate_anchors_from_priors,
 )
 from loss_functions import BlazeEarDetectionLoss
 from blazebase import generate_reference_anchors
@@ -75,12 +75,35 @@ class TestPipeline(unittest.TestCase):
                 resized_boxes, expected, atol=1e-6, err_msg=f"Resize mismatch for {name}"
             )
 
-    def test_anchor_encoding_positive_indices_match_expected(self):
+    def test_anchor_assignment_invariants(self):
+        """Properties that must hold regardless of the anchor priors."""
+        anchors = generate_anchors_from_priors().numpy()
         for sample in self.dataset.samples:
             image = self.dataset._load_image(sample["image_path"])
             norm_boxes = _compute_normalized_boxes(image, sample["boxes"])
-            small, big = encode_boxes_to_anchors(norm_boxes, input_size=self.dataset.target_size[0])
-            anchor_targets = flatten_anchor_targets(small, big)
+            targets, ignore = assign_anchor_targets(norm_boxes, anchors, top_k=3)
+            positives = targets[:, 0] > 0.5
+
+            # Every box is supervised, and nothing is both positive and ignored.
+            self.assertEqual(int(positives.sum()), 3 * len(norm_boxes))
+            self.assertFalse(bool((positives & ignore).any()))
+            # Each positive target is one of the input boxes.
+            for row in targets[positives]:
+                self.assertTrue(
+                    any(np.allclose(row[1:], b, atol=1e-6) for b in norm_boxes)
+                )
+
+    def test_anchor_assignment_is_unchanged(self):
+        """
+        Change detector, not a correctness oracle: the expected indices were
+        generated from this same implementation, so this catches unintended
+        drift in assignment, not a wrong assignment. Correctness lives in
+        test_anchor_assignment.py and in test_anchor_assignment_invariants.
+        """
+        for sample in self.dataset.samples:
+            image = self.dataset._load_image(sample["image_path"])
+            norm_boxes = _compute_normalized_boxes(image, sample["boxes"])
+            anchor_targets, _ = assign_anchor_targets(norm_boxes, generate_anchors_from_priors().numpy())
             positives = np.where(anchor_targets[:, 0] == 1)[0].tolist()
             name = Path(sample["image_path"]).stem
             self.assertEqual(
@@ -93,8 +116,7 @@ class TestPipeline(unittest.TestCase):
         for sample in self.dataset.samples:
             image = self.dataset._load_image(sample["image_path"])
             norm_boxes = _compute_normalized_boxes(image, sample["boxes"])
-            small, big = encode_boxes_to_anchors(norm_boxes, input_size=self.dataset.target_size[0])
-            anchor_targets = flatten_anchor_targets(small, big)
+            anchor_targets, _ = assign_anchor_targets(norm_boxes, generate_anchors_from_priors().numpy())
             predictions = torch.zeros((self.reference_anchors.shape[0], 4), dtype=torch.float32)
             for anchor_idx, target_row in enumerate(anchor_targets):
                 if target_row[0] != 1:

@@ -174,7 +174,8 @@ class BlazeEarDetectionLoss(nn.Module):
         class_logits: torch.Tensor,
         anchor_predictions: torch.Tensor,
         anchor_targets: torch.Tensor,
-        reference_anchors: torch.Tensor
+        reference_anchors: torch.Tensor,
+        anchor_ignore: Optional[torch.Tensor] = None
     ) -> Dict[str, torch.Tensor]:
         """
         Compute BlazeEar detection loss.
@@ -189,6 +190,11 @@ class BlazeEarDetectionLoss(nn.Module):
             anchor_predictions: [B, 896, 4] predicted box offsets [dx, dy, w, h]
             anchor_targets: [B, 896, 5] targets [class, ymin, xmin, ymax, xmax]
             reference_anchors: [896, 2] anchor centers [x, y]
+            anchor_ignore: [B, 896] bool. Anchors that overlap a box but did not
+                win assignment. They are neither positives nor negatives, and are
+                excluded from hard negative mining in particular: mining selects
+                the *highest-scoring* backgrounds, which is exactly an anchor
+                sitting on a real ear that lost the top-k race.
 
         Returns:
             Dict with 'total', 'detection', 'background', 'positive' losses
@@ -219,9 +225,18 @@ class BlazeEarDetectionLoss(nn.Module):
         # logit so they cannot be selected as negatives. A fixed sentinel such
         # as -99 is not safe in logit space, where a confident negative can go
         # lower than that.
+        exclude_from_negatives = faces_mask_bool
+        if anchor_ignore is not None:
+            exclude_from_negatives = exclude_from_negatives | anchor_ignore.bool()
+
         predicted_classes_scores = class_pred_squeezed.masked_fill(
-            faces_mask_bool, torch.finfo(class_pred_squeezed.dtype).min
+            exclude_from_negatives, torch.finfo(class_pred_squeezed.dtype).min
         )  # [B, 896]
+
+        # Do not mine more negatives than actually exist, or the pool refills
+        # with the masked-out sentinel values.
+        available_negatives = int((~exclude_from_negatives).sum(dim=1).min().item())
+        background_num = min(background_num, max(available_negatives, 0))
         
         # Sort and select top-k background predictions (hard negatives)
         sorted_scores, _ = torch.sort(predicted_classes_scores, dim=-1, descending=True)
@@ -276,7 +291,11 @@ class BlazeEarDetectionLoss(nn.Module):
             'background': background_loss,
             'positive': positive_loss,
             'num_positives': faces_num,
-            'num_negatives': torch.tensor(background_num * B, device=class_logits.device)
+            'num_negatives': torch.tensor(background_num * B, device=class_logits.device),
+            'num_ignored': (
+                anchor_ignore.float().sum() if anchor_ignore is not None
+                else torch.tensor(0.0, device=class_logits.device)
+            )
         }
 
 
