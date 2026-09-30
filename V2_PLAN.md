@@ -544,3 +544,36 @@ So the answer to "are we doing something wrong": yes, but not in the weights.
 MediaPipe's BlazeFace weights and architecture were never the problem. Asking
 one 128 px detector to find a 14 px part in a whole frame was. Restoring the
 two-stage pattern MediaPipe actually uses recovers most of the gap.
+
+## Comparing against the original, honestly
+
+The splits changed during v2, so "run both on val" is not a fair test:
+**85.3% of the current validation images are inside the ORIGINAL model's
+training set.** Scoring the original there measures memorisation.
+
+`make_common_heldout.py` builds the set of photos that no checkpoint in this
+history trained on, using content-hash identity rather than filenames --
+because the original split was per file, and one photo appears under several
+Roboflow hashes. That leaves **279 images, 355 human ears, 12 sources**, all
+scored through one detection path:
+
+| model | mAP@0.5 | mAP@[.5:.95] | detection IoU |
+|---|---|---|---|
+| original (pre-v2, legacy anchors) | 0.1790 | 0.0421 | 0.6189 |
+| v2 single-stage | 0.3142 | 0.0938 | 0.6558 |
+| **v2 two-stage (face -> crop -> ear)** | **0.5760** | **0.2444** | **0.7234** |
+
+Original to v2 single-stage is +76%; single to two-stage a further +83%.
+End to end that is **3.2x on mAP@0.5 and 5.8x on mAP@[.5:.95]**.
+
+Three caveats, so this is not read for more than it says:
+
+- 279 images is a small set. Treat a few points as noise; the 3x is not.
+- The gain is not only architectural. v2 also relabelled the data, and the
+  evaluation ground truth is the relabelled set, which the original model
+  never trained against. Better labels are part of this number and cannot be
+  separated from it without retraining the original design on the new labels.
+- The published "0.46 peak, declining to 0.25" is withdrawn regardless: the
+  same fixed checkpoint reads 0.5508 / 0.4286 / 0.2497 / 0.2801 as the
+  validation prefix grows through 96 / 192 / 480 / 2022 images. It was an
+  artifact of an unshuffled prefix ordered by annotation source.

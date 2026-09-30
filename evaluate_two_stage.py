@@ -20,6 +20,7 @@ import torch
 from blazeear import BlazeEar
 from blazebase import checkpoint_is_folded, load_checkpoint_state
 from make_face_crops import crop_window, load_face_detector
+from utils.anchor_utils import generate_reference_anchors
 from utils.config import (
     DEFAULT_DATA_ROOT,
     FACE_CROP_EXPAND,
@@ -32,14 +33,24 @@ from utils.detection_eval import DetectionEvaluator
 from utils.nms import suppress_overlapping
 
 
-def load_ear_model(path, score_threshold, device):
+def load_ear_model(path, score_threshold, device, legacy_anchors=False):
+    """Build whichever architecture the checkpoint was written from.
+
+    `legacy_anchors` decodes with the original w=h=1.0 square anchors. A
+    pre-v2 checkpoint was trained against those, so decoding it through the
+    fitted ear priors produces boxes at the wrong scale rather than an error.
+    """
     state = load_checkpoint_state(path)
     model = BlazeEar(use_batchnorm=not checkpoint_is_folded(state))
     model.load_state_dict(state)
     model.eval().to(device)
     model.min_score_thresh = score_threshold
-    # The fitted ear priors, the same set the dataloader and loss use.
-    model.generate_anchors({})
+    if legacy_anchors:
+        anchors, _, _ = generate_reference_anchors(fixed_anchor_size=True)
+        model.anchors = anchors.to(device)
+    else:
+        # The fitted ear priors, the same set the dataloader and loss use.
+        model.generate_anchors({})
     return model
 
 
@@ -107,6 +118,10 @@ def build_parser():
                         help='ear model trained on full frames')
     parser.add_argument('--crop-checkpoint', default=None,
                         help='ear model trained on face crops')
+    parser.add_argument('--legacy-anchors', action='store_true',
+                        help='decode --checkpoint with the original w=h=1.0 '
+                             'anchors, for checkpoints from before the fitted '
+                             'ear priors')
     parser.add_argument('--fallback', action='store_true',
                         help='on images with no detected face, fall back to '
                              'the full-frame model from --checkpoint')
@@ -131,7 +146,8 @@ def main():
     if args.limit:
         groups = groups[:args.limit]
 
-    single = (load_ear_model(args.checkpoint, args.score_threshold, args.device)
+    single = (load_ear_model(args.checkpoint, args.score_threshold, args.device,
+                             legacy_anchors=args.legacy_anchors)
               if args.checkpoint else None)
     crop_model = (load_ear_model(args.crop_checkpoint, args.score_threshold,
                                  args.device)
