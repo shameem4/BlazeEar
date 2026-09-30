@@ -45,23 +45,54 @@ def load_image_boxes_from_csv(csv_path: str | Path) -> tuple[list[str], dict[str
     return image_paths, dict(grouped)
 
 
+def base_source(source: str) -> str:
+    """Strip the pseudo-label suffixes to get the originating dataset.
+
+    `source` carries both the dataset and how a row was annotated, so
+    "Human Ear.v3i.coco" and "Human Ear.v3i.coco_pose_aug" are the same images
+    with extra rows, not different data. Stratifying on the raw column would
+    treat them as separate strata.
+    """
+    for suffix in ("_pose_aug", "_yolo11_aug"):
+        source = source.replace(suffix, "")
+    return source
+
+
 def split_dataframe_by_images(
     df: pd.DataFrame,
     image_column: str = "image_path",
     val_fraction: float = 0.2,
     random_seed: int = 42,
+    stratify_column: str | None = None,
+    group_keys: Dict[str, str] | None = None,
+    shuffle_rows: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Split an annotation DataFrame into train/val sets grouped by image.
+    Split an annotation DataFrame into train/val, grouped so no image straddles.
 
     Args:
         df: DataFrame containing at least `image_column`
-        image_column: Column used to identify unique images
-        val_fraction: Fraction of images to allocate to validation
-        random_seed: RNG seed for shuffling
+        image_column: Column identifying unique images
+        val_fraction: Fraction of image groups to allocate to validation
+        random_seed: RNG seed
+        stratify_column: Split each value of this column separately, so every
+            source is represented in both halves in proportion. Without it, a
+            small source can land almost entirely on one side. Pass "source"
+            and it is reduced with `base_source` first.
+        group_keys: Optional image -> group id. Images sharing a group id always
+            land on the same side; use it to keep near-duplicates together,
+            which a per-image split would otherwise separate into both halves.
+        shuffle_rows: Shuffle output row order. The previous implementation
+            preserved the input order, which is source-by-source, so any prefix
+            of val.csv was a single dataset -- that is how a 192-image
+            evaluation slice ended up sampling one source.
 
     Returns:
         (train_df, val_df) with indices reset
+
+    Note: subject identity is not recoverable here. Every source is a Roboflow
+    export with hashed filenames, so the same person across several photos
+    cannot be detected, and train/val may share subjects.
     """
     if image_column not in df.columns:
         raise ValueError(f"Column '{image_column}' not found in DataFrame")
@@ -70,19 +101,42 @@ def split_dataframe_by_images(
     if not image_ids:
         raise ValueError("No images found to split.")
 
+    group_of = {img: (group_keys or {}).get(img, img) for img in image_ids}
+
+    strata: DefaultDict[str, list] = defaultdict(list)
+    if stratify_column and stratify_column in df.columns:
+        values = df.groupby(image_column)[stratify_column].first()
+        if stratify_column == "source":
+            values = values.map(base_source)
+        stratum_of_group: Dict[str, str] = {}
+        for img in image_ids:
+            stratum_of_group.setdefault(group_of[img], str(values.get(img, "")))
+        for group, stratum in stratum_of_group.items():
+            strata[stratum].append(group)
+    else:
+        strata[""] = list(dict.fromkeys(group_of[img] for img in image_ids))
+
     rng = np.random.default_rng(random_seed)
-    rng.shuffle(image_ids)
-
     val_fraction = float(np.clip(val_fraction, 0.0, 1.0))
-    n_val = int(round(len(image_ids) * val_fraction))
-    if len(image_ids) > 1:
-        if n_val == 0:
-            n_val = 1
-        elif n_val >= len(image_ids):
-            n_val = len(image_ids) - 1
+    val_groups: set = set()
 
-    val_ids = set(image_ids[:n_val])
-    val_mask = df[image_column].isin(val_ids)
-    val_df = df[val_mask].copy().reset_index(drop=True)
-    train_df = df[~val_mask].copy().reset_index(drop=True)
-    return cast(pd.DataFrame, train_df), cast(pd.DataFrame, val_df)
+    for stratum in sorted(strata):
+        groups = sorted(strata[stratum])
+        rng.shuffle(groups)
+        n_val = int(round(len(groups) * val_fraction))
+        if len(groups) > 1:
+            n_val = max(1, min(n_val, len(groups) - 1))
+        val_groups.update(groups[:n_val])
+
+    val_mask = df[image_column].map(lambda img: group_of.get(img, img) in val_groups)
+    val_df = df[val_mask].copy()
+    train_df = df[~val_mask].copy()
+
+    if shuffle_rows:
+        val_df = val_df.sample(frac=1.0, random_state=random_seed)
+        train_df = train_df.sample(frac=1.0, random_state=random_seed)
+
+    return (
+        cast(pd.DataFrame, train_df.reset_index(drop=True)),
+        cast(pd.DataFrame, val_df.reset_index(drop=True)),
+    )

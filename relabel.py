@@ -230,6 +230,11 @@ def cmd_apply(args: argparse.Namespace) -> None:
     queue = pd.read_csv(args.queue)
     accepted = queue[(queue.review == 'accepted') & (queue.category != 'missed')]
     rejected_gt = queue[(queue.review == 'accepted') & (queue.category == 'missed')]
+    # 'box_wrong' means the reviewer confirmed a real ear but the proposed
+    # extent is wrong. Adding it would put a badly-localized positive into
+    # training, which damages box regression more than the missing label costs
+    # in recall, so it is recorded for a correction pass and never merged.
+    box_wrong = queue[queue.review == 'box_wrong']
 
     master = pd.read_csv(args.csv)
     keep = master
@@ -253,6 +258,11 @@ def cmd_apply(args: argparse.Namespace) -> None:
     combined.to_csv(args.output, index=False)
 
     print(f'{len(keep)} kept + {len(additions)} reviewed additions -> {args.output}')
+    if len(box_wrong):
+        path = Path(args.output).with_name(Path(args.output).stem + '_needs_box_fix.csv')
+        box_wrong.to_csv(path, index=False)
+        print(f'{len(box_wrong)} real ears with a wrong box were NOT added; '
+              f'queued for correction in {path}')
     if len(rejected_gt):
         print(f'{len(rejected_gt)} existing labels were confirmed bad; '
               'they are NOT removed automatically -- inspect them before deleting.')

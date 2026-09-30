@@ -146,9 +146,19 @@ now drops these by default.
 - [x] **Ignore band in anchor assignment.** Even with complete labels, anchors that
       overlap a GT box but lose assignment are currently trained as background.
       Exclude a middle IoU band from both the positive set and hard-negative mining.
-- [ ] **Stratify the split** by `annotation_source`, and by subject identity
-      wherever the source dataset exposes it — a random per-image split leaks the
-      same person across train and val.
+- [x] **Stratify the split** by source, with optional duplicate grouping and a
+      shuffled row order. Every source now lands at exactly its target share,
+      and a prefix of val.csv is no longer one dataset: the old file's first 200
+      images covered 2 of 6 sources (distribution drift 0.479), the new covers
+      6 of 6 (0.078). That is the root cause of the phantom collapse, closed.
+
+      **Subject identity is not recoverable.** Every source is a Roboflow export
+      with hashed filenames, so the same person across several photos cannot be
+      detected and train/val may share subjects. Perceptual hashing found 0
+      duplicate images shared across datasets in a 2653-image sample, so
+      cross-source leakage is not a concern; 56 near-duplicates exist within
+      sources, and `group_keys` keeps such clusters on one side when a hash map
+      is supplied.
 
 ## P2 — Augmentation correctness
 

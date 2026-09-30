@@ -166,3 +166,20 @@ class TestApply:
         q.to_csv(queue, index=False)
         result = self._run(master, queue, out)
         assert (result.annotation_source == 'GT+REVIEW').sum() == 0
+
+    def test_box_wrong_is_never_added(self, tmp_path):
+        """
+        'box_wrong' means a real ear with a bad extent. Adding it would put a
+        badly-localized positive into training, which corrupts box regression
+        more than the missing label costs in recall.
+        """
+        master, queue, out = self._setup(tmp_path, ['box_wrong'])
+        result = self._run(master, queue, out)
+        assert (result.annotation_source == 'GT+REVIEW').sum() == 0
+
+    def test_box_wrong_is_queued_for_correction(self, tmp_path):
+        master, queue, out = self._setup(tmp_path, ['box_wrong'])
+        self._run(master, queue, out)
+        fix = out.with_name(out.stem + '_needs_box_fix.csv')
+        assert fix.exists()
+        assert len(pd.read_csv(fix)) == 1
