@@ -1,0 +1,251 @@
+<title>Ear Label Review</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root{
+    --ground:#f5f6f5; --surface:#ffffff; --ink:#151a20; --muted:#5f6b78;
+    --line:#e2e5e4; --accent:#d99220; --accept:#2f7d4f; --reject:#b8382c;
+    --sans:'IBM Plex Sans',system-ui,-apple-system,sans-serif;
+    --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,monospace;
+  }
+  @media (prefers-color-scheme:dark){ :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --ground:#11151a; --surface:#191e25; --ink:#e6e9ec; --muted:#93a0ad;
+    --line:#2a313a; --accent:#e8a63a; --accept:#46a06b; --reject:#d0574a;
+  }}
+  :root[data-theme="dark"]{
+    color-scheme:dark;
+    --ground:#11151a; --surface:#191e25; --ink:#e6e9ec; --muted:#93a0ad;
+    --line:#2a313a; --accent:#e8a63a; --accept:#46a06b; --reject:#d0574a;
+  }
+  html,body{height:100%}
+  body{background:var(--ground);color:var(--ink);font-family:var(--sans);margin:0}
+  *{box-sizing:border-box}
+
+  .head{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;
+    background:var(--ground);border-bottom:1px solid var(--line);
+    padding:10px 16px 8px}
+  .head h1{margin:0;font-size:15px;font-weight:600;letter-spacing:-.01em}
+  .head .sub{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:2px}
+  .bar{height:3px;background:var(--line);border-radius:2px;margin-top:8px;overflow:hidden}
+  .bar i{display:block;height:100%;background:var(--accent);width:0;transition:width .25s ease}
+
+  .wrap{padding:16px 16px 120px;max-width:560px;margin:0 auto}
+
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .card img{display:block;width:100%;max-width:100%;background:var(--line)}
+  .meta{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:baseline;
+    padding:10px 12px;border-top:1px solid var(--line);font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .meta .conf{color:var(--accent);font-weight:500}
+  .meta .path{flex:1 1 100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  .legend{display:flex;gap:16px;margin:14px 2px 0;font-size:12px;color:var(--muted)}
+  .legend span{display:flex;align-items:center;gap:6px}
+  .legend i{width:14px;height:3px;border-radius:2px;display:block}
+
+  .ask{margin:18px 2px 0;font-size:15px;line-height:1.5;text-wrap:balance}
+  .ask b{font-weight:600}
+  .hint{margin:8px 2px 0;font-size:12.5px;line-height:1.5;color:var(--muted)}
+  .hint b{font-weight:600;color:var(--ink)}
+
+  .actions{position:fixed;left:0;right:0;bottom:0;z-index:6;
+    background:var(--surface);border-top:1px solid var(--line);
+    padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));
+    display:grid;grid-template-columns:repeat(6,1fr);gap:8px;max-width:560px;margin:0 auto}
+  button{font-family:var(--sans);font-size:15px;font-weight:600;border-radius:9px;
+    border:1px solid var(--line);background:var(--surface);color:var(--ink);
+    padding:14px 8px;cursor:pointer;min-height:52px}
+  button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .no{border-color:var(--reject);color:var(--reject)}
+  .minor{font-size:12.5px;font-weight:500;min-height:44px;padding:9px 4px;color:var(--muted);grid-column:span 2}
+  .primary{grid-column:span 3}
+  .boxoff{border-color:var(--accent);color:var(--accent)}
+  .poor{border-color:var(--muted)}
+  .yes{border-color:var(--accept);background:var(--accept);color:#fff}
+  .skip{color:var(--muted)}
+  .keys{grid-column:1/-1;text-align:center;font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:2px}
+  @media (pointer:coarse){.keys{display:none}}
+
+  .tally{display:flex;gap:14px;font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:12px;padding:0 2px}
+  .tally b{font-weight:500;color:var(--ink)}
+
+  .note{margin-top:14px;padding:10px 12px;border:1px solid var(--line);border-left:3px solid var(--accent);
+    border-radius:6px;background:var(--surface);font-size:12.5px;line-height:1.5;color:var(--muted)}
+  .done{text-align:center;padding:40px 12px}
+  .done h2{font-size:20px;margin:0 0 8px}
+  .done p{color:var(--muted);font-size:14px;line-height:1.55;margin:0 auto;max-width:36ch}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="head">
+  <h1>Ear Label Review</h1>
+  <div class="sub">batch __BATCH__ &middot; <span id="pos">1</span> / <span id="total">0</span>
+    &middot; <span id="left">0</span> left</div>
+  <div class="bar"><i id="fill"></i></div>
+</div>
+
+<div class="wrap">
+  <div id="live">
+    <div class="card">
+      <img id="shot" alt="Candidate ear with surrounding context" src="">
+      <div class="meta">
+        <span>#<span id="idx">0</span></span>
+        <span class="conf">conf <span id="conf">0.00</span></span>
+        <span class="path" id="path"></span>
+      </div>
+    </div>
+
+    <div class="legend">
+      <span><i style="background:#d99220"></i> proposed</span>
+      <span><i style="background:#2f9e5f"></i> already labelled</span>
+    </div>
+
+    <p class="ask">Is the <b>amber box</b> on a real ear?</p>
+    <p class="hint">Covering most of the ear counts &mdash; boxes are never exact.
+    <b>Box is off</b> if it catches only about half.
+    <b>Poor quality</b> for a real ear that is blurred, tiny or barely visible:
+    it becomes an ignore region, so the model is neither taught to find it nor
+    punished for missing it.</p>
+
+    <div class="tally">
+      <span>kept <b id="tYes">0</b></span>
+      <span>rejected <b id="tNo">0</b></span>
+      <span>box off <b id="tBox">0</b></span>
+      <span>poor <b id="tPoor">0</b></span>
+      <span>skipped <b id="tSkip">0</b></span>
+    </div>
+
+    <div class="note" id="note">Decisions save as you tap. You can close this and come back.</div>
+  </div>
+
+  <div id="finished" class="done" hidden>
+    <h2>Batch __BATCH__ done</h2>
+    <p id="doneText"></p>
+  </div>
+</div>
+
+<div class="actions" id="bar">
+  <button class="minor boxoff" id="bBox">Box is off</button>
+  <button class="minor poor"   id="bPoor">Poor quality</button>
+  <button class="minor skip"   id="bSkip">Skip</button>
+  <button class="no primary"   id="bNo">Not an ear</button>
+  <button class="yes primary"  id="bYes">Ear</button>
+  <div class="keys" style="grid-column:1/-1">A ear &middot; R not an ear &middot; B box off &middot; Q poor quality &middot; S skip &middot; &larr; undo</div>
+</div>
+
+<script>
+const ITEMS = __ITEMS__;
+const REMAINING = __REMAINING__;
+const $ = id => document.getElementById(id);
+const decided = new Map();      // id -> decision
+const history = [];
+let pos = 0, db = null, writable = true;
+
+$('total').textContent = ITEMS.length;
+
+function firstPending(from){
+  for (let i = from; i < ITEMS.length; i++) if (!decided.has(ITEMS[i].id)) return i;
+  return ITEMS.length;
+}
+
+function counts(){
+  let y=0,n=0,s=0,b=0,q=0;
+  for (const v of decided.values()){
+    if(v==='accepted')y++; else if(v==='rejected')n++;
+    else if(v==='box_wrong')b++; else if(v==='low_quality')q++;
+    else if(v==='skipped')s++;
+  }
+  return {y,n,s,b,q};
+}
+
+function render(){
+  const c = counts();
+  $('tYes').textContent=c.y; $('tNo').textContent=c.n;
+  $('tSkip').textContent=c.s; $('tBox').textContent=c.b; $('tPoor').textContent=c.q;
+  $('left').textContent = ITEMS.length - decided.size;
+  $('fill').style.width = (100*decided.size/ITEMS.length).toFixed(1)+'%';
+
+  if (pos >= ITEMS.length){
+    $('live').hidden = true; $('bar').hidden = true; $('finished').hidden = false;
+    $('doneText').textContent =
+      `${c.y} kept, ${c.n} rejected, ${c.b} box-is-off, ${c.q} poor quality, `+
+      `${c.s} skipped, out of ${ITEMS.length} in this batch. The kept boxes merge `+
+      `as labels, the poor-quality ones as ignore regions, and the box-is-off `+
+      `ones are queued for correction.` +
+      (REMAINING > 0 ? ` ${REMAINING} candidates remain for later batches.` : '');
+    return;
+  }
+  $('live').hidden = false; $('bar').hidden = false; $('finished').hidden = true;
+
+  const it = ITEMS[pos];
+  $('shot').src = 'crops/' + it.file;
+  $('idx').textContent = it.id;
+  $('conf').textContent = it.conf.toFixed(2);
+  $('path').textContent = it.image_path.split('/').pop();
+  $('pos').textContent = Math.min(decided.size + 1, ITEMS.length);
+}
+
+async function decide(decision){
+  if (pos >= ITEMS.length) return;
+  const it = ITEMS[pos];
+  decided.set(it.id, decision);
+  history.push(pos);
+  pos = firstPending(pos + 1);
+  render();
+  if (!db || !writable) return;
+  try {
+    await db.collection('reviews_b__BATCH__').doc(String(it.id)).set({
+      decision, conf: it.conf, image_path: it.image_path,
+      x1: it.x1, y1: it.y1, w: it.w, h: it.h, at: new Date().toISOString(),
+    });
+  } catch (e) {
+    if (e && e.code === 'invalid_argument') {
+      writable = false;
+      $('note').textContent = 'This view cannot save decisions, so they stay on screen only.';
+    }
+  }
+}
+
+function undo(){
+  if (!history.length) return;
+  const back = history.pop();
+  const it = ITEMS[back];
+  decided.delete(it.id);
+  pos = back;
+  render();
+  if (db && writable) db.collection('reviews_b__BATCH__').doc(String(it.id)).delete().catch(()=>{});
+}
+
+$('bYes').addEventListener('click', ()=>decide('accepted'));
+$('bNo').addEventListener('click', ()=>decide('rejected'));
+$('bSkip').addEventListener('click', ()=>decide('skipped'));
+$('bBox').addEventListener('click', ()=>decide('box_wrong'));
+$('bPoor').addEventListener('click', ()=>decide('low_quality'));
+addEventListener('keydown', e=>{
+  const k = e.key.toLowerCase();
+  if (k==='a') decide('accepted');
+  else if (k==='r') decide('rejected');
+  else if (k==='s') decide('skipped');
+  else if (k==='b') decide('box_wrong');
+  else if (k==='q') decide('low_quality');
+  else if (e.key==='ArrowLeft') undo();
+});
+
+render();
+
+(async () => {
+  db = await window.claude?.use?.('db');
+  if (!db){
+    $('note').textContent = 'Running without saved storage, so decisions last only for this visit.';
+    return;
+  }
+  try {
+    const snap = await db.collection('reviews_b__BATCH__').get();
+    snap.docs.forEach(d => {
+      const body = d.data();
+      if (body && body.decision) decided.set(Number(d.id), body.decision);
+    });
+    pos = firstPending(0);
+    render();
+  } catch (e) { /* start from the top */ }
+})();
+</script>
