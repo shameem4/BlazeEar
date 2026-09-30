@@ -16,10 +16,12 @@ Browser-based ear detection using ONNX Runtime Web.
    - Click "Start Webcam" for live detection
    - Or upload an image for single-frame detection
 
-## The two-stage pipeline (default)
+## The two-stage pipeline
 
-The demo now runs the pipeline MediaPipe itself uses: a coarse detector on the
-full frame, then a fine model on a crop around each hit.
+The demo runs the pipeline MediaPipe itself uses: a coarse detector on the full
+frame, then a fine model on a crop around each hit. This is the only path the
+page offers; the single-stage detector it replaced is still in the API and
+documented below.
 
 ```
 frame -> BlazeFace_web.onnx -> square crop at 1.5x each face -> BlazeEar_web.onnx -> map back -> NMS
@@ -34,9 +36,6 @@ in this repo trained on, that is worth:
 |---|---|---|
 | single-stage, full frame | 0.3142 | 0.0938 |
 | **two-stage** | **0.5760** | **0.2444** |
-
-Untick "Two-stage" in the demo to run the ear model over the whole frame, the
-way this demo used to.
 
 **The catch, stated plainly:** an ear whose face BlazeFace misses never reaches
 the second stage. That is about 4% of images at the default face threshold, and
@@ -68,10 +67,29 @@ These defaults mirror `FACE_CROP_*` in `utils/config.py`. The Python reference
 implementation is `evaluate_two_stage.py`; if you change the crop geometry in
 one place, change it in the other.
 
+## Single-stage, for comparison
+
+Running one ear detector over the whole frame is what this demo used to do. It
+is kept as an API, not as a page option, because on the same held-out images it
+scores mAP@0.5 0.3142 against the two-stage pipeline's 0.5760 -- roughly half:
+
+```javascript
+import { BlazeEarInference } from './blazeear_inference.js';
+
+const detector = new BlazeEarInference({ confidenceThreshold: 0.70 });
+await detector.load('BlazeEar_web.onnx');
+const detections = await detector.detect(videoElement);
+```
+
+Note that `BlazeEar_web.onnx` is now the **crop-trained** checkpoint, so used
+this way it is being run on inputs it was not trained for. To reproduce the
+0.3142 figure, export the full-frame checkpoint with
+`python export_e2e_web.py`.
+
 ## Model
 
-The single-stage `BlazeEar_web.onnx` is still there, and `BlazeFace_web.onnx`
-joins it. Both are web-optimized graphs that:
+Both `BlazeFace_web.onnx` and `BlazeEar_web.onnx` are web-optimized graphs
+that:
 - output all 896 decoded boxes and their scores, already in original-image
   coordinates
 - leave thresholding and NMS to JavaScript, because TopK and NMS emit int64
@@ -85,33 +103,59 @@ joins it. Both are web-optimized graphs that:
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
 
 <script type="module">
-import { BlazeEarInference } from './blazeear_inference.js';
+import { BlazeEarTwoStage } from './blazeear_inference.js';
 
-const detector = new BlazeEarInference({
-    confidenceThreshold: 0.75,
+const detector = new BlazeEarTwoStage({
+    confidenceThreshold: 0.70,
     iouThreshold: 0.3
 });
 
-await detector.load('BlazeEar_web.onnx');
+await detector.load('BlazeFace_web.onnx', 'BlazeEar_web.onnx');
 
 // Detect from video, canvas, or image
 const detections = await detector.detect(videoElement);
 
 // Each detection: { ymin, xmin, ymax, xmax, confidence, x, y, width, height }
-console.log(detections);
+// detections.faceCount is 0 when no face was found, and therefore nothing
+// could be detected at all.
+console.log(detections, detections.faceCount);
 </script>
 ```
 
 ## API
 
+### BlazeEarTwoStage
+
+```javascript
+const detector = new BlazeEarTwoStage(options);
+```
+
+**Options:**
+- `confidenceThreshold` (default: 0.70) - minimum confidence, ear stage
+- `faceThreshold` (default: 0.3) - minimum confidence, face stage. This sets
+  the recall ceiling: lower it to reach more ears at the cost of more crops
+  per frame.
+- `expand` (default: 1.5) - crop side, in multiples of the face box. Larger
+  reaches more ears and gives each one fewer pixels.
+- `maxFaces` (default: 8) - crops per frame, at most
+- `iouThreshold` (default: 0.3) - NMS IoU threshold
+
+**Methods:**
+- `load(facePath, earPath)` - load both graphs
+- `detect(source)` - run the pipeline on an image/video/canvas. The returned
+  array carries a `faceCount` property.
+- `drawDetections(ctx, detections, options)` - draw boxes on a canvas
+
 ### BlazeEarInference
+
+The single stage, used directly or as the building block of the above.
 
 ```javascript
 const detector = new BlazeEarInference(options);
 ```
 
 **Options:**
-- `confidenceThreshold` (default: 0.75) - Minimum detection confidence
+- `confidenceThreshold` (default: 0.70) - Minimum detection confidence
 - `iouThreshold` (default: 0.3) - NMS IoU threshold
 
 **Methods:**

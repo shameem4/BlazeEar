@@ -179,9 +179,6 @@
                 <input type="text" id="modelPath" value="BlazeEar_web.onnx"
                        style="width: 100%; padding: 8px; border-radius: 5px; border: none; background: #0f0f23; color: #eee;">
             </div>
-            <div class="slider-container">
-                <label><input type="checkbox" id="twoStage" checked> Two-stage (face &rarr; crop &rarr; ear)</label>
-            </div>
             <button id="reloadModel">Reload Model</button>
             <div style="margin-top: 15px; font-size: 12px; color: #888;">
                 <p><strong>How this runs:</strong></p>
@@ -189,8 +186,9 @@
                 square crop around each one. An ear is a median 14 px when a
                 whole frame is squeezed into the 128 px input, and 32 px inside
                 a face crop, which is worth mAP@0.5 0.31 &rarr; 0.58.</p>
-                <p>Unticking this runs the ear model on the whole frame, the
-                way the original demo did.</p>
+                <p>Running the ear model on the whole frame is what this demo
+                used to do; that path is still in the API, documented in
+                <code>docs/README.md</code>.</p>
                 <p><strong>Note:</strong> an ear whose face is missed never
                 reaches the second stage &mdash; about 4% of images.</p>
             </div>
@@ -202,7 +200,7 @@
     
     <!-- BlazeEar Inference Module -->
     <script type="module">
-        import { BlazeEarInference } from './blazeear_inference.js';
+        import { BlazeEarTwoStage } from './blazeear_inference.js';
 
         // Global state
         let detector = null;
@@ -225,7 +223,6 @@
         const confValue = document.getElementById('confValue');
         const modelPathInput = document.getElementById('modelPath');
         const faceModelPathInput = document.getElementById('faceModelPath');
-        const twoStageCheckbox = document.getElementById('twoStage');
         const reloadModelBtn = document.getElementById('reloadModel');
 
         // Update confidence threshold display
@@ -245,20 +242,11 @@
             statusEl.style.background = '#0f3460';
 
             try {
-                const modelPath = modelPathInput.value;
-                if (twoStageCheckbox.checked) {
-                    detector = new BlazeEarTwoStage({
-                        confidenceThreshold: parseFloat(confSlider.value)
-                    });
-                    await detector.load(faceModelPathInput.value, modelPath);
-                    statusEl.textContent = '✅ Two-stage loaded: face → crop → ear';
-                } else {
-                    detector = new BlazeEarInference({
-                        confidenceThreshold: parseFloat(confSlider.value)
-                    });
-                    await detector.load(modelPath);
-                    statusEl.textContent = '✅ Single-stage loaded: ear over the full frame';
-                }
+                detector = new BlazeEarTwoStage({
+                    confidenceThreshold: parseFloat(confSlider.value)
+                });
+                await detector.load(faceModelPathInput.value, modelPathInput.value);
+                statusEl.textContent = '✅ Loaded: face → crop → ear';
                 statusEl.style.background = '#155724';
                 
                 startBtn.disabled = false;
