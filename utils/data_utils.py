@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+import warnings
 from pathlib import Path
 from typing import DefaultDict, Dict, List, Tuple, cast
 
@@ -132,11 +133,25 @@ def split_dataframe_by_images(
         raise ValueError("No images found to split.")
 
     if group_keys is None:
+        from utils.photo_index import load_index
         try:
-            from utils.photo_index import load_index
             index = load_index()
-        except Exception:
+        except Exception as exc:
             index = {}
+            warnings.warn(
+                f'Could not read the photo index ({exc}). Falling back to '
+                'filename-derived photo keys, which are weaker: they missed '
+                '121 near-duplicate photos that then straddled train and val. '
+                'Run utils/photo_index.py to rebuild it.',
+                RuntimeWarning, stacklevel=2)
+        else:
+            if not index:
+                warnings.warn(
+                    'The photo index is empty or missing, so grouping falls '
+                    'back to filename-derived keys. Those missed 121 '
+                    'near-duplicate photos that then straddled train and val. '
+                    'Run utils/photo_index.py to build it.',
+                    RuntimeWarning, stacklevel=2)
         group_keys = {img: (index.get(img) or source_photo_key(img)) for img in image_ids}
     group_of = {img: group_keys.get(img, img) for img in image_ids}
 

@@ -38,6 +38,8 @@ from utils.config import (
     DEFAULT_DATA_ROOT,
     DEFAULT_VAL_CSV,
     HUMAN_ANNOTATION_SOURCES,
+    IGNORE_ANNOTATION_SOURCE,
+    NEGATIVE_ANNOTATION_SOURCE,
 )
 from utils.detection_eval import DetectionEvaluator
 
@@ -51,14 +53,24 @@ VIEWS: Dict[str, object] = {
 
 
 def load_sources_by_image(csv_path: str) -> Dict[str, List[str]]:
-    """Map image_path -> annotation_source per box, in CSV row order.
+    """Map image_path -> annotation_source per ground-truth box, in row order.
 
     The dataset groups rows the same way (`groupby(..., sort=False)`) and, with
-    augmentation disabled, returns gt_boxes one-to-one with those rows.
+    augmentation disabled, returns gt_boxes one-to-one with those rows -- but
+    only the rows that BECOME boxes. IGNORE rows are returned separately as
+    ignore regions and NEGATIVE rows are dropped entirely, so both have to come
+    out here too or the lists do not line up.
+
+    They did not line up, and the mismatch was silent: the caller fell back to
+    scoring every box in every view, which turned the per-source breakdown into
+    a copy of the "all" view for 17.9% of val_v2 images and 37.7% of the face
+    crops.
     """
     df = pd.read_csv(csv_path)
     if 'annotation_source' not in df.columns:
         return {}
+    df = df[~df['annotation_source'].isin(
+        (IGNORE_ANNOTATION_SOURCE, NEGATIVE_ANNOTATION_SOURCE))]
     return {
         str(image_path): [str(v) for v in group['annotation_source'].tolist()]
         for image_path, group in df.groupby('image_path', sort=False)
@@ -123,7 +135,15 @@ def main() -> None:
         print('Decoding with legacy w=h=1.0 anchors.')
     trainer.model.eval()
 
-    active_views = {k: v for k, v in VIEWS.items() if k == 'all' or sources_by_image}
+    # Only offer a view whose sources actually occur: POSE was replaced by
+    # IGNORE in v2, so a 'pose' row on current data reports nothing and reads
+    # like a measurement.
+    present = {src for srcs in sources_by_image.values() for src in srcs}
+    active_views = {
+        k: v for k, v in VIEWS.items()
+        if k == 'all' or (sources_by_image and (v is None or (v & present)))
+    }
+    unaligned: set = set()
     evaluators = {name: DetectionEvaluator() for name in active_views}
 
     with torch.no_grad():
@@ -152,9 +172,15 @@ def main() -> None:
                     image_path = dataset.samples[idx]['image_path']  # type: ignore[attr-defined]
                     sources = sources_by_image.get(image_path, [])
 
+                if sources_by_image and len(sources) != count:
+                    unaligned.add(idx)
+
                 for name, keep_sources in active_views.items():
                     if keep_sources is None or len(sources) != count:
-                        # No provenance for this image: score every box, ignore nothing.
+                        # No provenance for this image: score every box, ignore
+                        # nothing. Counted and reported below, because silently
+                        # folding these in makes a per-source view read as a
+                        # measurement when it is a copy of "all".
                         evaluators[name].add_image(det_boxes, det_scores, boxes)
                         continue
                     mask = torch.tensor(
@@ -168,6 +194,9 @@ def main() -> None:
     print()
     print(f'checkpoint : {args.checkpoint}')
     print(f'split      : {args.csv}  ({int(evaluators["all"].compute()["num_images"])} images)')
+    if unaligned:
+        print(f'note       : {len(unaligned)} images had no usable per-box '
+              f'provenance; every box in them counts as ground truth in every view')
     print()
     header = f'{"view":8s} {"GT":>7s} {"dets":>8s} {"ignored":>8s} {"mAP@0.5":>9s} {"mAP@[.5:.95]":>13s} {"det IoU":>9s}'
     print(header)

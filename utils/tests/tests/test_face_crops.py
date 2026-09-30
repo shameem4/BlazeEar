@@ -147,3 +147,41 @@ class TestSharedDefaults:
         signature = inspect.signature(load_face_detector)
         assert signature.parameters['score_threshold'].default == FACE_CROP_THRESHOLD
 
+
+
+class TestCropWindowIsPinned:
+    """
+    The crop window exists twice: here and in docs/blazeear_inference.js, so
+    the browser and the Python pipeline crop identically. Nothing enforces
+    that across languages, so these cases are pinned on the Python side and
+    the JS carries a pointer to them. They were verified equal on all ten.
+    """
+
+    CASES = [
+        # (face ymin,xmin,ymax,xmax), (frame h,w) -> (x0, y0, side) at 1.5x
+        ((100, 100, 200, 200), (640, 640), (75, 75, 150)),
+        ((0, 0, 50, 50), (640, 640), (0, 0, 75)),
+        ((590, 590, 640, 640), (640, 640), (565, 565, 75)),
+        ((10, 300, 60, 350), (80, 640), (288, 0, 75)),
+        ((300, 10, 350, 60), (640, 80), (0, 288, 75)),
+        ((0, 0, 640, 640), (640, 640), (0, 0, 640)),
+        ((-20, -20, 40, 40), (640, 640), (0, 0, 90)),
+        ((320, 320, 321, 321), (640, 640), (320, 320, 2)),
+    ]
+
+    def test_pinned_cases(self, subtests=None):
+        from utils.config import FACE_CROP_EXPAND
+        for face_box, (height, width), expected in self.CASES:
+            got = crop_window(
+                np.array(face_box, dtype=np.float32), FACE_CROP_EXPAND,
+                (height, width, 3))
+            assert got == expected, f'{face_box} in {(height, width)}: {got} != {expected}'
+
+    def test_the_window_always_lands_inside_the_frame(self):
+        from utils.config import FACE_CROP_EXPAND
+        for face_box, (height, width), _ in self.CASES:
+            x0, y0, side = crop_window(
+                np.array(face_box, dtype=np.float32), FACE_CROP_EXPAND,
+                (height, width, 3))
+            assert 0 <= x0 and x0 + side <= width
+            assert 0 <= y0 and y0 + side <= height

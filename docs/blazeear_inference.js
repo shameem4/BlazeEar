@@ -5,17 +5,19 @@
  * Uses ONNX Runtime Web for model inference.
  * 
  * Usage:
- *   import { BlazeEarInference } from './blazeear_inference.js';
- *   
- *   const detector = new BlazeEarInference();
- *   await detector.load('path/to/BlazeEar_web.onnx');
- *   
+ *   import { BlazeEarTwoStage } from './blazeear_inference.js';
+ *
+ *   const detector = new BlazeEarTwoStage();
+ *   await detector.load('BlazeFace_web.onnx', 'BlazeEar_web.onnx');
+ *
  *   // From video element, canvas, or ImageData
  *   const detections = await detector.detect(imageSource);
- *   // Returns: Array of { ymin, xmin, ymax, xmax, confidence }
- * 
- * ONNX Model Options:
- *   - BlazeEar_web.onnx: Web-optimized (avoids int64, NMS done in JS)
+ *   // Returns: Array of { ymin, xmin, ymax, xmax, confidence },
+ *   // carrying a faceCount property.
+ *
+ * BlazeEarTwoStage and createTwoStageDetector are the only exports. The
+ * single-stage BlazeEarInference below is the building block they run, not an
+ * entry point -- see docs/README.md for why it is not offered on its own.
  */
 
 // Check for ONNX Runtime
@@ -33,7 +35,7 @@ class BlazeEarInference {
      * per crop for ears, and it is not an entry point.
      *
      * Run over a whole frame on its own it scores mAP@0.5 0.3142 against the
-     * two-stage pipeline's 0.5760, and on the images the face stage cannot
+     * two-stage pipeline's 0.5809, and on the images the face stage cannot
      * reach -- where it would be the only option -- it scores 0.0284, because
      * those ears are a median 4.4 px. There is no regime where it is the right
      * choice, so it is not offered as one.
@@ -59,7 +61,6 @@ class BlazeEarInference {
         this.inputSize = 128;
         this.session = null;
         this.isLoaded = false;
-        this.modelType = null; // 'web' or 'e2e' or 'simple'
     }
 
     /**
@@ -88,16 +89,15 @@ class BlazeEarInference {
         console.log('Input names:', this.session.inputNames);
         console.log('Output names:', this.session.outputNames);
 
-        // Detect model type based on outputs
-        if (this.session.outputNames.includes('boxes') && this.session.outputNames.includes('scores')) {
-            this.modelType = 'web';  // Web-optimized: boxes + scores output
-            console.log('Detected web-optimized model (NMS in JavaScript)');
-        } else if (this.session.inputNames.includes('scale')) {
-            this.modelType = 'e2e';  // End-to-end with denormalization
-            console.log('Detected end-to-end model');
-        } else {
-            this.modelType = 'simple';  // Simple postprocessed model
-            console.log('Detected simple model');
+        // Both shipped graphs output decoded boxes + scores and leave
+        // thresholding and NMS to JavaScript. The e2e and "simple" variants
+        // this used to accept were exported before v2 and have been removed;
+        // fail loudly rather than take a graph whose outputs are not understood.
+        const outputs = this.session.outputNames;
+        if (!(outputs.includes('boxes') && outputs.includes('scores'))) {
+            throw new Error(
+                `Unsupported graph: expected outputs "boxes" and "scores", got ` +
+                `[${outputs.join(', ')}]. Re-export with export_two_stage_web.py.`);
         }
     }
 
@@ -237,46 +237,21 @@ class BlazeEarInference {
         // Create input tensor
         const imageTensor = new ort.Tensor('float32', tensorData, [1, 3, 128, 128]);
 
-        // Prepare feeds based on model type
-        let feeds;
-        if (this.modelType === 'web' || this.modelType === 'e2e') {
-            feeds = {
-                'image': imageTensor,
-                'scale': new ort.Tensor('float32', [scale], []),
-                'pad_y': new ort.Tensor('float32', [padY], []),
-                'pad_x': new ort.Tensor('float32', [padX], [])
-            };
-        } else {
-            feeds = { 'image': imageTensor };
-        }
+        const results = await this.session.run({
+            'image': imageTensor,
+            'scale': new ort.Tensor('float32', [scale], []),
+            'pad_y': new ort.Tensor('float32', [padY], []),
+            'pad_x': new ort.Tensor('float32', [padX], [])
+        });
 
-        // Run inference
-        const results = await this.session.run(feeds);
-
-        let detections;
-        if (this.modelType === 'web') {
-            // Web model outputs boxes (896, 4) and scores (896,)
-            // We need to filter and apply NMS in JavaScript
-            detections = this._processWebModelOutput(
-                results.boxes.data,
-                results.scores.data,
-                originalWidth,
-                originalHeight
-            );
-        } else {
-            // E2E or simple model outputs detections directly
-            detections = this._processDetectionsOutput(
-                results.detections.data,
-                results.detections.dims[0],
-                scale,
-                padY,
-                padX,
-                originalWidth,
-                originalHeight
-            );
-        }
-
-        return detections;
+        // The graph returns all 896 decoded boxes; thresholding and NMS happen
+        // here, because TopK and NMS emit int64 and ONNX Runtime Web rejects it.
+        return this._processWebModelOutput(
+            results.boxes.data,
+            results.scores.data,
+            originalWidth,
+            originalHeight
+        );
     }
 
     /**
@@ -319,51 +294,6 @@ class BlazeEarInference {
             det.width = det.xmax - det.xmin;
             det.height = det.ymax - det.ymin;
             delete det.index;  // Remove internal property
-        }
-
-        return this._filterByGeometry(detections, originalWidth, originalHeight);
-    }
-
-    /**
-     * Process detections output from e2e or simple model
-     * @private
-     */
-    _processDetectionsOutput(detectionsData, numDetections, scale, padY, padX, originalWidth, originalHeight) {
-        const detections = [];
-        const isE2E = this.modelType === 'e2e';
-
-        for (let i = 0; i < numDetections; i++) {
-            let ymin = detectionsData[i * 5 + 0];
-            let xmin = detectionsData[i * 5 + 1];
-            let ymax = detectionsData[i * 5 + 2];
-            let xmax = detectionsData[i * 5 + 3];
-            const confidence = detectionsData[i * 5 + 4];
-
-            // If not end-to-end, denormalize coordinates here
-            if (!isE2E) {
-                ymin = ymin * scale * 256 - padY;
-                xmin = xmin * scale * 256 - padX;
-                ymax = ymax * scale * 256 - padY;
-                xmax = xmax * scale * 256 - padX;
-            }
-
-            // Clamp to image bounds
-            ymin = Math.max(0, Math.min(ymin, originalHeight));
-            xmin = Math.max(0, Math.min(xmin, originalWidth));
-            ymax = Math.max(0, Math.min(ymax, originalHeight));
-            xmax = Math.max(0, Math.min(xmax, originalWidth));
-
-            detections.push({
-                ymin,
-                xmin,
-                ymax,
-                xmax,
-                confidence,
-                x: xmin,
-                y: ymin,
-                width: xmax - xmin,
-                height: ymax - ymin
-            });
         }
 
         return this._filterByGeometry(detections, originalWidth, originalHeight);
@@ -500,11 +430,12 @@ class BlazeEarInference {
  * This is the design the measurements picked. Asking one 128x128 detector to
  * find an ear in a whole frame gives it a median 14-pixel target; cropping to
  * a face first makes that 32 pixels, and on images no model trained on the
- * mAP@0.5 goes 0.3142 -> 0.5760.
+ * mAP@0.5 goes 0.3142 -> 0.5809.
  *
  * The cost is a recall ceiling: an ear whose face BlazeFace misses never
- * reaches the second stage, which is about 4% of images at the default
- * threshold. That is why the face threshold is lower than you might expect.
+ * reaches the second stage, which is 1.3% of validation images at the default
+ * threshold of 0.2 -- and 4.1% at 0.3, which is why the default is as low as
+ * it is. Those ears are a median 4.4 px, so nothing else recovers them either.
  *
  * The two stages do NOT share anchors -- the face graph carries MediaPipe's
  * original squares, the ear graph the fitted ear priors -- but each has its
@@ -547,6 +478,12 @@ class BlazeEarTwoStage {
      * A square window at `expand` times the face box, clipped to the frame.
      * Square, because the ear model letterboxes its input anyway, and a
      * non-square crop would just spend resolution on padding.
+     *
+     * This duplicates crop_window() in make_face_crops.py, and the two must
+     * agree or the browser crops differently from everything the model was
+     * trained and measured on. The edge cases are pinned in
+     * utils/tests/tests/test_face_crops.py::TestCropWindowIsPinned; both
+     * implementations were checked against all of them.
      */
     _cropWindow(face, frameWidth, frameHeight) {
         const faceW = face.xmax - face.xmin;

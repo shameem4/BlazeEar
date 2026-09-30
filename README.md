@@ -531,10 +531,15 @@ than filenames, because one photo appears under several Roboflow hashes.
 |---|---|---|---|
 | original (pre-v2) | 0.1790 | 0.0421 | 0.6189 |
 | v2 single-stage | 0.3142 | 0.0938 | 0.6558 |
-| **v2 two-stage** | **0.5760** | **0.2444** | **0.7234** |
+| **v2 two-stage** | **0.5809** | **0.2445** | **0.7193** |
 
 **3.2x on mAP@0.5, 5.8x on mAP@[.5:.95].** On the full 2021-image validation
-split the two v2 models read 0.3561 and 0.6336.
+split the two v2 models read 0.3561 and 0.6447.
+
+All two-stage figures are at the shipped face threshold of 0.2. That value was
+chosen by sweeping the validation split, so it is worth saying that the
+held-out set above is independent of that sweep and agrees: 0.5760 at 0.3,
+0.5809 at 0.2.
 
 Two honest caveats. 279 images is a small set -- treat a few points as noise,
 not the 3x. And the gain is not purely architectural: v2 also relabelled the
@@ -559,9 +564,11 @@ this deviates from MediaPipe; the original design had simply collapsed a
 two-stage pattern into one stage.
 
 The cost is a recall ceiling: an ear whose face is missed never reaches the
-second stage, about 4% of images. That is charged honestly in every number
-above -- those ears count as misses rather than leaving the denominator. A
-full-frame fallback on those images was measured and is a wash.
+second stage, 2.9% of images at the shipped face threshold of 0.2. That is
+charged honestly in every number above -- those ears count as misses rather
+than leaving the denominator. A full-frame fallback on those images was
+measured and is a wash, because the ears it would have to find there are a
+median 4.4 px.
 
 See `make_face_crops.py`, `evaluate_two_stage.py`, and the P7 section of
 `V2_PLAN.md`.

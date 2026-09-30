@@ -35,14 +35,18 @@ in this repo trained on, that is worth:
 | pipeline | mAP@0.5 | mAP@[.5:.95] |
 |---|---|---|
 | single-stage, full frame | 0.3142 | 0.0938 |
-| **two-stage** | **0.5760** | **0.2444** |
+| **two-stage** | **0.5809** | **0.2445** |
 
 **The catch, stated plainly:** an ear whose face BlazeFace misses never reaches
-the second stage. That is about 4% of images at the default face threshold, and
-it is a hard ceiling, not a tuning issue. Lower `faceThreshold` to trade crops
-per frame for recall. Falling back to a full-frame pass on those images was
-measured and is a wash -- it contributes about as many false positives as it
-recovers ears.
+the second stage. At the default `faceThreshold` of 0.2 that is 1.3% of
+validation images, down from 4.1% at 0.3. Lower it further to trade crops per
+frame for recall.
+
+Falling back to a full-frame pass on those images was measured and is a wash.
+The reason is worth knowing: the ears in images where no face is found are a
+median **4.4 px**, three times smaller than average, because BlazeFace misses
+a face precisely when the subject is tiny. They are not close-ups that a
+full-frame detector would catch. Nothing currently recovers them.
 
 The two graphs do **not** share anchors: the face graph carries MediaPipe's
 original `w=h=1.0` squares, the ear graph the fitted ear priors. Each has its
@@ -54,7 +58,7 @@ import { BlazeEarTwoStage } from './blazeear_inference.js';
 
 const detector = new BlazeEarTwoStage({
     confidenceThreshold: 0.70,  // ear stage
-    faceThreshold: 0.3,         // face stage; this sets the recall ceiling
+    faceThreshold: 0.2,         // face stage; this sets the recall ceiling
     expand: 1.5,                // crop side, in multiples of the face box
 });
 await detector.load('BlazeFace_web.onnx', 'BlazeEar_web.onnx');
