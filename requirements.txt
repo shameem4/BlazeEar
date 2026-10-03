@@ -14,7 +14,18 @@ Pillow>=8.0.0
 # Training utilities
 tqdm>=4.60.0
 tensorboard>=2.10.0
-ultralytics>=8.2.0
+
+# NOT a dependency: ultralytics
+#
+# The YOLO auto-labeller used while building data/splits/*.csv needs
+# `ultralytics`, which is AGPL-3.0 and so cannot ship with this Apache-2.0
+# repository. It is deliberately absent here, and the tooling that imports it
+# is not distributed either -- see NOTICE.
+#
+# Nothing in the BlazeEar model, its training, its evaluation or the browser
+# demo requires it; the labels it produced are checked in. If you want to
+# re-run label proposal, install it yourself and accept its terms:
+#     pip install "ultralytics>=8.2.0"
 
 # Optional: For webcam demos
 # opencv-python-headless can be used instead of opencv-python for headless environments

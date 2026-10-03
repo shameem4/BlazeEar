@@ -87,8 +87,6 @@ In short: `trainable_blazeface` made BlazeFace trainable; BlazeEar uses that fou
   CSV dataset with resize‑pad to square, strong augmentations, and encoding into BlazeFace anchors via `utils/anchor_utils.py`.
 - `loss_functions.py`  
   `BlazeEarDetectionLoss`: hard negative mining + BCE or focal classification + SmoothL1 regression.
-- `finetune_yolov11.py`  
-  Converts BlazeEar CSV metadata into YOLO format and fine‑tunes an Ultralytics YOLOv11 ear detector (useful for bootstrapping or comparison).
 - `utils/`  
   Anchor helpers, augmentations, visualization, metric utilities, debug scripts, and tests.
 - `runs/`  
@@ -398,20 +396,26 @@ python utils/debug_training.py \
 
 ---
 
-## Optional: Fine‑tune YOLOv11 Ear Detector
+## Optional: YOLO auto-labelling (not distributed)
 
-If you want a stronger pseudo‑labeler or baseline:
+A fine-tuned YOLOv11 detector was used to propose ear labels while building
+`data/splits/*.csv`. Those labels are checked in, so none of this is needed to
+train, evaluate or run BlazeEar.
+
+The tooling itself is **not in this repository**: `finetune_yolov11.py`,
+`utils/yolo11_demo.py` and `model_weights/yolov11_ear_detector.pt` depend on
+[Ultralytics](https://github.com/ultralytics/ultralytics), which is
+**AGPL-3.0** and cannot be redistributed under Apache-2.0. See
+[NOTICE](NOTICE).
+
+`data_prep.py` and `relabel.py` ship with optional YOLO paths that import
+Ultralytics lazily, so both files work without it installed. To re-run label
+proposal you would install Ultralytics yourself and accept its terms:
 
 ```bash
-python finetune_yolov11.py \
-  --train-csv data/splits/train.csv \
-  --val-csv data/splits/val.csv \
-  --data-root data/raw \
-  --weights yolo11n.pt \
-  --epochs 100
+pip install "ultralytics>=8.2.0"
+python relabel.py propose --weights <your-yolo-weights.pt> ...
 ```
-
-This script converts the CSVs into YOLO format under `data/yolo11_ears/` and launches Ultralytics training in `runs/yolo11/`.
 
 ---
 
@@ -662,16 +666,14 @@ BlazeEar derives from [MediaPipe](https://github.com/google-ai-edge/mediapipe)
 BlazeFace, which is also Apache-2.0, and the two-stage pipeline runs
 MediaPipe's published BlazeFace weights unmodified as its first stage.
 
-**One exception, worth reading before you redistribute.** The optional YOLO
-auto-labelling tooling depends on
-[Ultralytics](https://github.com/ultralytics/ultralytics), which is
-**AGPL-3.0**, not Apache-2.0. That covers
-`model_weights/yolov11_ear_detector.pt`, `finetune_yolov11.py`,
-`utils/yolo11_demo.py`, and the Ultralytics-dependent paths in `data_prep.py`
-and `relabel.py`. Nothing in the BlazeEar model, its training, its evaluation,
-or the browser demo needs Ultralytics at run time &mdash; it was a
-data-preparation convenience. Treat those files as AGPL-3.0, or remove them.
-See [NOTICE](NOTICE).
+The YOLO auto-labelling tooling that depends on
+[Ultralytics](https://github.com/ultralytics/ultralytics) is **AGPL-3.0**, so
+it is not distributed here: `finetune_yolov11.py`, `utils/yolo11_demo.py` and
+`model_weights/yolov11_ear_detector.pt` are excluded from version control, and
+`ultralytics` is not in `requirements.txt`. The optional YOLO paths that do
+ship, in `data_prep.py` and `relabel.py`, import it lazily and are not
+reachable without installing it yourself. Nothing in the BlazeEar model, its
+training, its evaluation, or the browser demo needs it. See [NOTICE](NOTICE).
 
 ## Next Directions
 

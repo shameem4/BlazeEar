@@ -33,18 +33,23 @@ Some optional tooling in this repository depends on Ultralytics YOLO
 AGPL-3.0, not Apache-2.0. AGPL-3.0 is a strong copyleft license and its terms
 are not compatible with redistributing the affected parts under Apache-2.0.
 
-Affected, and NOT offered under the Apache License:
+These files are therefore NOT distributed with this repository:
 
   - model_weights/yolov11_ear_detector.pt   (a model trained with Ultralytics)
   - finetune_yolov11.py
   - utils/yolo11_demo.py
-  - the Ultralytics-dependent code paths in data_prep.py and relabel.py
 
-These exist because a YOLO detector was used as an auto-labeller while
-building the training data. Nothing in the BlazeEar model, its training, its
-evaluation, or the browser demo requires Ultralytics at run time; it is a
-data-preparation convenience only.
+They remain usable locally but are excluded from version control, so nothing
+under AGPL-3.0 is redistributed here.
 
-Anyone redistributing this repository, or using it commercially, should treat
-those files as AGPL-3.0 and either comply with that license, obtain an
-Ultralytics commercial license, or remove them.
+Two files that ARE distributed can optionally call Ultralytics, and import it
+lazily so that neither the package nor its terms are required to use them:
+
+  - data_prep.py   (label collection; the YOLO path proposes pseudo-labels)
+  - relabel.py     (the `propose` subcommand)
+
+`ultralytics` is deliberately absent from requirements.txt. Nothing in the
+BlazeEar model, its training, its evaluation, or the browser demo needs it:
+it was an auto-labeller used while building data/splits/*.csv, and those
+labels are checked in. Installing it to re-run label proposal means accepting
+AGPL-3.0 for that use.

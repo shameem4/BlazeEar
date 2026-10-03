@@ -18,3 +18,13 @@ yolo11n.pt
 yolo11m.pt
 yolo26n.pt
 weights/
+
+# Ultralytics YOLO tooling: AGPL-3.0, which this Apache-2.0 repository cannot
+# redistribute. Kept on disk so the auto-labelling workflow still runs locally,
+# but not part of the published repo. Nothing in the BlazeEar model, its
+# training, its evaluation or the browser demo needs these -- they were used to
+# propose labels while building data/splits/*.csv, which are checked in.
+finetune_yolov11.py
+utils/yolo11_demo.py
+model_weights/yolov11_ear_detector.pt
+model_weights/yolo11x-pose.pt

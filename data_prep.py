@@ -15,7 +15,12 @@ combination of automated sources.
 import argparse
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, cast
+from typing import (
+    TYPE_CHECKING, Any, DefaultDict, Dict, List, Optional, Set, Tuple, cast,
+)
+
+if TYPE_CHECKING:  # Ultralytics is AGPL-3.0 and is not a runtime dependency.
+    from ultralytics import YOLO
 
 import numpy as np
 import pandas as pd
@@ -26,8 +31,6 @@ from tqdm import tqdm
 from utils.data_decoder import find_all_annotations, decode_all_annotations
 from utils.data_utils import split_dataframe_by_images
 from utils.iou import compute_iou_np
-
-from ultralytics import YOLO
 
 YOLO_DUPLICATE_IOU_THRESHOLD = 0.45
 EAR_KEYPOINT_MIN_CONF = 0.75
@@ -112,7 +115,8 @@ def _maybe_denormalize_bbox(bbox: List[float], image_path: Path, cache: Dict[Pat
     return [x * width, y * height, w * width, h * height]
 
 
-def _get_pose_entries(image_path: Path, pose_model: YOLO, cache: Dict[str, List[PoseEntry]]) -> List[PoseEntry]:
+def _get_pose_entries(image_path: Path, pose_model: 'YOLO',
+                      cache: Dict[str, List[PoseEntry]]) -> List[PoseEntry]:
     image_key = image_path.as_posix()
     if image_key in cache:
         return cache[image_key]
@@ -392,6 +396,13 @@ def collect_all_annotations(raw_dir: Path) -> pd.DataFrame:
 
     all_rows: List[Dict[str, Any]] = []
     missing_images = 0
+    # Imported here, not at module scope. Ultralytics is AGPL-3.0 while this
+    # repository is Apache-2.0, so it is neither bundled nor required: it was
+    # an auto-labeller used while building the training data, and everything
+    # downstream of data/splits/*.csv runs without it. A module-level import
+    # made the whole file unloadable without an AGPL dependency installed.
+    from ultralytics import YOLO  # noqa: PLC0415
+
     pose_model = YOLO('model_weights/yolo11x-pose.pt')
     ear_detector = YOLO('model_weights/yolov11_ear_detector.pt')
     image_size_cache: Dict[Path, Optional[Tuple[int, int]]] = {}
