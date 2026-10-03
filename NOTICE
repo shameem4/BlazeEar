@@ -26,39 +26,48 @@ which the two-stage pipeline runs unmodified as its first stage.
 
 --------------------------------------------------------------------------------
 
-SAMPLE IMAGES ARE NOT APACHE-LICENSED
+SAMPLE IMAGES: ATTRIBUTION AND LICENSES
 
 The Apache License above covers the source code, the model architecture and
-the trained weights. It does not cover the photographs in this repository.
+the trained weights. It does not cover the photographs in this repository,
+which are illustrations of model output and are licensed by their original
+authors under Creative Commons terms.
 
-Every image checked in here is a frame from the datasets used to build
-BlazeEar, with detections drawn over it, and each carries whatever licence its
-source carries rather than this one:
+Every one is a dataset photograph with detection boxes drawn over it. THESE
+IMAGES HAVE BEEN MODIFIED: coloured bounding boxes and score labels were added
+to show what the detector found.
 
-  assets/frontal.png                 "ear annotations..v3i.coco" (Roboflow)
-  assets/qual_example_2.png          "ear annotations..v3i.coco" (Roboflow)
-  assets/linkedin_cover_blazeear.png Open Images
-  assets/multi_face.png              Open Images
-  assets/profile.png                 Open Images
-  assets/qual_example_1.png          Open Images
-  assets/crowd_small.png             Open Images
-  utils/tests/assets/images/ear_group.jpg    Open Images
-  utils/tests/assets/images/single_ear.jpg   Open Images
+Open Images (https://storage.googleapis.com/openimages/web/index.html).
+Photographs licensed by their authors under CC BY 2.0
+(https://creativecommons.org/licenses/by/2.0/). Each is identified by its
+Open Images ID; the original photographer and source URL are listed on that
+image's page at https://openimages.google.com/web/ :
 
-Open Images photographs are individually licensed by their original
-photographers, commonly under Creative Commons terms that require attribution;
-the Roboflow export carries that dataset's own terms. Neither grants the
-Apache License. They appear here as illustrations of model output, which is
-why they are the one part of this repository that is not Apache-2.0.
+  assets/crowd_small.png                      194fc09f9c8a85d6
+  assets/multi_face.png                       34e19044d7dfedda
+  assets/profile.png                          ba6dcd304698ea14
+  assets/qual_example_1.png                   6d8dfd5832a0cd43
+  assets/linkedin_cover_blazeear.png          0012b3323b4ee7e7
+  utils/tests/assets/images/ear_group.jpg     b5dad900cec77b58
+  utils/tests/assets/images/single_ear.jpg    6b96b39cab647552
 
-Source matches were established by perceptual hash against the training
-corpus, so treat the attributions as the dataset of origin rather than as a
-per-photograph licence determination. Anyone redistributing these images, or
-reusing them outside this repository, should check the terms of the specific
-source image.
+"ear annotations." by Roboflow user annotations-rzsmp, licensed CC BY 4.0
+(https://creativecommons.org/licenses/by/4.0/), from
+https://universe.roboflow.com/annotations-rzsmp/ear-annotations :
 
-The training data itself is not distributed here at all: /data is excluded
-from version control, so no dataset images or annotations are redistributed.
+  assets/frontal.png
+  assets/qual_example_2.png
+
+How these were identified: each shipped image was matched by perceptual hash
+against the training corpus, and every Open Images attribution above was then
+confirmed by finding that exact image ID in the Open Images set. Per-image
+licenses were not resolved individually -- CC BY 2.0 is the license Open Images
+states for its photographs as a whole. Anyone reusing one of these images
+outside this repository should check the specific source image.
+
+The training data itself is not distributed here: /data is excluded from
+version control, so no dataset images or annotations are redistributed. These
+nine illustrations are the only photographs in the repository.
 
 --------------------------------------------------------------------------------
 

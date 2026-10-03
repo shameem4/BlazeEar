@@ -663,22 +663,28 @@ Apache License 2.0 &mdash; see [LICENSE](LICENSE) and [NOTICE](NOTICE).
 This replaces the earlier CC BY-NC 4.0 terms, so commercial use is now
 permitted.
 
-**The code, the architecture and the trained weights are Apache-2.0.** Two
-things in this repository are not, and both are called out in
-[NOTICE](NOTICE):
+**The code, the architecture and the trained weights are Apache-2.0.**
 
-- **The sample photographs.** Every image checked in is a frame from the
-  datasets used to build BlazeEar, with detections drawn on it. They carry
-  their source terms &mdash; mostly Open Images, whose photographs are
-  individually licensed by their photographers and commonly require
-  attribution &mdash; not the Apache License. They are illustrations of model
-  output, nothing depends on them, and they can be deleted without affecting
-  anything.
-- **The YOLO auto-labelling tooling**, which is AGPL-3.0 and is therefore not
-  distributed here at all (see below).
+The sample photographs are not, and are not meant to be. They are
+illustrations of model output: dataset photographs with detection boxes drawn
+over them, used to show what the detector does. They keep their original
+authors' Creative Commons terms, credited in [NOTICE](NOTICE):
 
-The training data is not distributed either: `/data` is excluded from version
-control, so no dataset images or annotations are redistributed.
+- Seven are from [Open Images](https://storage.googleapis.com/openimages/web/index.html),
+  licensed by their photographers under
+  [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/), each listed by
+  its Open Images ID.
+- Two are from
+  [*ear annotations.*](https://universe.roboflow.com/annotations-rzsmp/ear-annotations)
+  by Roboflow user `annotations-rzsmp`, licensed
+  [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+
+All nine are **modified** &mdash; bounding boxes and score labels were drawn
+on &mdash; which CC BY requires be stated, and [NOTICE](NOTICE) states it.
+
+The training data is not distributed: `/data` is excluded from version
+control, so no dataset images or annotations are redistributed. The YOLO
+auto-labelling tooling is AGPL-3.0 and is not distributed either (see below).
 
 BlazeEar derives from [MediaPipe](https://github.com/google-ai-edge/mediapipe)
 BlazeFace, which is also Apache-2.0, and the two-stage pipeline runs
