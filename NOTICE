@@ -1,0 +1,50 @@
+BlazeEar
+Copyright 2025 Shameem Hameed
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not
+use this file except in compliance with the License. You may obtain a copy of
+the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+License for the specific language governing permissions and limitations under
+the License.
+
+--------------------------------------------------------------------------------
+
+This product includes software derived from MediaPipe
+(https://github.com/google-ai-edge/mediapipe), Copyright 2019 The MediaPipe
+Authors, licensed under the Apache License, Version 2.0.
+
+The BlazeEar architecture, its anchor layout, and the two-stage
+detect-then-crop pipeline follow MediaPipe's BlazeFace design, and
+model_weights/blazeface.pth holds MediaPipe's published BlazeFace weights,
+which the two-stage pipeline runs unmodified as its first stage.
+
+--------------------------------------------------------------------------------
+
+NOT COVERED BY THIS LICENSE
+
+Some optional tooling in this repository depends on Ultralytics YOLO
+(https://github.com/ultralytics/ultralytics), which is licensed under
+AGPL-3.0, not Apache-2.0. AGPL-3.0 is a strong copyleft license and its terms
+are not compatible with redistributing the affected parts under Apache-2.0.
+
+Affected, and NOT offered under the Apache License:
+
+  - model_weights/yolov11_ear_detector.pt   (a model trained with Ultralytics)
+  - finetune_yolov11.py
+  - utils/yolo11_demo.py
+  - the Ultralytics-dependent code paths in data_prep.py and relabel.py
+
+These exist because a YOLO detector was used as an auto-labeller while
+building the training data. Nothing in the BlazeEar model, its training, its
+evaluation, or the browser demo requires Ultralytics at run time; it is a
+data-preparation convenience only.
+
+Anyone redistributing this repository, or using it commercially, should treat
+those files as AGPL-3.0 and either comply with that license, obtain an
+Ultralytics commercial license, or remove them.

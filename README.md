@@ -652,6 +652,27 @@ python train_blazeear.py \
 training without them leaves the model never having seen a face whose ears are
 hidden while being handed exactly that a third of the time at inference.
 
+## License
+
+Apache License 2.0 &mdash; see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+This replaces the earlier CC BY-NC 4.0 terms, so commercial use is now
+permitted.
+
+BlazeEar derives from [MediaPipe](https://github.com/google-ai-edge/mediapipe)
+BlazeFace, which is also Apache-2.0, and the two-stage pipeline runs
+MediaPipe's published BlazeFace weights unmodified as its first stage.
+
+**One exception, worth reading before you redistribute.** The optional YOLO
+auto-labelling tooling depends on
+[Ultralytics](https://github.com/ultralytics/ultralytics), which is
+**AGPL-3.0**, not Apache-2.0. That covers
+`model_weights/yolov11_ear_detector.pt`, `finetune_yolov11.py`,
+`utils/yolo11_demo.py`, and the Ultralytics-dependent paths in `data_prep.py`
+and `relabel.py`. Nothing in the BlazeEar model, its training, its evaluation,
+or the browser demo needs Ultralytics at run time &mdash; it was a
+data-preparation convenience. Treat those files as AGPL-3.0, or remove them.
+See [NOTICE](NOTICE).
+
 ## Next Directions
 
 Areas that naturally follow from the current pipeline:
