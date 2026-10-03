@@ -399,8 +399,9 @@ python utils/debug_training.py \
 ## Optional: YOLO auto-labelling (not distributed)
 
 A fine-tuned YOLOv11 detector was used to propose ear labels while building
-`data/splits/*.csv`. Those labels are checked in, so none of this is needed to
-train, evaluate or run BlazeEar.
+`data/splits/*.csv`. Neither the datasets nor the splits are distributed here
+(`/data` is gitignored), so none of this is needed to run or evaluate the
+shipped model.
 
 The tooling itself is **not in this repository**: `finetune_yolov11.py`,
 `utils/yolo11_demo.py` and `model_weights/yolov11_ear_detector.pt` depend on
@@ -661,6 +662,23 @@ hidden while being handed exactly that a third of the time at inference.
 Apache License 2.0 &mdash; see [LICENSE](LICENSE) and [NOTICE](NOTICE).
 This replaces the earlier CC BY-NC 4.0 terms, so commercial use is now
 permitted.
+
+**The code, the architecture and the trained weights are Apache-2.0.** Two
+things in this repository are not, and both are called out in
+[NOTICE](NOTICE):
+
+- **The sample photographs.** Every image checked in is a frame from the
+  datasets used to build BlazeEar, with detections drawn on it. They carry
+  their source terms &mdash; mostly Open Images, whose photographs are
+  individually licensed by their photographers and commonly require
+  attribution &mdash; not the Apache License. They are illustrations of model
+  output, nothing depends on them, and they can be deleted without affecting
+  anything.
+- **The YOLO auto-labelling tooling**, which is AGPL-3.0 and is therefore not
+  distributed here at all (see below).
+
+The training data is not distributed either: `/data` is excluded from version
+control, so no dataset images or annotations are redistributed.
 
 BlazeEar derives from [MediaPipe](https://github.com/google-ai-edge/mediapipe)
 BlazeFace, which is also Apache-2.0, and the two-stage pipeline runs

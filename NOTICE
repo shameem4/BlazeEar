@@ -26,6 +26,42 @@ which the two-stage pipeline runs unmodified as its first stage.
 
 --------------------------------------------------------------------------------
 
+SAMPLE IMAGES ARE NOT APACHE-LICENSED
+
+The Apache License above covers the source code, the model architecture and
+the trained weights. It does not cover the photographs in this repository.
+
+Every image checked in here is a frame from the datasets used to build
+BlazeEar, with detections drawn over it, and each carries whatever licence its
+source carries rather than this one:
+
+  assets/frontal.png                 "ear annotations..v3i.coco" (Roboflow)
+  assets/qual_example_2.png          "ear annotations..v3i.coco" (Roboflow)
+  assets/linkedin_cover_blazeear.png Open Images
+  assets/multi_face.png              Open Images
+  assets/profile.png                 Open Images
+  assets/qual_example_1.png          Open Images
+  assets/crowd_small.png             Open Images
+  utils/tests/assets/images/ear_group.jpg    Open Images
+  utils/tests/assets/images/single_ear.jpg   Open Images
+
+Open Images photographs are individually licensed by their original
+photographers, commonly under Creative Commons terms that require attribution;
+the Roboflow export carries that dataset's own terms. Neither grants the
+Apache License. They appear here as illustrations of model output, which is
+why they are the one part of this repository that is not Apache-2.0.
+
+Source matches were established by perceptual hash against the training
+corpus, so treat the attributions as the dataset of origin rather than as a
+per-photograph licence determination. Anyone redistributing these images, or
+reusing them outside this repository, should check the terms of the specific
+source image.
+
+The training data itself is not distributed here at all: /data is excluded
+from version control, so no dataset images or annotations are redistributed.
+
+--------------------------------------------------------------------------------
+
 NOT COVERED BY THIS LICENSE
 
 Some optional tooling in this repository depends on Ultralytics YOLO
@@ -50,6 +86,6 @@ lazily so that neither the package nor its terms are required to use them:
 
 `ultralytics` is deliberately absent from requirements.txt. Nothing in the
 BlazeEar model, its training, its evaluation, or the browser demo needs it:
-it was an auto-labeller used while building data/splits/*.csv, and those
-labels are checked in. Installing it to re-run label proposal means accepting
-AGPL-3.0 for that use.
+it was an auto-labeller used while building data/splits/*.csv, which are not
+distributed here either. Installing it to re-run label proposal means
+accepting AGPL-3.0 for that use.

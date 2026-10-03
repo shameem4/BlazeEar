@@ -1,6 +1,6 @@
 /data
 *.pyc
-*.pyc
+__pycache__/
 nul
 /utils/__pycache__
 model_weights/yolo11x-pose.pt
@@ -11,9 +11,7 @@ data/splits/crops_train.csv
 data/splits/crops_val.csv
 
 # Upstream YOLO checkpoints: Ultralytics downloads these on demand, and they
-# were tracked in three separate locations. The trained ear labeler
-# (model_weights/yolov11_ear_detector.pt) stays tracked -- it is not
-# reproducible without a GPU run.
+# were tracked in three separate locations.
 yolo11n.pt
 yolo11m.pt
 yolo26n.pt
@@ -23,7 +21,8 @@ weights/
 # redistribute. Kept on disk so the auto-labelling workflow still runs locally,
 # but not part of the published repo. Nothing in the BlazeEar model, its
 # training, its evaluation or the browser demo needs these -- they were used to
-# propose labels while building data/splits/*.csv, which are checked in.
+# propose labels while building data/splits/*.csv, which are not distributed
+# either (/data is ignored).
 finetune_yolov11.py
 utils/yolo11_demo.py
 model_weights/yolov11_ear_detector.pt
