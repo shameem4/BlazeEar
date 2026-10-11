@@ -424,6 +424,26 @@ class BlazeEarInference {
 
 
 /**
+ * Test-time augmentation views, as (expand, flip) pairs.
+ *
+ * One ear is detected through several nuisance-perturbed crops and the
+ * agreeing boxes are fused. The ear never moved, so the spread between those
+ * detections is the model's own noise, and fusing cancels part of it.
+ *
+ * MUST stay in step with VIEWS in utils/tta.py; the two lists are pinned
+ * against each other by utils/tests/tests/test_tta.py::TestViewsMatchJs.
+ * The default view is first, so views=1 is exactly the pipeline without TTA.
+ */
+const TTA_VIEWS = [
+    [1.50, false],
+    [1.50, true],
+    [1.35, false],
+    [1.65, false],
+];
+
+const FUSION_IOU_THRESHOLD = 0.5;
+
+/**
  * The two-stage pipeline: MediaPipe BlazeFace on the full frame, then the ear
  * model on a square crop around each detected face.
  *
@@ -447,6 +467,9 @@ class BlazeEarInference {
 class BlazeEarTwoStage {
     constructor(options = {}) {
         this.expand = options.expand ?? 1.5;
+        // How many of TTA_VIEWS to run. 1 is the single-crop pipeline; 4 was
+        // measured at +0.047 mAP@0.5 for 4x the ear-model passes.
+        this.views = Math.max(1, Math.min(options.views ?? 4, TTA_VIEWS.length));
         this.faceThreshold = options.faceThreshold ?? 0.2;
         this.maxFaces = options.maxFaces ?? 8;
         this.iouThreshold = options.iouThreshold ?? 0.3;
@@ -485,13 +508,13 @@ class BlazeEarTwoStage {
      * utils/tests/tests/test_face_crops.py::TestCropWindowIsPinned; both
      * implementations were checked against all of them.
      */
-    _cropWindow(face, frameWidth, frameHeight) {
+    _cropWindow(face, frameWidth, frameHeight, expand = this.expand) {
         const faceW = face.xmax - face.xmin;
         const faceH = face.ymax - face.ymin;
         // Clamp the side first so the window stays square wherever the frame
         // allows it, then shift the centre to keep it inside.
         const side = Math.min(
-            this.expand * Math.max(faceW, faceH), frameWidth, frameHeight);
+            expand * Math.max(faceW, faceH), frameWidth, frameHeight);
         const cx = (face.xmin + face.xmax) / 2;
         const cy = (face.ymin + face.ymax) / 2;
         const x0 = Math.round(Math.min(Math.max(cx - side / 2, 0), frameWidth - side));
@@ -518,29 +541,91 @@ class BlazeEarTwoStage {
         const ctx = canvas.getContext('2d');
         const collected = [];
 
-        for (const face of faces.slice(0, this.maxFaces)) {
-            const { x0, y0, side } = this._cropWindow(face, width, height);
-            if (side < 2) continue;
-            canvas.width = side;
-            canvas.height = side;
-            ctx.clearRect(0, 0, side, side);
-            ctx.drawImage(source, x0, y0, side, side, 0, 0, side, side);
+        for (const [viewExpand, flip] of TTA_VIEWS.slice(0, this.views)) {
+            for (const face of faces.slice(0, this.maxFaces)) {
+                const { x0, y0, side } = this._cropWindow(
+                    face, width, height, viewExpand);
+                if (side < 2) continue;
+                canvas.width = side;
+                canvas.height = side;
+                ctx.clearRect(0, 0, side, side);
+                if (flip) {
+                    // Mirror about the crop's own centre line.
+                    ctx.save();
+                    ctx.translate(side, 0);
+                    ctx.scale(-1, 1);
+                    ctx.drawImage(source, x0, y0, side, side, 0, 0, side, side);
+                    ctx.restore();
+                } else {
+                    ctx.drawImage(source, x0, y0, side, side, 0, 0, side, side);
+                }
 
-            for (const ear of await this.ear.detect(canvas)) {
-                // Crop coordinates back into the original frame.
-                collected.push({
-                    ...ear,
-                    xmin: ear.xmin + x0, xmax: ear.xmax + x0,
-                    ymin: ear.ymin + y0, ymax: ear.ymax + y0,
-                });
+                for (const ear of await this.ear.detect(canvas)) {
+                    // Undo the mirror, then crop coordinates back into the frame.
+                    const xmin = flip ? side - ear.xmax : ear.xmin;
+                    const xmax = flip ? side - ear.xmin : ear.xmax;
+                    collected.push({
+                        ...ear,
+                        xmin: xmin + x0, xmax: xmax + x0,
+                        ymin: ear.ymin + y0, ymax: ear.ymax + y0,
+                    });
+                }
             }
         }
 
-        // Overlapping face crops can each report the same ear.
-        const merged = this.ear._nms(
-            collected.sort((a, b) => b.confidence - a.confidence),
-            this.iouThreshold);
+        // Overlapping face crops -- and, with TTA, overlapping views -- can each
+        // report the same ear.
+        const merged = this._mergeViews(collected);
         return Object.assign(merged, { faceCount: faces.length });
+    }
+
+    /**
+     * Fuse detections of the same ear into one box.
+     *
+     * Clusters greedily from the highest-scoring detection down; a cluster
+     * becomes the score-weighted mean of its members and takes their HIGHEST
+     * score. Fusion clusters at a looser overlap than the pipeline's NMS, so
+     * the fused set goes through NMS afterwards too -- without that, more
+     * views just means more boxes (measured: 7 / 12 / 17 detections for
+     * 1 / 2 / 4 views on a two-face image). This duplicates merge_views() in utils/tta.py with rule='max',
+     * and the two must agree or the browser reports different boxes from
+     * everything that was measured. Taking sum/viewCount instead was tried and
+     * is worse -- see the note in utils/tta.py.
+     */
+    _mergeViews(detections, iouThreshold = FUSION_IOU_THRESHOLD) {
+        const sorted = detections.slice().sort((a, b) => b.confidence - a.confidence);
+        const used = new Array(sorted.length).fill(false);
+        const fused = [];
+        for (let i = 0; i < sorted.length; i++) {
+            if (used[i]) continue;
+            const members = [];
+            for (let j = i; j < sorted.length; j++) {
+                if (!used[j] && this.ear._computeIoU(sorted[i], sorted[j]) >= iouThreshold) {
+                    used[j] = true;
+                    members.push(sorted[j]);
+                }
+            }
+            let wsum = 0, ymin = 0, xmin = 0, ymax = 0, xmax = 0, best = 0;
+            for (const m of members) {
+                const w = m.confidence;
+                wsum += w;
+                ymin += m.ymin * w; xmin += m.xmin * w;
+                ymax += m.ymax * w; xmax += m.xmax * w;
+                if (m.confidence > best) best = m.confidence;
+            }
+            const box = {
+                ymin: ymin / wsum, xmin: xmin / wsum,
+                ymax: ymax / wsum, xmax: xmax / wsum,
+            };
+            fused.push({
+                ...box,
+                x: box.xmin, y: box.ymin,
+                width: box.xmax - box.xmin, height: box.ymax - box.ymin,
+                confidence: best,
+            });
+        }
+        return this.ear._nms(
+            fused.sort((a, b) => b.confidence - a.confidence), this.iouThreshold);
     }
 
     drawDetections(ctx, detections, options = {}) {

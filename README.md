@@ -498,6 +498,49 @@ Boxes from an untrusted source are scored as ignore regions in the other views,
 so excluding them does not turn a correctly-detected ear into a false positive.
 Checkpoints predating the v2 anchor change need `--legacy-anchors`.
 
+## Test-time augmentation
+
+The two-stage pipeline can detect each ear through several nuisance-perturbed
+crops and fuse the agreeing boxes. The ear never moves between views, so the
+spread between those detections is the model's own noise, and fusing cancels
+part of it. Views are `(expand, flip)` pairs in `utils/tta.py`, mirrored in
+`docs/blazeear_inference.js` and pinned against each other by
+`utils/tests/tests/test_tta.py`.
+
+```bash
+python evaluate_two_stage.py --csv data/splits/common_heldout.csv \
+  --data-root data/raw \
+  --crop-checkpoint runs/checkpoints_crop/BlazeEar_best.pth --tta 4
+```
+
+Measured on the 279-image common held-out set, against the same checkpoint,
+with a paired bootstrap over 2000 resamples of the images:
+
+| views | mAP@0.5 | mAP@[.5:.95] | det IoU | paired gain, mAP@0.5 |
+|---|---|---|---|---|
+| 1 (no TTA) | 0.5809 | 0.2445 | 0.7193 | --- |
+| 2 | 0.6078 | 0.2565 | 0.7258 | +0.0240 [-0.0018, +0.0533] |
+| 4 | 0.6299 | 0.2776 | 0.7284 | +0.0467 [+0.0191, +0.0788] |
+
+Only the four-view interval excludes zero, so four views is the configuration
+worth running; at two the gain is real-looking but not separable from noise on
+a set this size. It costs one ear-model pass per view per face -- the face
+stage still runs once -- and the ear model is the cheap half at 2.1 ms on one
+CPU thread.
+
+Two findings are worth repeating because both cost a measurement to find:
+
+- A fused box takes the **highest** score among its members. Scoring it as
+  sum-over-view-count instead demotes real ears that only one view found; at
+  two views that rule scored *below* no TTA at all (0.5530 against 0.5809).
+- Fusion clusters at a looser overlap than the pipeline's NMS, so the fused set
+  must go through NMS afterwards as well. Without it, more views simply emit
+  more boxes: 7 / 12 / 17 detections for 1 / 2 / 4 views on a two-face image in
+  the browser, against 7 / 7 / 11 once suppression was added.
+
+The browser pipeline runs four views by default; pass `{views: 1}` to
+`createTwoStageDetector` for the single-crop behaviour.
+
 ## Relabelling
 
 Most images here carry exactly one human-labelled ear (11084 of 13482), so the
@@ -706,3 +749,36 @@ Areas that naturally follow from the current pipeline:
 - Add explicit ear keypoint supervision if labels become available (regressor heads already exist).  
 - Calibrate detection thresholds for different operating points (front‑facing vs profile).  
 - Export to ONNX/TFLite for edge deployment.
+
+### What was measured and ruled out
+
+Several plausible directions were tested and did not pay, which is worth
+recording so they are not retried blind:
+
+- **More training data.** A learning curve at a fixed 50,800-step budget over
+  12.5 / 25 / 50 / 100% of the crops is flat past 25%: 0.6681, 0.7086, 0.7233,
+  0.7173 crop-space mAP@0.5. The last doubling -- 6,300 more human-labelled ear
+  boxes -- bought nothing measurable.
+- **More ears from an auto-labeller.** The fine-tuned YOLO detector finds
+  exactly one confident ear without a human box across 279 held-out images.
+  `relabel.py` already harvested that reservoir; 29% of the rows in that split
+  came from it.
+- **Refitting the anchor priors.** The shipped priors reproduce k-means on
+  *full frames*, so they predate the crop pipeline and are about half the size
+  the model now sees; refitting on crops lifts the anchor-match ceiling from
+  0.469 to 0.571 median IoU. Retrained, it is worse on every crop-space metric
+  (0.7136 against 0.7426). Background accuracy falls 0.9949 -> 0.9920, because
+  larger priors push more anchors past `ANCHOR_IGNORE_IOU` into the ignore band
+  and starve the negative pool. The priors cannot be refit in isolation.
+- **A wider backbone.** Doubling every channel (357,608 parameters against
+  103,160) is worth +0.085 crop-space mAP@0.5 against its own from-scratch
+  control -- but MediaPipe initialisation is worth +0.127, and a widened
+  backbone cannot load those weights. The wide scratch model lands below the
+  shipped narrow pretrained one. Collecting both effects needs a
+  function-preserving widening (Net2Net) from the MediaPipe weights rather than
+  a wider model trained from scratch.
+
+For scale: on the same images and labels, YOLOv11m at 640 px reaches 0.8829
+mAP@0.5 against this pipeline's 0.5809, so the headroom is real -- but it
+differs in both capacity and input resolution, and nothing here has separated
+those two.

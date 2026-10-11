@@ -31,6 +31,7 @@ from utils.config import (
 )
 from utils.detection_eval import DetectionEvaluator
 from utils.nms import suppress_overlapping
+from utils.tta import VIEWS, flip_boxes_x, merge_views
 
 
 def load_ear_model(path, score_threshold, device, legacy_anchors=False):
@@ -62,33 +63,49 @@ def detect_single_stage(model, image):
     return det[:, :4].float(), det[:, 4].float()
 
 
-def detect_two_stage(face_detector, ear_model, image, expand, max_faces):
+def detect_two_stage(face_detector, ear_model, image, expand, max_faces,
+                     views=None, fusion_rule='max'):
     """Ear detections in original-frame coordinates, via one crop per face.
 
     Returns the face count as well, because an image with no face is where the
     pipeline's recall ceiling lives and the caller decides what to do about it.
+
+    `views` runs test-time augmentation: each (view_expand, flip) pair gets its
+    own crop per face and the agreeing detections are fused. The `expand`
+    argument is then only a fallback for a single-view run; the views carry
+    their own scales. Pass None for the plain one-crop-per-face pipeline.
     """
     with torch.no_grad():
         faces = face_detector.process(
             cv2.cvtColor(image, cv2.COLOR_BGR2RGB)).cpu().numpy()
+    view_list = tuple(views) if views else ((expand, False),)
     all_boxes, all_scores = [], []
-    for face in faces[:max_faces]:
-        x0, y0, side = crop_window(face, expand, image.shape)
-        patch = image[y0:y0 + side, x0:x0 + side]
-        if patch.size == 0:
-            continue
-        boxes, scores = detect_single_stage(ear_model, patch)
-        if not len(scores):
-            continue
-        # Crop coordinates back to the original frame.
-        boxes = boxes + torch.tensor([y0, x0, y0, x0], dtype=torch.float32)
-        all_boxes.append(boxes)
-        all_scores.append(scores)
+    for view_expand, flip in view_list:
+        for face in faces[:max_faces]:
+            x0, y0, side = crop_window(face, view_expand, image.shape)
+            patch = image[y0:y0 + side, x0:x0 + side]
+            if patch.size == 0:
+                continue
+            if flip:
+                patch = patch[:, ::-1].copy()
+            boxes, scores = detect_single_stage(ear_model, patch)
+            if not len(scores):
+                continue
+            if flip:
+                boxes = flip_boxes_x(boxes, patch.shape[1])
+            # Crop coordinates back to the original frame.
+            boxes = boxes + torch.tensor([y0, x0, y0, x0], dtype=torch.float32)
+            all_boxes.append(boxes)
+            all_scores.append(scores)
     if not all_boxes:
         return torch.zeros((0, 4)), torch.zeros((0,)), len(faces)
-    # One crop per face means overlapping crops can each report the same ear.
-    boxes, scores = suppress_overlapping(
-        torch.cat(all_boxes), torch.cat(all_scores))
+    if views:
+        boxes, scores = merge_views(all_boxes, all_scores, len(view_list),
+                                    rule=fusion_rule)
+    else:
+        # One crop per face means overlapping crops can each report the same ear.
+        boxes, scores = suppress_overlapping(
+            torch.cat(all_boxes), torch.cat(all_scores))
     return boxes, scores, len(faces)
 
 
@@ -125,6 +142,11 @@ def build_parser():
     parser.add_argument('--fallback', action='store_true',
                         help='on images with no detected face, fall back to '
                              'the full-frame model from --checkpoint')
+    parser.add_argument('--tta', type=int, default=0, metavar='N',
+                        help='fuse detections over the first N augmented '
+                             'views (see utils/tta.VIEWS); 0 disables')
+    parser.add_argument('--fusion-rule', default='max',
+                        choices=['vote', 'max', 'mean'])
     parser.add_argument('--expand', type=float, default=FACE_CROP_EXPAND)
     parser.add_argument('--face-threshold', type=float,
                         default=FACE_CROP_THRESHOLD)
@@ -182,7 +204,9 @@ def main():
                                                  ignore_boxes=ignore)
         if crop_model:
             boxes, scores, n_faces = detect_two_stage(
-                face_detector, crop_model, image, args.expand, args.max_faces)
+                face_detector, crop_model, image, args.expand, args.max_faces,
+                views=VIEWS[:args.tta] if args.tta else None,
+                fusion_rule=args.fusion_rule)
             no_face += (n_faces == 0)
             evaluators['two-stage'].add_image(boxes, scores, gt,
                                               ignore_boxes=ignore)
