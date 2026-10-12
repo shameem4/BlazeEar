@@ -530,11 +530,18 @@ part of it. Views are `(expand, flip)` pairs in `utils/tta.py`, mirrored in
 ```bash
 python evaluate_two_stage.py --csv data/splits/common_heldout.csv \
   --data-root data/raw \
-  --crop-checkpoint runs/checkpoints_crop/BlazeEar_best.pth --tta 4
+  --crop-checkpoint model_weights/BlazeEar_best_256px.pth --tta 4
 ```
 
-Measured on the 279-image common held-out set, against the same checkpoint,
-with a paired bootstrap over 2000 resamples of the images:
+**The tables in this section were measured on the 128 px model**, which is what
+TTA was developed against; they are kept because the conclusions about fusion
+(the rule, the suppression, the view count) are what they establish, and those
+carry over. For how TTA interacts with the shipped 256 px model -- the short
+version is that resolution absorbs most of the gain -- see
+[the 256 px section](#the-256-px-input-shipped).
+
+Measured on the 279-image common held-out set at 128 px, against the same
+checkpoint, with a paired bootstrap over 2000 resamples of the images:
 
 | views | mAP@0.5 | mAP@[.5:.95] | det IoU | paired gain, mAP@0.5 |
 |---|---|---|---|---|
@@ -544,9 +551,9 @@ with a paired bootstrap over 2000 resamples of the images:
 
 Only the four-view interval excludes zero, so four views is the configuration
 worth running; at two the gain is real-looking but not separable from noise on
-a set this size. It costs one ear-model pass per view per face -- the face
-stage still runs once -- and the ear model is the cheap half at 2.1 ms on one
-CPU thread.
+a set this size. It costs one full ear-model pass per view per face, and the
+face stage still runs once per frame regardless: 2.55 ms per view at 128 and
+7.72 ms at 256, on one CPU thread.
 
 Six and eight views were then measured against the shipped four, extending the
 pattern with flips of the two scale views and a wider scale pair:
@@ -749,12 +756,17 @@ python evaluate_two_stage.py \
 python evaluate_two_stage.py \
   --csv data/splits/common_heldout.csv \
   --checkpoint runs/checkpoints_v2/BlazeEar_best.pth \
-  --crop-checkpoint runs/checkpoints_crop/BlazeEar_best.pth
+  --crop-checkpoint model_weights/BlazeEar_best_256px.pth
 ```
+
+The two `runs/` checkpoints above are local training output and are not
+distributed (`/runs` is excluded from version control); only the two crop
+models in `model_weights/` ship.
 
 `--legacy-anchors` is needed for the pre-v2 checkpoint: it was trained against
 the original `w=h=1.0` squares, and decoding it through the fitted ear priors
-gives boxes at the wrong scale rather than an error.
+gives boxes at the wrong scale rather than an error. Those checkpoints also
+predate the 256 px input, so they need `--input-size 128`.
 
 ### Building the face-crop dataset
 
@@ -846,13 +858,37 @@ inheriting `DEFAULT_INPUT_SIZE` there would hand the face weights a 256 px
 input and a 3584-anchor decode.
 
 Retrained at 256 with the same data, initialisation, hyperparameters and 100
-epochs, scored through the deployed inference path on `crops_val`
-(2940 images, 2193 ears), paired bootstrap over 1000 resamples:
+epochs. Both checkpoints ship, so every figure below is reproducible:
+`model_weights/BlazeEar_best_128px.pth` and
+`model_weights/BlazeEar_best_256px.pth`.
 
-| input | mAP@0.5 | mAP@[.5:.95] | det IoU | parameters | CPU, 1 thread |
-|---|---|---|---|---|---|
-| 128 | 0.7426 | 0.3405 | 0.7338 | 103,418 | 2.55 ms |
-| 256 | **0.7783** | **0.3596** | **0.7390** | 103,418 | 7.72 ms |
+#### 128 against 256, every way it was measured
+
+Three measurements, because they answer different questions and do not agree in
+magnitude. **Read the path label before comparing any two numbers here** -- the
+two crop-space paths differ by 0.03 mAP@0.5 on the *same* checkpoint, and
+mixing them cancelled this entire effect on the first attempt.
+
+| measurement | 128 | 256 | delta |
+|---|---|---|---|
+| **crop-space, deployed path** (`crops_val`, 2193 ears) | | | |
+| &nbsp;&nbsp;mAP@0.5 | 0.7426 | **0.7783** | +0.0357 |
+| &nbsp;&nbsp;mAP@[.5:.95] | 0.3405 | **0.3596** | +0.0191 |
+| &nbsp;&nbsp;det IoU | 0.7338 | **0.7390** | +0.0052 |
+| **crop-space, dataloader path** (`evaluate.py`, same split) | | | |
+| &nbsp;&nbsp;mAP@0.5 | 0.7106 | **0.7456** | +0.0350 |
+| &nbsp;&nbsp;mAP@[.5:.95] | 0.3246 | **0.3446** | +0.0200 |
+| &nbsp;&nbsp;det IoU | 0.7273 | **0.7334** | +0.0061 |
+| **end to end, 1 view** (`common_heldout`, 355 ears) | | | |
+| &nbsp;&nbsp;mAP@0.5 | 0.5809 | **0.6766** | +0.0957 |
+| &nbsp;&nbsp;mAP@[.5:.95] | 0.2445 | **0.2962** | +0.0517 |
+| &nbsp;&nbsp;det IoU | 0.7193 | **0.7314** | +0.0121 |
+| **end to end, 4 views** (TTA, the browser default) | | | |
+| &nbsp;&nbsp;mAP@0.5 | 0.6299 | **0.6961** | +0.0662 |
+| &nbsp;&nbsp;mAP@[.5:.95] | 0.2776 | **0.3188** | +0.0412 |
+| &nbsp;&nbsp;det IoU | 0.7284 | **0.7412** | +0.0128 |
+
+Paired bootstrap on the deployed crop-space path, 1000 resamples over images:
 
 | paired difference | 95% CI | |
 |---|---|---|
@@ -860,48 +896,68 @@ epochs, scored through the deployed inference path on `crops_val`
 | mAP@[.5:.95] +0.0188 | [+0.0089, +0.0281] | real |
 | det IoU +0.0052 | [+0.0001, +0.0099] | real, but only just |
 
-Identical parameter count, so this is purely resolution. It costs 3.0x the ear
-model's CPU time. Localisation moves least, which is consistent with everything
-else measured here: det IoU has been the metric least responsive to any
-intervention.
+Three things in that table are worth more than the headline.
 
-**A checkpoint does not record the input size it was trained for.** The
-architecture is fully convolutional, so the 128 px and 256 px models have
-byte-identical state dict shapes and the same 107,506 parameters; only the
-values differ. Loading one at the wrong size therefore does not fail, it just
-gets worse: on the deployed path the 128 px model scores 0.7426 mAP@0.5 at 128
-and 0.4577 at 256. `evaluate.py` and `evaluate_two_stage.py` take
-`--input-size` for this reason, and it has to come from whoever knows the
-provenance of the file.
+**The end-to-end gain is nearly three times the crop-space gain** -- +0.0957
+against +0.0357 mAP@0.5, single view. Crop-space scores pre-made crops; end to
+end, the crops come from the face detector at whatever scale the face happened
+to be, so many are small regions upscaled into the model's input. A plausible
+reading is that resolution helps most exactly where the ear occupies fewest
+real pixels, which crop-space under-samples. That is a hypothesis about the
+mechanism, not a measurement: it has not been tested by stratifying the
+held-out set on face size, and it should be before anyone leans on it.
 
-The superseded 128 px model is kept at
-`model_weights/BlazeEar_best_128px.pth`, since it is the baseline every
-measurement in this README is relative to:
+**Localisation moves least** -- det IoU gains +0.0052 crop-space, the only
+interval here that barely clears zero. Consistent with everything else in this
+README: det IoU has been the metric least responsive to every intervention
+tried, which is the standing reason to think box tightness needs a bigger model
+rather than more work on this one.
+
+**Resolution and TTA overlap**, because both reduce the same localisation
+noise. TTA's marginal gain falls from +0.0467 at 128 to +0.0194 at 256
+(95% CI [+0.0009, +0.0394] -- still real, but only just on mAP@0.5):
+
+| configuration | mAP@0.5 | mAP@[.5:.95] | det IoU | ear CPU per face |
+|---|---|---|---|---|
+| 128, 1 view | 0.5809 | 0.2445 | 0.7193 | 2.55 ms |
+| 128, 2 views | 0.6078 | 0.2565 | 0.7258 | 5.1 ms |
+| 128, 4 views | 0.6299 | 0.2776 | 0.7284 | 10.2 ms |
+| **256, 1 view** | **0.6766** | **0.2962** | **0.7314** | **7.72 ms** |
+| 256, 2 views | 0.6799 | 0.3104 | 0.7350 | 15.4 ms |
+| 256, 4 views | 0.6961 | 0.3188 | 0.7412 | 30.9 ms |
+
+**Single-view 256 beats four-view 128 on every metric and costs less than it**
+(7.72 ms against 10.2 ms). That is the row to copy if the frame budget matters,
+and it is a `{views: 1}` option away in the browser. Four views stay the
+default because they are still the most accurate configuration, but the 256
+model is doing most of the work the fusion used to.
+
+Cost: 3.0x the ear model's CPU time per view at identical capacity -- 103,418
+parameters either way, since only the spatial grids change. The face stage is
+unaffected; it still runs once per frame at 128.
+
+**A checkpoint does not record the input size it was trained for.** The 128 px
+and 256 px files have byte-identical state dict shapes -- 103,418 parameters
+plus 4,088 BatchNorm buffers, 107,506 state-dict elements -- and differ only in
+their values. Loading one at the wrong size does not fail, it degrades: the
+128 px model scores 0.7426 mAP@0.5 at 128 and **0.4577** at 256 on the deployed
+path. `evaluate.py` and `evaluate_two_stage.py` take `--input-size` for this
+reason, and the value has to come from whoever knows the provenance of the
+file. `evaluate.py` asserts that its dataloader, its model and its decode scale
+all agree on it rather than trusting three defaults to line up.
 
 ```bash
+# the shipped model (256 is the default, so --input-size is optional here)
+python evaluate.py --checkpoint model_weights/BlazeEar_best_256px.pth \
+  --csv data/splits/crops_val.csv --data-root data/face_crops/
+
+# the superseded baseline, which MUST be told its size
 python evaluate.py --checkpoint model_weights/BlazeEar_best_128px.pth \
   --csv data/splits/crops_val.csv --data-root data/face_crops/ --input-size 128
 ```
 
-That prints 0.7106, not 0.7426, because `evaluate.py` is the dataloader path
-and the figures above are the deployed one -- see the caution at the end of
-this section. Both are correct; they are not interchangeable.
-
-End to end on the held-out set, 256 subsumes most of what TTA was buying and
-beats 128-with-TTA while costing less than it:
-
-| configuration | mAP@0.5 | ear-model CPU per face |
-|---|---|---|
-| 128, 1 view | 0.5809 | 2.55 ms |
-| 128, 4 views | 0.6299 | 10.2 ms |
-| **256, 1 view** | **0.6766** | **7.72 ms** |
-| 256, 4 views | 0.6961 | 30.9 ms |
-
-TTA's marginal gain falls from +0.0490 at 128 to +0.0194 at 256
-(95% CI [+0.0009, +0.0394]) -- still real, but only just on mAP@0.5, and both
-techniques are reducing the same localisation noise. Four views remain the
-browser default; one view at 256 is the better trade if the frame budget
-matters, and it is a `{views: 1}` option away.
+Those print 0.7456 and 0.7106 -- the dataloader-path rows above, not the
+deployed-path ones. Both are correct; they are not interchangeable.
 
 Worth recording that this was predicted to FAIL. The case for 256 rested on
 raising the anchor-match ceiling -- the same argument that justified refitting
@@ -910,14 +966,6 @@ actually the same: better priors only re-describe boxes the grid already
 cannot place, whereas more pixels supply feature detail as well as a finer
 grid. Mechanism matters, and a ceiling argument alone does not distinguish the
 two cases.
-
-A caution on measuring this. Two different "crop-space" paths exist, and they
-disagree by 0.03 mAP@0.5 on the same checkpoint: `evaluate.py` uses the
-dataloader's letterbox with the trainer's post-processing at NMS 0.5 (0.7106
-for the shipped model), while `model.process` uses `resize_pad` and NMS 0.3 --
-what actually deploys (0.7426). Comparing a number from one against a number
-from the other cancelled this entire effect on the first attempt. The table
-above is the deployed path for both arms.
 
 ### What was measured and ruled out
 
