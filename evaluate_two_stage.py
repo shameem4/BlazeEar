@@ -249,8 +249,13 @@ def main():
 
     print(f'\n{images} images, {human_ears} human ears')
     if crop_model:
+        # Deliberately not called "the recall ceiling": measured per ear on
+        # the common held-out set, this accounts for 2.5% of unreachable ears
+        # while another 8.7% sit outside every crop window in images where a
+        # face WAS found. This is the smaller half.
         print(f'face detector found nothing in {no_face} '
-              f'({100 * no_face / max(images, 1):.1f}%) -- a hard recall ceiling')
+              f'({100 * no_face / max(images, 1):.1f}%) -- one part of the '
+              f'recall ceiling; see FACE_CROP_EXPAND for the larger part')
     header = f'{"pipeline":20s} {"mAP@0.5":>9s} {"mAP@[.5:.95]":>13s} {"det IoU":>9s}'
     print()
     print(header)

@@ -134,9 +134,34 @@ NEGATIVE_ANNOTATION_SOURCE = "NEGATIVE"
 # on a square crop around each face. The dataset builder and the evaluator must
 # agree on these, or evaluation crops differently than training did and the
 # pipeline is scored on inputs it never saw.
-FACE_CROP_EXPAND = 1.5        # crop side, in multiples of the face box
-# Face score floor. This sets the recall ceiling, and is the only real lever
-# on it: an ear whose face is missed never reaches the second stage. Swept on
+# Crop side, in multiples of the face box.
+#
+# This is the LARGER of the two levers on the recall ceiling, which is the
+# opposite of what the note below this used to say. Measured per ear on the
+# common held-out set (355 ears), counting an ear as reachable when its centre
+# falls inside some crop window:
+#
+#   reachable                            315   88.7%
+#   no face found in the image             9    2.5%
+#   face found, ear outside every crop    31    8.7%
+#
+# So 11.3% of ears can never reach the second stage, and the dominant cause is
+# crop GEOMETRY, not face detection -- ears sit at the side of the head, and
+# 1.5x a frontal face box does not always contain them. Those 40 ears score
+# exactly 0.0000 mAP@0.5 at both input sizes, which is how the figures above
+# were confirmed.
+#
+# Raising this captures more ears and spends more of the input on background,
+# so it trades coverage against the ear's size in model pixels. That trade was
+# settled at 128 px. It has NOT been re-swept at 256, where there is
+# resolution to spare, and the stratified results in the README suggest the
+# model-pixel side of the trade is exactly what matters most -- so 1.5 is the
+# value inherited from the 128 px pipeline rather than one fitted to this one.
+FACE_CROP_EXPAND = 1.5
+# Face score floor. One of the two levers on the recall ceiling, and the
+# smaller one (see above): an ear whose face is missed never reaches the second
+# stage, but far more ears are lost to the crop window than to the detector.
+# Swept on
 # the validation split, with no retraining of the crop model:
 #
 #   threshold   no face   mAP@0.5   mAP@[.5:.95]   det IoU

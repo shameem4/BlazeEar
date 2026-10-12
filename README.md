@@ -690,10 +690,13 @@ Stage one is MediaPipe's published BlazeFace weights, unmodified. Nothing about
 this deviates from MediaPipe; the original design had simply collapsed a
 two-stage pattern into one stage.
 
-The cost is a recall ceiling: an ear whose face is missed never reaches the
-second stage, 2.9% of images at the shipped face threshold of 0.2. That is
-charged honestly in every number above -- those ears count as misses rather
-than leaving the denominator. A full-frame fallback on those images was
+The cost is a recall ceiling: an ear the pipeline never shows the second stage
+cannot be found. Measured per ear, 11.3% are unreachable -- 2.5% because no
+face was detected, and 8.7% because the ear fell outside every crop window
+despite a face being found (see
+[the ceiling section](#the-recall-ceiling-is-crop-geometry-not-face-detection)).
+All of that is charged honestly in every number above -- those ears count as
+misses rather than leaving the denominator. A full-frame fallback on those images was
 measured and is a wash, because the ears it would have to find there are a
 median 4.4 px.
 
@@ -898,14 +901,62 @@ Paired bootstrap on the deployed crop-space path, 1000 resamples over images:
 
 Three things in that table are worth more than the headline.
 
-**The end-to-end gain is nearly three times the crop-space gain** -- +0.0957
-against +0.0357 mAP@0.5, single view. Crop-space scores pre-made crops; end to
-end, the crops come from the face detector at whatever scale the face happened
-to be, so many are small regions upscaled into the model's input. A plausible
-reading is that resolution helps most exactly where the ear occupies fewest
-real pixels, which crop-space under-samples. That is a hypothesis about the
-mechanism, not a measurement: it has not been tested by stratifying the
-held-out set on face size, and it should be before anyone leans on it.
+**The end-to-end gain is nearly three times the crop-space gain** -- paired,
++0.0926 mAP@0.5 end to end (95% CI [+0.0557, +0.1306]) against +0.0353
+crop-space (95% CI [+0.0210, +0.0499]). The intervals are disjoint, so the
+difference between the two measurements is real and not sampling noise.
+
+The mechanism first offered for it was wrong, and the test that refuted it is
+below. The guess was that end-to-end crops are smaller, so more of them are
+upscaled into the input and crop-space under-samples that. The crop-size
+distributions are in fact nearly identical -- median side 237 px for
+`crops_val` against 262 px live, with 96.6% against 96.5% of crops above
+128 px -- so that is not the explanation. What remains is that `crops_val` and
+`common_heldout` are different image sets of very different difficulty (0.7426
+against 0.5809 mAP@0.5 at 128 px), and a harder set leaves more for resolution
+to recover. That is consistent with the numbers but has not been isolated, and
+no mechanism specific to the two-stage pipeline survives.
+
+#### Stratified by face crop size
+
+The crop side is `FACE_CROP_EXPAND` x the face box, and that crop is resized
+to the input, so the crop side decides whether the input is discarding real
+pixels. The prediction was sharp: a crop below 128 px is upscaled by both
+models and 256 cannot recover detail that was never captured, so the gain
+should vanish there and concentrate in the large-crop bins.
+
+**It does the opposite.** Each ear is assigned to the smallest crop window
+containing its centre -- the best-resolution view the pipeline had of it --
+and scored COCO-style, with out-of-bin ears as ignore regions so a detection
+on one is neither rewarded nor punished. One view, no TTA, so this is
+resolution alone:
+
+| bin | ears | 128 | 256 | delta | 95% CI | |
+|---|---|---|---|---|---|---|
+| crop <=192 px | 85 | 0.5507 | **0.7364** | **+0.1856** | [+0.0776, +0.2753] | 256 better |
+| crop 192-256 px | 68 | 0.7004 | 0.7649 | +0.0645 | [-0.0098, +0.1371] | no difference |
+| crop 256-384 px | 86 | 0.6138 | 0.6771 | +0.0633 | [-0.0168, +0.1468] | no difference |
+| crop >384 px | 76 | 0.8142 | **0.9060** | +0.0918 | [+0.0113, +0.1809] | 256 better |
+| unreachable | 40 | 0.0000 | 0.0000 | --- | --- | neither model, ever |
+
+The gain is positive in every bin and **largest in the smallest-crop bin**,
+which is where no gain was predicted. There is no monotonic relationship with
+crop size, so preserving real detail is not what 256 is buying -- that would
+have produced the opposite ordering.
+
+The standard explanation for this in object detection fits: the heads have a
+fixed stride in *model* pixels (8 and 16), so what matters is the object's size
+relative to that stride, not its size in real pixels. Upscaling the input makes
+a small object cover more cells and overlap more anchors even though it adds no
+information. The crop-size table supports that reading -- the ear is a
+near-constant ~32 px of model input in every bin, because the crop is
+proportional to the face, so the only thing resolution changes is how many
+cells that ~32 px becomes. It is not isolated, though: the bins also differ in
+baseline difficulty (0.55 to 0.81 at 128 px), and the clean test would vary the
+stride rather than the input size.
+
+The `unreachable` row scoring exactly zero in both arms is the check that the
+binning is doing what it claims.
 
 **Localisation moves least** -- det IoU gains +0.0052 crop-space, the only
 interval here that barely clears zero. Consistent with everything else in this
@@ -967,6 +1018,41 @@ cannot place, whereas more pixels supply feature detail as well as a finer
 grid. Mechanism matters, and a ceiling argument alone does not distinguish the
 two cases.
 
+### The recall ceiling is crop geometry, not face detection
+
+The face detector finds nothing in 2.9% of held-out images, and that number was
+previously reported as the pipeline's recall ceiling. Counting per **ear**
+instead of per image, and calling an ear reachable when its centre falls inside
+some crop window:
+
+| | ears | share |
+|---|---|---|
+| reachable | 315 | 88.7% |
+| no face found in the image | 9 | 2.5% |
+| **face found, ear outside every crop** | **31** | **8.7%** |
+| total unreachable | 40 | 11.3% |
+
+So the structural ceiling is **88.7%, not 97.5%**, and the dominant cause is
+`FACE_CROP_EXPAND` rather than the face detector -- by 3.4x. Ears sit at the
+side of the head, and 1.5x a frontal face box does not reliably contain them.
+Those 40 ears score exactly 0.0000 mAP@0.5 at both input sizes, in every
+stratum, which is how this was confirmed rather than inferred.
+
+This is why the back-camera face model removed the no-face rate completely and
+bought nothing measurable: it was fixing the 2.5%.
+
+Two things follow, neither yet done:
+
+- **Re-sweep `FACE_CROP_EXPAND` at 256 px.** A wider crop captures more ears
+  and shrinks the ear in model pixels, so it trades coverage against exactly
+  the quantity the stratified results say matters most. That trade was settled
+  at 128 px, where resolution was scarce; at 256 there is resolution to spare,
+  so the optimum should have moved. 1.5 is inherited, not fitted to this
+  pipeline.
+- **Measure per-ear reachability on `crops_val` too.** The 11.3% is from 355
+  ears on one 279-image set. The direction is not in doubt -- the 31 ears were
+  counted directly -- but the magnitude deserves the larger split.
+
 ### What was measured and ruled out
 
 Several plausible directions were tested and did not pay, which is worth
@@ -996,20 +1082,24 @@ recording so they are not retried blind:
   a wider model trained from scratch.
 - **A bigger face stage.** The front BlazeFace finds no face in 2.9% of
   held-out images, and an ear whose face is missed never reaches the second
-  stage, so this is the pipeline's hard recall ceiling. MediaPipe's
+  stage. MediaPipe's
   back-camera model (136,240 parameters at 256 px, against 101,390 at 128)
   removes the ceiling completely -- no-face goes to 0.0% at its own swept
   threshold of 0.10 -- and buys nothing: -0.0078 mAP@0.5, 95% CI [-0.0557,
   +0.0395], not distinguishable, and the same verdict on mAP@[.5:.95] and det
-  IoU. The ceiling was simply too small to be worth removing. Those 2.9% of
-  images hold **9 of 355 ears (2.5%)**, so perfect face recall could add at
-  most 2.5 recall points, and the back model recovers 3 of the 9. A plausible
-  reason the rest of the frame does not improve either: `make_face_crops.py`
-  built the training crops with the *front* detector, so the ear model's input
-  distribution is front-model crops and a differently-calibrated face box is
-  off-distribution even when it is correct. That is untested -- all the
-  end-to-end intervals here straddle zero, so there is no established
-  regression to explain, only an absent gain.
+  IoU. Perfect FACE DETECTION was simply not worth much: those 2.9% of images
+  hold **9 of 355 ears (2.5%)**, and the back model recovers 3 of the 9. A
+  plausible reason the rest of the frame does not improve either:
+  `make_face_crops.py` built the training crops with the *front* detector, so
+  the ear model's input distribution is front-model crops and a
+  differently-calibrated face box is off-distribution even when it is correct.
+  That is untested -- all the end-to-end intervals here straddle zero, so there
+  is no established regression to explain, only an absent gain.
+
+  **This entry originally generalised from 2.5% to "the recall ceiling", which
+  was wrong.** Counting per ear rather than per image, 11.3% of ears never
+  reach the second stage, and the larger part is not the detector's fault --
+  see below.
 For scale: on the same images and labels, YOLOv11m at 640 px reaches 0.8829
 mAP@0.5 against this pipeline's 0.5809, so the headroom is real -- but it
 differs in both capacity and input resolution, and nothing here has separated
