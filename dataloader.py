@@ -16,6 +16,7 @@ from utils import augmentation
 from utils.data_utils import split_dataframe_by_images
 from utils.anchor_utils import assign_anchor_targets, generate_anchors_from_priors
 from utils.config import (
+    DEFAULT_INPUT_SIZE,
     ANCHOR_IGNORE_IOU,
     ANCHOR_TOP_K,
     IGNORE_ANNOTATION_SOURCE,
@@ -67,7 +68,7 @@ class CSVDetectorDataset(Dataset):
         self,
         csv_path: str,
         root_dir: str,
-        target_size: Tuple[int, int] = (128, 128),
+        target_size: Tuple[int, int] = (DEFAULT_INPUT_SIZE, DEFAULT_INPUT_SIZE),
         augment: bool = True,
         max_samples: Optional[int] = None,
         augment_max_side: int = 256,
@@ -359,7 +360,7 @@ def create_dataloader(
     batch_size: int = 32,
     shuffle: bool = True,
     num_workers: int = 4,
-    target_size: Tuple[int, int] = (128, 128),
+    target_size: Tuple[int, int] = (DEFAULT_INPUT_SIZE, DEFAULT_INPUT_SIZE),
     augment: bool = True,
     max_samples: Optional[int] = None,
     persistent_workers: bool = False,

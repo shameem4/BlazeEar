@@ -33,7 +33,7 @@ The project started as an experiment to reuse BlazeFace’s anchor layout and tr
 ### Current state
 
 - A unified data preparation pipeline merges multiple annotation sources into a single CSV with provenance.  
-- The BlazeEar model is a BlazeFace‑style front detector (128×128 input) with ear‑specific training, hard negative mining, and optional focal loss.  
+- The BlazeEar model is a BlazeFace‑style front detector (256×256 input) with ear‑specific training, hard negative mining, and optional focal loss. The architecture is MediaPipe's; only the input resolution differs, and the parameter count is identical at either size.  
 - Debug and visualization scripts help compare BlazeEar to baseline detectors and export sample predictions.
 
 ---
@@ -103,7 +103,7 @@ Input RGB image (H×W×3)
         │
         ▼
 Resize + pad to square
-Resize to 128×128
+Resize to 256×256
         │
         ▼
 Conv 5×5 s=2, 24ch
@@ -190,7 +190,7 @@ train.csv           val.csv
         ▼               ▼
 CSVDetectorDataset (dataloader.py)
   - load image
-  - resize/pad to 128×128
+  - resize/pad to 256×256
   - augment (color + geometry + occlusion)
   - normalize boxes
   - encode to anchors (utils/anchor_utils.py)
@@ -449,10 +449,10 @@ python export_onnx.py \
 Note: as of PyTorch 2.8, `torch.export` ONNX export can fall back to the legacy exporter for some ops
 (notably padding). You can enforce a pure `torch.export` path with `--no-fallback` (may fail).
 
-The exported model takes `image: (N, 3, 128, 128)` and returns:
+The exported model takes `image: (N, 3, 256, 256)` and returns:
 
-- `raw_boxes: (N, 896, 16)`
-- `raw_scores: (N, 896, 1)` (logits)
+- `raw_boxes: (N, 3584, 16)`
+- `raw_scores: (N, 3584, 1)` (logits)
 
 To export an ONNX model that includes post-processing (decode + NMS) and returns final detections:
 
@@ -550,6 +550,16 @@ Two findings are worth repeating because both cost a measurement to find:
   must go through NMS afterwards as well. Without it, more views simply emit
   more boxes: 7 / 12 / 17 detections for 1 / 2 / 4 views on a two-face image in
   the browser, against 7 / 7 / 11 once suppression was added.
+
+Both of those were found by running the browser pipeline against the real ONNX
+graphs, and so was the anchor-count bug that the move to 256 exposed: the
+browser read a hardcoded `numAnchors = 896` from a graph now emitting 3584, so
+it saw only the top fourteen rows of the grid. Nothing threw -- the tensor is
+simply longer than the loop -- and the whole Python suite passed. It showed up
+as detections at confidence 0.32 where Python got 0.96. The count now comes
+from the output tensor. **A JS change is not verified by the Python tests**;
+the parity worth checking is one image through both paths, which should agree
+to a fraction of a pixel (canvas and cv2 resample slightly differently).
 
 The browser pipeline runs four views by default; pass `{views: 1}` to
 `createTwoStageDetector` for the single-crop behaviour.
@@ -793,8 +803,12 @@ Areas that naturally follow from the current pipeline:
   are now fitted rather than inherited (see above); what remains is a
   front-facing vs profile split, which needs those subsets labelled.  
 - Export to ONNX/TFLite for edge deployment.
+- Price 320 px. 256 paid, the grid argument keeps scaling, and the
+  anchor machinery is now size-parameterised, so the run is a constant
+  change -- but CPU grows as the square and 3.0x is already the headline
+  cost of 256.
 
-### A higher input resolution is worth taking
+### The 256 px input (shipped)
 
 The network is fully convolutional, so the MediaPipe weights load unchanged at
 any input size and only the spatial grids grow. At 256 px the stride-8 head
@@ -803,6 +817,13 @@ and anchor centres sit 0.03125 apart instead of 0.0625. The priors need no
 refit: they are normalized to the input, so the same prior simply lands on a
 finer grid. **Nothing about the architecture, the parameter count or the
 two-stage pipeline changes.**
+
+This is the shipped configuration. The face stage stays at 128 -- those are
+MediaPipe's weights at their own input size -- so both sizes exist in one
+process, and input size is therefore a `BlazeEar` constructor argument rather
+than only a module constant. `FACE_INPUT_SIZE` pins the face stage explicitly;
+inheriting `DEFAULT_INPUT_SIZE` there would hand the face weights a 256 px
+input and a 3584-anchor decode.
 
 Retrained at 256 with the same data, initialisation, hyperparameters and 100
 epochs, scored through the deployed inference path on `crops_val`
@@ -823,6 +844,22 @@ Identical parameter count, so this is purely resolution. It costs 3.0x the ear
 model's CPU time. Localisation moves least, which is consistent with everything
 else measured here: det IoU has been the metric least responsive to any
 intervention.
+
+End to end on the held-out set, 256 subsumes most of what TTA was buying and
+beats 128-with-TTA while costing less than it:
+
+| configuration | mAP@0.5 | ear-model CPU per face |
+|---|---|---|
+| 128, 1 view | 0.5809 | 2.55 ms |
+| 128, 4 views | 0.6299 | 10.2 ms |
+| **256, 1 view** | **0.6766** | **7.72 ms** |
+| 256, 4 views | 0.6961 | 30.9 ms |
+
+TTA's marginal gain falls from +0.0490 at 128 to +0.0194 at 256
+(95% CI [+0.0009, +0.0394]) -- still real, but only just on mAP@0.5, and both
+techniques are reducing the same localisation noise. Four views remain the
+browser default; one view at 256 is the better trade if the frame budget
+matters, and it is a `{views: 1}` option away.
 
 Worth recording that this was predicted to FAIL. The case for 256 rested on
 raising the anchor-match ceiling -- the same argument that justified refitting

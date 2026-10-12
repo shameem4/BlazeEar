@@ -1,11 +1,12 @@
 import torch
 
 from dataloader import collate_detector_fn
+from utils.config import (DEFAULT_INPUT_SIZE, TOTAL_ANCHORS)
 
 
 def _make_sample(num_boxes: int) -> dict:
-    image = torch.zeros(3, 128, 128)
-    anchor_targets = torch.zeros(896, 5)
+    image = torch.zeros(3, DEFAULT_INPUT_SIZE, DEFAULT_INPUT_SIZE)
+    anchor_targets = torch.zeros(TOTAL_ANCHORS, 5)
     small = torch.zeros(16, 16, 5)
     big = torch.zeros(8, 8, 5)
     gt_boxes = torch.zeros((num_boxes, 4), dtype=torch.float32)

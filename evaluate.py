@@ -34,6 +34,7 @@ from blazebase import checkpoint_is_folded, load_checkpoint_state
 from blazeear import BlazeEar
 from dataloader import create_dataloader
 from utils.config import (
+    FACE_INPUT_SIZE,
     DEFAULT_BEST_CHECKPOINT,
     DEFAULT_DATA_ROOT,
     DEFAULT_VAL_CSV,
@@ -130,7 +131,8 @@ def main() -> None:
     )
     if args.legacy_anchors:
         from utils.anchor_utils import generate_reference_anchors
-        legacy, _, _ = generate_reference_anchors(fixed_anchor_size=True)
+        legacy, _, _ = generate_reference_anchors(
+            input_size=FACE_INPUT_SIZE, fixed_anchor_size=True)
         trainer.reference_anchors = legacy.float().to(device)
         print('Decoding with legacy w=h=1.0 anchors.')
     trainer.model.eval()

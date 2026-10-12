@@ -22,7 +22,8 @@ import torchvision
 from blazebase import checkpoint_is_folded, load_checkpoint_state
 from blazeear import BlazeEar
 from utils.box_utils import yxyx_to_xyxy
-from utils.config import DETECTION_SCORE_THRESHOLD, NMS_IOU_THRESHOLD
+from utils.config import (DEFAULT_INPUT_SIZE, DETECTION_SCORE_THRESHOLD,
+                          NMS_IOU_THRESHOLD)
 
 
 class BlazeEarONNXWrapper(nn.Module):
@@ -103,7 +104,7 @@ class BlazeEarDetectionsWrapper(nn.Module):
 def export_onnx(
     checkpoint_path: Path,
     output_path: Path,
-    input_size: int = 128,
+    input_size: int = DEFAULT_INPUT_SIZE,
     opset: int = 17,
     constant_folding: bool = False,
     fallback: bool = True,
@@ -198,8 +199,9 @@ def main() -> int:
     parser.add_argument(
         "--input-size",
         type=int,
-        default=128,
-        help="Model input resolution (expects square, default 128)",
+        default=DEFAULT_INPUT_SIZE,
+        help=f"Model input resolution (expects square, default "
+             f"{DEFAULT_INPUT_SIZE})",
     )
     parser.add_argument(
         "--opset",

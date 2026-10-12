@@ -21,7 +21,10 @@ from typing import Tuple
 import numpy as np
 import torch
 
-from utils.config import BIG_GRID_SIZE, SMALL_GRID_SIZE, TOTAL_ANCHORS
+from utils.config import (BIG_ANCHORS_PER_CELL, BIG_GRID_SIZE,
+                          DEFAULT_INPUT_SIZE, SMALL_ANCHORS_PER_CELL,
+                          SMALL_GRID_SIZE, TOTAL_ANCHORS, grids_for,
+                          total_anchors_for)
 
 
 # =============================================================================
@@ -119,10 +122,13 @@ def generate_reference_anchors(
     """
     Generate reference anchor centers for BlazeFace detector.
     
-    Creates a grid of anchor centers for two scales:
-    - 16x16 grid with 2 anchors per cell = 512 small anchors
-    - 8x8 grid with 6 anchors per cell = 384 big anchors
-    Total: 896 anchors
+    Creates a grid of anchor centers for two scales, sized from `input_size`:
+    - input/8 grid with 2 anchors per cell
+    - input/16 grid with 6 anchors per cell
+    At the default 128 that is 16x16x2 + 8x8x6 = 896, the layout MediaPipe's
+    weights and every pre-256 checkpoint decode against. The default stays 128
+    for that reason: this is the legacy/reference geometry, and callers that
+    want the configured ear size pass it explicitly.
     
     Args:
         input_size: Input image size (default 128)
@@ -135,28 +141,36 @@ def generate_reference_anchors(
         small_anchors: [512, 4] tensor for 16x16 grid
         big_anchors: [384, 4] tensor for 8x8 grid
     """
+    small_grid, big_grid = grids_for(input_size)
+
     if fixed_anchor_size:
-        # Small anchors: 16x16 grid, size 0.0625 (1/16)
-        # Centers at 0.03125, 0.09375, ..., 0.96875
-        small_boxes = torch.linspace(0.03125, 0.96875, 16)
+        # Grid centres, half a cell in from each edge. At 128 this is the
+        # original 16x16 and 8x8 layout (centres 0.03125..0.96875 and
+        # 0.0625..0.9375); the grids were hardcoded here, so `input_size` was
+        # accepted and then ignored in this branch.
+        small_step = 1.0 / (2 * small_grid)
+        big_step = 1.0 / (2 * big_grid)
+        small_boxes = torch.linspace(small_step, 1.0 - small_step, small_grid)
+        big_boxes = torch.linspace(big_step, 1.0 - big_step, big_grid)
 
-        # Big anchors: 8x8 grid, size 0.125 (1/8)
-        # Centers at 0.0625, 0.1875, ..., 0.9375
-        big_boxes = torch.linspace(0.0625, 0.9375, 8)
-
-        small_x = small_boxes.repeat_interleave(2).repeat(16)  # 512
-        small_y = small_boxes.repeat_interleave(32)  # 512
+        small_x = small_boxes.repeat_interleave(SMALL_ANCHORS_PER_CELL).repeat(small_grid)
+        small_y = small_boxes.repeat_interleave(SMALL_ANCHORS_PER_CELL * small_grid)
         small_w = torch.ones_like(small_x)
         small_h = torch.ones_like(small_x)
         small_anchors = torch.stack([small_x, small_y, small_w, small_h], dim=1)
 
-        big_x = big_boxes.repeat_interleave(6).repeat(8)  # 384
-        big_y = big_boxes.repeat_interleave(48)  # 384
+        big_x = big_boxes.repeat_interleave(BIG_ANCHORS_PER_CELL).repeat(big_grid)
+        big_y = big_boxes.repeat_interleave(BIG_ANCHORS_PER_CELL * big_grid)
         big_w = torch.ones_like(big_x)
         big_h = torch.ones_like(big_x)
         big_anchors = torch.stack([big_x, big_y, big_w, big_h], dim=1)
 
         reference_anchors = torch.cat([small_anchors, big_anchors], dim=0)
+        if reference_anchors.shape[0] != total_anchors_for(input_size):
+            raise ValueError(
+                f'built {reference_anchors.shape[0]} reference anchors for a '
+                f'{input_size} px input, expected '
+                f'{total_anchors_for(input_size)}')
         return reference_anchors, small_anchors, big_anchors
 
     options = dict(anchor_options)
@@ -165,7 +179,7 @@ def generate_reference_anchors(
     options["fixed_anchor_size"] = False
 
     reference_anchors = _generate_variable_anchors_from_options(options)
-    small_count = 16 * 16 * 2
+    small_count = small_grid ** 2 * SMALL_ANCHORS_PER_CELL
     small_anchors = reference_anchors[:small_count]
     big_anchors = reference_anchors[small_count:]
     return reference_anchors, small_anchors, big_anchors
@@ -202,8 +216,8 @@ anchor_options = {
 def generate_anchors_from_priors(
     small_priors=None,
     big_priors=None,
-    small_grid: int = SMALL_GRID_SIZE,
-    big_grid: int = BIG_GRID_SIZE
+    small_grid: int | None = None,
+    big_grid: int | None = None
 ) -> torch.Tensor:
     """
     Build the 896-anchor tensor from explicit (width, height) priors.
@@ -219,6 +233,11 @@ def generate_anchors_from_priors(
 
     small_priors = EAR_ANCHOR_PRIORS_SMALL if small_priors is None else small_priors
     big_priors = EAR_ANCHOR_PRIORS_BIG if big_priors is None else big_priors
+    # Resolved HERE, not as default arguments. Default arguments bind at import,
+    # so a caller that changed the configured input size got a function still
+    # building the old grid -- which is a wrong-scale decode, not an error.
+    small_grid = SMALL_GRID_SIZE if small_grid is None else small_grid
+    big_grid = BIG_GRID_SIZE if big_grid is None else big_grid
 
     step_small = 1.0 / (2 * small_grid)
     step_big = 1.0 / (2 * big_grid)
@@ -364,7 +383,7 @@ def assign_anchor_targets(
 _ANCHOR_CACHE: dict = {}
 
 
-def get_anchors(device=None) -> torch.Tensor:
+def get_anchors(device=None, input_size: int = DEFAULT_INPUT_SIZE) -> torch.Tensor:
     """
     The one anchor tensor. Every path must use this.
 
@@ -380,11 +399,21 @@ def get_anchors(device=None) -> torch.Tensor:
     relative to them. Training and inference must therefore use identical values
     or the boxes come out at the wrong scale.
 
+    The anchor set depends on the input size, because the grids do: 896
+    anchors at 128, 3584 at 256. The cache is therefore keyed by size as well
+    as device. Anchors are normalized, so the PRIORS are size-independent --
+    only the grid the centres sit on changes.
+
     Returns:
-        [896, 4] of (x_center, y_center, width, height), normalized.
+        [A, 4] of (x_center, y_center, width, height), normalized.
     """
-    key = str(device)
+    key = (str(device), int(input_size))
     if key not in _ANCHOR_CACHE:
-        _ANCHOR_CACHE[key] = generate_anchors_from_priors().to(device) if device is not None \
-            else generate_anchors_from_priors()
+        small, big = grids_for(input_size)
+        anchors = generate_anchors_from_priors(small_grid=small, big_grid=big)
+        if anchors.shape[0] != total_anchors_for(input_size):
+            raise ValueError(
+                f'built {anchors.shape[0]} anchors for a {input_size} px input '
+                f'but the grid layout implies {total_anchors_for(input_size)}')
+        _ANCHOR_CACHE[key] = anchors.to(device) if device is not None else anchors
     return _ANCHOR_CACHE[key]

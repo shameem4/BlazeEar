@@ -29,9 +29,14 @@ from blazeear import BlazeEar
 from blazeear_inference import BlazeEarWebExportable
 from make_face_crops import load_face_detector
 from utils.anchor_utils import get_anchors
+from utils.config import DEFAULT_INPUT_SIZE, FACE_INPUT_SIZE
 
 OPSET = 17
-INPUT_SIZE = 128
+# The two stages no longer share an input size: the face graph is MediaPipe's
+# 128 px front model, the ear graph runs at 256. Exporting both at one size was
+# correct only while they happened to agree.
+FACE_GRAPH_INPUT = FACE_INPUT_SIZE
+EAR_GRAPH_INPUT = DEFAULT_INPUT_SIZE
 # Boxes come out in original-image pixels, so judge them in pixels: a
 # hundredth of a pixel cannot move a detection. Scores are probabilities
 # and get a tighter bound.
@@ -44,8 +49,13 @@ def export(wrapper, path, opset=OPSET):
     # Seeded: the export check compares against this same input, and a probe
     # that passes or fails depending on the draw is not a check.
     generator = torch.Generator().manual_seed(0)
+    # The size comes from the wrapper being exported, not from a module
+    # constant: the face graph is 128 px and the ear graph 256, so a shared
+    # constant would feed one of them the other's input and the parity check
+    # would be comparing the wrong thing.
+    side = wrapper.input_size
     dummy = (
-        torch.randn(1, 3, INPUT_SIZE, INPUT_SIZE, generator=generator) * 255,
+        torch.randn(1, 3, side, side, generator=generator) * 255,
         torch.tensor(2.5),
         torch.tensor(0.0),
         torch.tensor(60.0),
@@ -92,7 +102,8 @@ def main():
     # Stage one: the genuine MediaPipe face detector, at its own anchors.
     face = load_face_detector(device='cpu')
     face_wrapper = BlazeEarWebExportable(
-        model=face, anchors=face.anchors.cpu(), input_size=INPUT_SIZE).eval()
+        model=face, anchors=face.anchors.cpu(),
+        input_size=FACE_GRAPH_INPUT).eval()
 
     # Stage two: the crop-trained ear model, at the fitted priors.
     state = load_checkpoint_state(args.ear_checkpoint)
@@ -100,7 +111,8 @@ def main():
     ear.load_state_dict(state)
     ear.eval()
     ear_wrapper = BlazeEarWebExportable(
-        model=ear, anchors=get_anchors(), input_size=INPUT_SIZE).eval()
+        model=ear, anchors=get_anchors(input_size=EAR_GRAPH_INPUT),
+        input_size=EAR_GRAPH_INPUT).eval()
 
     print('Exporting, then checking each graph against its source model:')
     ok = True

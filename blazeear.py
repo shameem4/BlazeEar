@@ -9,10 +9,11 @@ from blazebase import BlazeBlock, BlazeBlock_WT
 from blazedetector import BlazeDetector
 from utils.anchor_utils import get_anchors
 from utils.config import (
+    DEFAULT_INPUT_SIZE,
     DETECTION_SCORE_THRESHOLD,
     EAR_GEOMETRY_FILTER_ENABLED,
     NMS_IOU_THRESHOLD,
-    TOTAL_ANCHORS,
+    total_anchors_for,
 )
 from utils.detection_filters import filter_by_geometry
 
@@ -26,8 +27,12 @@ class BlazeEar(BlazeDetector):
     it does not use the "double" BlazeBlocks.
 
     Architecture notes:
-    - Input: 128x128 (front) or 256x256 (back)
-    - Output: 896 anchors = 512 (16x16 grid × 2) + 384 (8x8 grid × 6)
+    - Input: `input_size` square, 256 for the ear model and 128 for the
+      MediaPipe front face detector this is also used to run. The network is
+      fully convolutional, so one set of weights serves any size; only the
+      spatial grids and therefore the anchor count change.
+    - Output: input/8 squared x 2 + input/16 squared x 6 anchors -- 896 at 128,
+      3584 at 256
     - Classifier: outputs raw logits, sigmoid applied during post-processing
     - Regressor: outputs 16 coords per anchor (4 box + 6×2 keypoints)
 
@@ -41,9 +46,16 @@ class BlazeEar(BlazeDetector):
     https://github.com/google/mediapipe/
 
     """
-    def __init__(self, use_batchnorm: bool = True):
+    def __init__(self, use_batchnorm: bool = True,
+                 input_size: int = DEFAULT_INPUT_SIZE):
         """
         Args:
+            input_size: Square input edge. Sets the anchor set and the decode
+                scales, which must both match what the weights were trained
+                against -- a mismatch produces boxes at the wrong scale rather
+                than an error. Defaults to the ear model's size; pass
+                FACE_INPUT_SIZE to run MediaPipe's front face detector, whose
+                weights are 128 px.
             use_batchnorm: Build the backbone from BlazeBlock, which has explicit
                 trainable BatchNorm. False builds BlazeBlock_WT, the variant with
                 BatchNorm folded into the conv weights, which is what MediaPipe
@@ -57,17 +69,21 @@ class BlazeEar(BlazeDetector):
         """
         super(BlazeEar, self).__init__()
         self.use_batchnorm = use_batchnorm
+        self.input_size = int(input_size)
 
         # These are the settings from the MediaPipe example graph
         # mediapipe/graphs/face_detection/face_detection_mobile_gpu.pbtxt
         self.num_classes = 1
-        self.num_anchors = TOTAL_ANCHORS
+        self.num_anchors = total_anchors_for(self.input_size)
         self.num_coords = 16  # Box + keypoints (MediaPipe layout)
         self.score_clipping_thresh = 100.0
-        self.x_scale = 128.0
-        self.y_scale = 128.0
-        self.h_scale = 128.0
-        self.w_scale = 128.0
+        # resize_pad takes its output size from x_scale, and the decode divides
+        # the raw regression by these to reach normalized offsets, so all four
+        # track the input size.
+        self.x_scale = float(self.input_size)
+        self.y_scale = float(self.input_size)
+        self.h_scale = float(self.input_size)
+        self.w_scale = float(self.input_size)
         self.min_score_thresh = DETECTION_SCORE_THRESHOLD
         self.min_suppression_threshold = NMS_IOU_THRESHOLD
         self.num_keypoints = 6  # Keep keypoint outputs (untrained without labels)
@@ -214,7 +230,7 @@ class BlazeEar(BlazeDetector):
         not configurable per call, because a decode that disagrees with training
         produces boxes at the wrong scale rather than an error.
         """
-        self.anchors = get_anchors().to(self._device())
+        self.anchors = get_anchors(input_size=self.input_size).to(self._device())
         assert self.anchors.ndimension() == 2
         assert self.anchors.shape[0] == self.num_anchors
         assert self.anchors.shape[1] == 4  # [x, y, w, h]

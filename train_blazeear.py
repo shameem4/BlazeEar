@@ -95,7 +95,7 @@ class BlazeEarTrainer:
         checkpoint_dir: str = 'checkpoints',
         log_dir: str = 'logs',
         model_name: str = 'BlazeEar',
-        scale: int = 128,
+        scale: int = DEFAULT_INPUT_SIZE,
         compute_train_map: bool = False,
         eval_score_threshold: float = 0.1,
         nms_iou_threshold: float = NMS_IOU_THRESHOLD,

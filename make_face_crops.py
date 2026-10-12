@@ -23,9 +23,11 @@ from blazebase import load_mediapipe_weights
 from utils.anchor_utils import generate_reference_anchors
 from utils.config import (
     DEFAULT_DATA_ROOT,
+    DEFAULT_INPUT_SIZE,
     FACE_CROP_EXPAND,
     FACE_CROP_MAX_FACES,
     FACE_CROP_THRESHOLD,
+    FACE_INPUT_SIZE,
     HUMAN_ANNOTATION_SOURCES,
     IGNORE_ANNOTATION_SOURCE,
     NEGATIVE_ANNOTATION_SOURCE,
@@ -41,12 +43,18 @@ def load_face_detector(score_threshold=FACE_CROP_THRESHOLD, device='cuda'):
 
     The v2 ear anchors are fitted to ear boxes, so the face detector has to
     carry the square anchors its weights were trained with.
+
+    It also has to carry its own input size. These are MediaPipe's weights for
+    a 128 px front model, while the ear model now runs at 256, so the size is
+    passed explicitly rather than inherited from DEFAULT_INPUT_SIZE -- which
+    would hand the face weights a 256 px input and a 3584-anchor decode.
     """
-    detector = BlazeEar(use_batchnorm=False)
+    detector = BlazeEar(use_batchnorm=False, input_size=FACE_INPUT_SIZE)
     load_mediapipe_weights(detector, FACE_WEIGHTS, strict=False)
     detector.eval().to(device)
     detector.min_score_thresh = score_threshold
-    anchors, _, _ = generate_reference_anchors(fixed_anchor_size=True)
+    anchors, _, _ = generate_reference_anchors(input_size=FACE_INPUT_SIZE,
+                                               fixed_anchor_size=True)
     detector.anchors = anchors.to(device)
     return detector
 
@@ -165,7 +173,7 @@ def build(args):
             stats['crops'] += 1
             reached.update(m['source_row'] for m in kept)
             for m in kept:
-                heights.append(128.0 * m['h'] / side)
+                heights.append(DEFAULT_INPUT_SIZE * m['h'] / side)
             for m in mapped:
                 m.pop('source_row', None)
                 m['image_path'] = name

@@ -11,7 +11,8 @@ from pathlib import Path
 
 import torch
 
-from utils.config import (DETECTION_SCORE_THRESHOLD, FACE_CROP_EXPAND,
+from utils.config import (DEFAULT_INPUT_SIZE, DETECTION_SCORE_THRESHOLD,
+                          FACE_CROP_EXPAND, FACE_INPUT_SIZE,
                           TTA_SCORE_THRESHOLD)
 from utils.tta import VIEWS, flip_boxes_x, merge_views
 
@@ -129,6 +130,25 @@ class TestViewsMatchJs(unittest.TestCase):
 
     def test_fused_threshold_is_above_the_plain_one(self):
         self.assertGreater(TTA_SCORE_THRESHOLD, DETECTION_SCORE_THRESHOLD)
+
+    def test_js_uses_the_same_input_sizes(self):
+        """The two stages run at different input edges now.
+
+        The browser preprocesses to whatever these say, so a drift here feeds
+        a graph the wrong input edge -- which ONNX reports as a shape error for
+        the ear model, but which would silently letterbox differently if the
+        two ever happened to be swapped.
+        """
+        self.assertEqual(self._js_const('EAR_INPUT_SIZE'), DEFAULT_INPUT_SIZE)
+        self.assertEqual(self._js_const('FACE_INPUT_SIZE'), FACE_INPUT_SIZE)
+
+    def test_intermediate_letterbox_matches_python(self):
+        """resize_pad goes source -> 256 -> input_size in both languages."""
+        import inspect
+        from utils import preprocess
+        sig = inspect.signature(preprocess.resize_pad)
+        self.assertEqual(self._js_const('INTERMEDIATE_SIZE'),
+                         sig.parameters['intermediate_size'].default)
 
 
 if __name__ == '__main__':

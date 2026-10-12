@@ -12,6 +12,7 @@ from dataloader import (
 )
 from loss_functions import BlazeEarDetectionLoss
 from blazebase import generate_reference_anchors
+from utils.config import DEFAULT_INPUT_SIZE
 
 
 ASSETS_ROOT = Path("utils/tests/assets")
@@ -27,7 +28,7 @@ def _load_dataset() -> CSVDetectorDataset:
     return CSVDetectorDataset(
         csv_path=str(CSV_PATH),
         root_dir=str(ASSETS_ROOT),
-        target_size=(128, 128),
+        target_size=(DEFAULT_INPUT_SIZE, DEFAULT_INPUT_SIZE),
         augment=False,
     )
 
@@ -51,7 +52,7 @@ class TestPipeline(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.dataset = _load_dataset()
-        cls.reference_anchors, _, _ = generate_reference_anchors()
+        cls.reference_anchors, _, _ = generate_reference_anchors(input_size=DEFAULT_INPUT_SIZE)
         cls.loss = BlazeEarDetectionLoss()
 
     def test_normalization_matches_expected(self):

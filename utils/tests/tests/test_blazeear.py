@@ -9,6 +9,7 @@ import torch
 from blazeear import BlazeEar
 from blazebase import load_mediapipe_weights
 from utils.anchor_utils import anchor_options
+from utils.config import DEFAULT_INPUT_SIZE, TOTAL_ANCHORS
 
 
 class TestBlazeEar(unittest.TestCase):
@@ -18,8 +19,8 @@ class TestBlazeEar(unittest.TestCase):
         """Set up test fixtures."""
         self.device = torch.device("cpu")
         self.model = BlazeEar().to(self.device)
-        self.input_size = 128
-        self.num_anchors = 896
+        self.input_size = DEFAULT_INPUT_SIZE
+        self.num_anchors = TOTAL_ANCHORS
         self.num_coords = 16  # 4 box + 12 keypoint coords
 
     def test_forward_shape(self):
@@ -42,7 +43,7 @@ class TestBlazeEar(unittest.TestCase):
                 
                 boxes, scores = outputs
                 
-                # Check boxes shape: (B, 896, 16)
+                # Check boxes shape: (B, TOTAL_ANCHORS, 16)
                 self.assertEqual(
                     boxes.shape, 
                     torch.Size([batch_size, self.num_anchors, self.num_coords]),
@@ -50,7 +51,7 @@ class TestBlazeEar(unittest.TestCase):
                     f"got {boxes.shape}"
                 )
                 
-                # Check scores shape: (B, 896, 1)
+                # Check scores shape: (B, TOTAL_ANCHORS, 1)
                 self.assertEqual(
                     scores.shape,
                     torch.Size([batch_size, self.num_anchors, 1]),

@@ -12,6 +12,7 @@ import torch
 
 from loss_functions import BlazeEarDetectionLoss, get_loss
 from utils.anchor_utils import generate_reference_anchors
+from utils.config import DEFAULT_INPUT_SIZE, TOTAL_ANCHORS
 
 
 class TestLosses(unittest.TestCase):
@@ -21,7 +22,7 @@ class TestLosses(unittest.TestCase):
         """Set up test fixtures."""
         self.device = torch.device("cpu")
         self.batch_size = 2
-        self.num_anchors = 896
+        self.num_anchors = TOTAL_ANCHORS
         self.loss_fn = BlazeEarDetectionLoss(
             hard_negative_ratio=1.0,
             detection_weight=150.0,
@@ -30,7 +31,7 @@ class TestLosses(unittest.TestCase):
             min_negatives_per_image=10
         )
         # Generate reference anchors (returns tuple: full, small, big)
-        reference_anchors, _, _ = generate_reference_anchors()
+        reference_anchors, _, _ = generate_reference_anchors(input_size=DEFAULT_INPUT_SIZE)
         self.reference_anchors = reference_anchors.float()
 
     def _create_dummy_inputs(

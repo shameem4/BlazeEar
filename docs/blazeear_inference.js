@@ -30,6 +30,16 @@ const ort = (typeof window !== 'undefined' && window.ort) ||
 // the fused path needs its own, higher threshold. Running TTA at the plain
 // threshold was a measured regression on F1 against no TTA at all, which is
 // what this page shipped.
+// Model input edges, mirroring utils/config.DEFAULT_INPUT_SIZE and
+// FACE_INPUT_SIZE. The two graphs no longer agree: the face graph is
+// MediaPipe's 128 px front model, the ear graph runs at 256. Preprocessing
+// still letterboxes through a 256 square first, matching
+// utils.preprocess.resize_pad's intermediate_size, so for the ear model the
+// second resize is a no-op rather than a downsample.
+const EAR_INPUT_SIZE = 256;
+const FACE_INPUT_SIZE = 128;
+const INTERMEDIATE_SIZE = 256;
+
 const SCORE_THRESHOLD = 0.80;
 const TTA_SCORE_THRESHOLD = 0.85;
 
@@ -52,6 +62,8 @@ class BlazeEarInference {
      * @param {Object} options - Configuration options
      * @param {number} options.confidenceThreshold - Minimum confidence for detections (default: 0.80)
      * @param {number} options.iouThreshold - IoU threshold for NMS (default: 0.3)
+     * @param {number} options.inputSize - Model input edge (default: 256,
+     *     the ear graph; the face graph is 128)
      */
     constructor(options = {}) {
         this.confidenceThreshold = options.confidenceThreshold ?? SCORE_THRESHOLD;
@@ -66,7 +78,7 @@ class BlazeEarInference {
         this.maxAspectRatio = options.maxAspectRatio ?? 2.57;
         this.minSizeFrac = options.minSizeFrac ?? 0.022;
         this.maxSizeFrac = options.maxSizeFrac ?? 0.733;
-        this.inputSize = 128;
+        this.inputSize = options.inputSize ?? EAR_INPUT_SIZE;
         this.session = null;
         this.isLoaded = false;
     }
@@ -119,24 +131,26 @@ class BlazeEarInference {
         const { imageData, width, height } = this._getImageData(source);
         
         // Calculate preprocessing parameters
+        const side = this.inputSize;
+        const mid = INTERMEDIATE_SIZE;
         const maxDim = Math.max(height, width);
-        const scale = maxDim / 256.0;
+        const scale = maxDim / mid;
         const newH = Math.round(height / scale);
         const newW = Math.round(width / scale);
-        const padH = 256 - newH;
-        const padW = 256 - newW;
+        const padH = mid - newH;
+        const padW = mid - newW;
         const padH1 = Math.floor(padH / 2);
         const padW1 = Math.floor(padW / 2);
         const padY = padH1 * scale;
         const padX = padW1 * scale;
 
-        // Create 256x256 canvas for resize + pad
+        // Intermediate square canvas for resize + pad
         const canvas256 = document.createElement('canvas');
-        canvas256.width = 256;
-        canvas256.height = 256;
+        canvas256.width = mid;
+        canvas256.height = mid;
         const ctx256 = canvas256.getContext('2d');
         ctx256.fillStyle = 'black';
-        ctx256.fillRect(0, 0, 256, 256);
+        ctx256.fillRect(0, 0, mid, mid);
 
         // Draw resized image centered
         if (source instanceof ImageData) {
@@ -150,32 +164,29 @@ class BlazeEarInference {
             ctx256.drawImage(source, padW1, padH1, newW, newH);
         }
 
-        // Create 128x128 canvas for final resize
+        // Final canvas at the model's own input edge. At 256 this is a copy
+        // of the intermediate, which is what resize_pad does in Python too.
         const canvas128 = document.createElement('canvas');
-        canvas128.width = 128;
-        canvas128.height = 128;
+        canvas128.width = side;
+        canvas128.height = side;
         const ctx128 = canvas128.getContext('2d');
-        ctx128.drawImage(canvas256, 0, 0, 128, 128);
+        ctx128.drawImage(canvas256, 0, 0, side, side);
 
         // Get pixel data and convert to CHW float32 tensor
-        const imgData = ctx128.getContext ? 
-            ctx128.getImageData(0, 0, 128, 128) :
-            canvas128.getContext('2d').getImageData(0, 0, 128, 128);
-        
+        const imgData = ctx128.getImageData(0, 0, side, side);
+
         const pixels = imgData.data;
-        const tensorData = new Float32Array(3 * 128 * 128);
+        const plane = side * side;
+        const tensorData = new Float32Array(3 * plane);
 
         // Convert RGBA to RGB CHW format (keep in [0, 255] range for the model)
-        for (let y = 0; y < 128; y++) {
-            for (let x = 0; x < 128; x++) {
-                const srcIdx = (y * 128 + x) * 4;
-                const r = pixels[srcIdx];
-                const g = pixels[srcIdx + 1];
-                const b = pixels[srcIdx + 2];
-
-                tensorData[0 * 128 * 128 + y * 128 + x] = r;
-                tensorData[1 * 128 * 128 + y * 128 + x] = g;
-                tensorData[2 * 128 * 128 + y * 128 + x] = b;
+        for (let y = 0; y < side; y++) {
+            for (let x = 0; x < side; x++) {
+                const srcIdx = (y * side + x) * 4;
+                const dstIdx = y * side + x;
+                tensorData[dstIdx] = pixels[srcIdx];
+                tensorData[plane + dstIdx] = pixels[srcIdx + 1];
+                tensorData[2 * plane + dstIdx] = pixels[srcIdx + 2];
             }
         }
 
@@ -243,7 +254,8 @@ class BlazeEarInference {
         const { tensorData, scale, padY, padX, originalWidth, originalHeight } = this.preprocess(source);
 
         // Create input tensor
-        const imageTensor = new ort.Tensor('float32', tensorData, [1, 3, 128, 128]);
+        const imageTensor = new ort.Tensor('float32', tensorData,
+            [1, 3, this.inputSize, this.inputSize]);
 
         const results = await this.session.run({
             'image': imageTensor,
@@ -252,7 +264,7 @@ class BlazeEarInference {
             'pad_x': new ort.Tensor('float32', [padX], [])
         });
 
-        // The graph returns all 896 decoded boxes; thresholding and NMS happen
+        // The graph returns every decoded box; thresholding and NMS happen
         // here, because TopK and NMS emit int64 and ONNX Runtime Web rejects it.
         return this._processWebModelOutput(
             results.boxes.data,
@@ -267,7 +279,14 @@ class BlazeEarInference {
      * @private
      */
     _processWebModelOutput(boxesData, scoresData, originalWidth, originalHeight) {
-        const numAnchors = 896;
+        // Taken from the output, never assumed. This was hardcoded to 896, the
+        // anchor count at a 128 px input. At 256 the graph emits 3584, so the
+        // loop read only the first 896 -- the top fourteen rows of the grid --
+        // and silently returned low-confidence boxes from anchors that do not
+        // cover the subject. Nothing threw: the tensor is simply longer than
+        // the loop. Every Python test passed; only running the real graph
+        // showed it.
+        const numAnchors = scoresData.length;
         const candidates = [];
 
         // Filter by confidence threshold
@@ -482,14 +501,18 @@ class BlazeEarTwoStage {
         this.faceThreshold = options.faceThreshold ?? 0.2;
         this.maxFaces = options.maxFaces ?? 8;
         this.iouThreshold = options.iouThreshold ?? 0.3;
+        // The two graphs have different input edges, so each stage carries
+        // its own: MediaPipe's face weights are 128 px, the ear model is 256.
         this.face = new BlazeEarInference({
             confidenceThreshold: this.faceThreshold,
             iouThreshold: this.iouThreshold,
+            inputSize: FACE_INPUT_SIZE,
         });
         this.ear = new BlazeEarInference({
             confidenceThreshold: options.confidenceThreshold
                 ?? (this.views > 1 ? TTA_SCORE_THRESHOLD : SCORE_THRESHOLD),
             iouThreshold: this.iouThreshold,
+            inputSize: EAR_INPUT_SIZE,
         });
         this.isLoaded = false;
     }

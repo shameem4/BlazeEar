@@ -62,7 +62,8 @@ from typing import Tuple, Union, Optional
 
 import numpy as np
 import torch
-from utils.config import MAX_DETECTIONS, NMS_IOU_THRESHOLD
+from utils.config import (DEFAULT_INPUT_SIZE, MAX_DETECTIONS,
+                          NMS_IOU_THRESHOLD)
 from utils.nms import suppress_overlapping
 import torch.nn as nn
 import torchvision.ops
@@ -83,7 +84,7 @@ class BlazeEarInference(nn.Module):
         weights_path: Path to trained model weights (.pth file)
         confidence_threshold: Minimum score for a detection (default: 0.70)
         iou_threshold: IoU threshold for NMS (default: 0.3)
-        input_size: Model input size (default: 128)
+        input_size: Model input size (default: the configured ear size)
         max_detections: Maximum number of detections to return (default: 100)
         device: Device to run on ("cuda", "cpu", or torch.device)
         score_clipping_thresh: Clipping threshold for raw scores (default: 100.0)
@@ -96,7 +97,7 @@ class BlazeEarInference(nn.Module):
         weights_path: Optional[Union[str, Path]] = None,
         confidence_threshold: float = 0.70,
         iou_threshold: float = NMS_IOU_THRESHOLD,
-        input_size: int = 128,
+        input_size: int = DEFAULT_INPUT_SIZE,
         max_detections: int = MAX_DETECTIONS,
         device: Union[str, torch.device] = "cpu",
         score_clipping_thresh: float = 100.0,
@@ -137,7 +138,8 @@ class BlazeEarInference(nn.Module):
     
     def _generate_anchors(self) -> torch.Tensor:
         """
-        The 896 anchors, from the single shared definition.
+        The anchor set for this instance's input size, from the single
+        shared definition.
 
         This used to rebuild them inline with w=h=1.0 hardcoded, independently
         of training. Anchor w/h scale the network's raw prediction during
@@ -145,7 +147,7 @@ class BlazeEarInference(nn.Module):
         scale whenever the training priors change.
         """
         from utils.anchor_utils import get_anchors
-        return get_anchors()
+        return get_anchors(input_size=self.input_size)
 
     def _create_model(self) -> nn.Module:
         """Create the backbone matching whatever the checkpoint holds.
@@ -612,7 +614,7 @@ class BlazeEarInferenceExportable(nn.Module):
         anchors: torch.Tensor,
         confidence_threshold: float = 0.70,
         iou_threshold: float = NMS_IOU_THRESHOLD,
-        input_size: int = 128,
+        input_size: int = DEFAULT_INPUT_SIZE,
         max_detections: int = MAX_DETECTIONS,
         score_clipping_thresh: float = 100.0,
     ):
@@ -751,7 +753,7 @@ class BlazeEarWebExportable(nn.Module):
         self,
         model: nn.Module,
         anchors: torch.Tensor,
-        input_size: int = 128,
+        input_size: int = DEFAULT_INPUT_SIZE,
         score_clipping_thresh: float = 100.0,
     ):
         super().__init__()
@@ -859,7 +861,7 @@ class BlazeEarEndToEndExportable(nn.Module):
         anchors: torch.Tensor,
         confidence_threshold: float = 0.70,
         iou_threshold: float = NMS_IOU_THRESHOLD,
-        input_size: int = 128,
+        input_size: int = DEFAULT_INPUT_SIZE,
         max_detections: int = MAX_DETECTIONS,
         score_clipping_thresh: float = 100.0,
     ):

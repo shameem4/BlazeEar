@@ -17,6 +17,7 @@ from tqdm import tqdm
 
 from dataloader import CSVDetectorDataset
 from utils.anchor_utils import assign_anchor_targets, generate_anchors_from_priors
+from utils.config import DEFAULT_INPUT_SIZE
 from blazeear import BlazeEar
 from blazebase import generate_reference_anchors
 from loss_functions import BlazeEarDetectionLoss, compute_mean_iou
@@ -151,7 +152,7 @@ def run_anchor_unit_tests() -> None:
 
 def run_decode_unit_test(loss_fn: BlazeEarDetectionLoss) -> None:
     _log_subheading("Decode sanity check")
-    reference_anchors, _, _ = generate_reference_anchors()
+    reference_anchors, _, _ = generate_reference_anchors(input_size=DEFAULT_INPUT_SIZE)
     gt = torch.tensor([[0.1, 0.2, 0.3, 0.4]])
     preds = torch.zeros((1, 1, 4))
     preds[..., 0] = (gt[0, 1] + gt[0, 3]) / 2 * loss_fn.scale - reference_anchors[0, 0]
@@ -172,7 +173,7 @@ def run_csv_encode_decode_test(
 ) -> None:
     """Ensure encode/decode math is consistent with CSV-derived GT boxes."""
     _log_subheading("CSV encode/decode consistency test")
-    reference_anchors, _, _ = generate_reference_anchors()
+    reference_anchors, _, _ = generate_reference_anchors(input_size=DEFAULT_INPUT_SIZE)
     loss_fn = BlazeEarDetectionLoss(**LOSS_DEBUG_KWARGS)
     sample_indices = list(range(min(max_samples, len(dataset))))
 
@@ -466,7 +467,7 @@ def create_debug_visualization(
 
 def _prepare_inference_tensor(
     image_rgb: np.ndarray,
-    target_size: Tuple[int, int] = (128, 128)
+    target_size: Tuple[int, int] = (DEFAULT_INPUT_SIZE, DEFAULT_INPUT_SIZE)
 ) -> Tuple[np.ndarray, float, int, int]:
     """Resize and pad RGB image to detector input while tracking offsets."""
     orig_h, orig_w = image_rgb.shape[:2]
@@ -492,7 +493,7 @@ def _run_detector_on_image(
     detector: Optional[BlazeEar],
     image_rgb: np.ndarray,
     device: torch.device,
-    target_size: Tuple[int, int] = (128, 128)
+    target_size: Tuple[int, int] = (DEFAULT_INPUT_SIZE, DEFAULT_INPUT_SIZE)
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Run detector on RGB image and return (boxes_xyxy, scores)."""
     if detector is None:
@@ -891,7 +892,7 @@ def main() -> None:
     dataset = CSVDetectorDataset(
         csv_path=str(csv_path),
         root_dir=args.data_root,
-        target_size=(128, 128),
+        target_size=(DEFAULT_INPUT_SIZE, DEFAULT_INPUT_SIZE),
         augment=False
     )
 
@@ -910,7 +911,7 @@ def main() -> None:
     _log_kv("Device", str(device))
     _log_kv("Dataset samples", len(dataset))
     loss_fn = BlazeEarDetectionLoss(**LOSS_DEBUG_KWARGS).to(device)
-    reference_anchors, _, _ = generate_reference_anchors()
+    reference_anchors, _, _ = generate_reference_anchors(input_size=DEFAULT_INPUT_SIZE)
     reference_anchors = reference_anchors.to(device)
     comparison_detector = None
     compare_path = args.compare_weights

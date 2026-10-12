@@ -14,6 +14,7 @@ import torch
 
 from blazebase import load_mediapipe_weights
 from blazeear import BlazeEar
+from utils.config import (DEFAULT_INPUT_SIZE, TOTAL_ANCHORS)
 
 WEIGHTS = Path('model_weights/blazeface.pth')
 requires_weights = pytest.mark.skipif(
@@ -24,7 +25,7 @@ requires_weights = pytest.mark.skipif(
 @pytest.fixture(scope='module')
 def sample_input():
     torch.manual_seed(0)
-    return torch.randn(4, 3, 128, 128) * 50 + 128
+    return torch.randn(4, 3, DEFAULT_INPUT_SIZE, DEFAULT_INPUT_SIZE) * 50 + 128
 
 
 class TestBackboneConstruction:
@@ -41,8 +42,8 @@ class TestBackboneConstruction:
     def test_both_variants_share_the_output_contract(self, sample_input):
         for flag in (True, False):
             boxes, scores = BlazeEar(use_batchnorm=flag)(sample_input)
-            assert boxes.shape == (4, 896, 16)
-            assert scores.shape == (4, 896, 1)
+            assert boxes.shape == (4, TOTAL_ANCHORS, 16)
+            assert scores.shape == (4, TOTAL_ANCHORS, 1)
 
 
 @requires_weights
@@ -167,5 +168,5 @@ class TestHeadInitialization:
         model.init_detection_heads()
         model.train()
         with torch.no_grad():
-            _, scores = model(torch.randn(4, 3, 128, 128) * 50 + 128)
+            _, scores = model(torch.randn(4, 3, DEFAULT_INPUT_SIZE, DEFAULT_INPUT_SIZE) * 50 + 128)
         assert abs(float(scores.median())) < 20, 'logits should start near the prior'

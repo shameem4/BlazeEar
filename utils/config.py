@@ -2,12 +2,45 @@
 Configuration constants for BlazeEar detection.
 """
 
-# Anchor configuration
-SMALL_GRID_SIZE = 16
-BIG_GRID_SIZE = 8
+# Model input size.
+#
+# The ear model runs at 256. The network is fully convolutional, so the
+# MediaPipe weights load unchanged at any size and only the spatial grids grow;
+# the parameter count is identical at 128 and 256. Measured on crops_val
+# through the deployed path, 256 is worth +0.0353 mAP@0.5 (95% CI [+0.0210,
+# +0.0499]) for 3.0x the ear model's CPU time -- see README. It also beats
+# 128-with-4-view-TTA outright while costing less than it.
+DEFAULT_INPUT_SIZE = 256
+
+# The face stage is MediaPipe's front BlazeFace and stays at 128: those are
+# someone else's weights at their own input size. Both sizes therefore exist in
+# one process, which is why input size is a BlazeEar constructor argument and
+# not only this constant.
+FACE_INPUT_SIZE = 128
+
+# Anchor configuration, derived from the input size rather than restated.
+# The stride-8 head is input/8 cells across and the stride-16 head input/16, so
+# 128 gives the historical 16/8 grids and 896 anchors, and 256 gives 32/16 and
+# 3584. These were literals, which meant changing the input size left the
+# anchor count behind -- and a decode built on the wrong anchor count produces
+# boxes at the wrong scale rather than an error.
 SMALL_ANCHORS_PER_CELL = 2
 BIG_ANCHORS_PER_CELL = 6
-TOTAL_ANCHORS = 896  # 16*16*2 + 8*8*6
+
+
+def grids_for(input_size: int) -> tuple[int, int]:
+    """(stride-8 grid, stride-16 grid) for an input size."""
+    return input_size // 8, input_size // 16
+
+
+def total_anchors_for(input_size: int) -> int:
+    small, big = grids_for(input_size)
+    return (small ** 2 * SMALL_ANCHORS_PER_CELL
+            + big ** 2 * BIG_ANCHORS_PER_CELL)
+
+
+SMALL_GRID_SIZE, BIG_GRID_SIZE = grids_for(DEFAULT_INPUT_SIZE)
+TOTAL_ANCHORS = total_anchors_for(DEFAULT_INPUT_SIZE)
 
 # Default paths
 DEFAULT_WEIGHTS_PATH = "model_weights/blazeface.pth"
@@ -25,9 +58,6 @@ DEFAULT_LEARNING_RATE = 1e-4
 DEFAULT_WEIGHT_DECAY = 1e-4
 DEFAULT_NUM_WORKERS = 4
 DEFAULT_SAVE_EVERY = 10
-
-# Model parameters
-DEFAULT_INPUT_SIZE = 128
 
 # Detection post-processing. One value each, shared by every path that turns
 # raw anchors into detections. These were previously spread across five

@@ -7,7 +7,9 @@ from utils.anchor_utils import (
     assign_anchor_targets,
     generate_anchors_from_priors,
 )
-from utils.config import EAR_ANCHOR_PRIORS_BIG, EAR_ANCHOR_PRIORS_SMALL
+from utils.config import (BIG_GRID_SIZE, EAR_ANCHOR_PRIORS_BIG,
+                          EAR_ANCHOR_PRIORS_SMALL, SMALL_GRID_SIZE,
+                          TOTAL_ANCHORS, grids_for, total_anchors_for)
 
 
 @pytest.fixture(scope='module')
@@ -20,9 +22,23 @@ def box(ymin, xmin, ymax, xmax):
 
 
 class TestAnchorGeneration:
-    def test_keeps_the_896_layout(self, anchors):
-        expected = 16 * 16 * len(EAR_ANCHOR_PRIORS_SMALL) + 8 * 8 * len(EAR_ANCHOR_PRIORS_BIG)
-        assert anchors.shape == (expected, 4) == (896, 4)
+    def test_layout_follows_the_configured_grids(self, anchors):
+        expected = (SMALL_GRID_SIZE ** 2 * len(EAR_ANCHOR_PRIORS_SMALL)
+                    + BIG_GRID_SIZE ** 2 * len(EAR_ANCHOR_PRIORS_BIG))
+        assert anchors.shape == (expected, 4) == (TOTAL_ANCHORS, 4)
+
+    def test_128_still_reproduces_the_original_896_layout(self):
+        """The input size is configurable now; 128 must still mean 896.
+
+        Every pre-256 checkpoint and the MediaPipe face weights decode against
+        that layout, so this is the compatibility guarantee, not a restatement
+        of the arithmetic above.
+        """
+        assert grids_for(128) == (16, 8)
+        assert total_anchors_for(128) == 896
+        small, big = grids_for(128)
+        built = generate_anchors_from_priors(small_grid=small, big_grid=big)
+        assert built.shape == (896, 4)
 
     def test_priors_are_distinct(self, anchors):
         # The whole point: the old fixed anchors collapsed to one (w, h).
@@ -82,7 +98,7 @@ class TestAssignment:
 
     def test_empty_input_produces_all_background(self, anchors):
         targets, ignore = assign_anchor_targets(np.zeros((0, 4), np.float32), anchors)
-        assert targets.shape == (896, 5)
+        assert targets.shape == (TOTAL_ANCHORS, 5)
         assert targets[:, 0].sum() == 0
         assert not ignore.any()
 

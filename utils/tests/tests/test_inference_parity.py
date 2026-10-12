@@ -18,6 +18,7 @@ from utils.anchor_utils import (
     get_anchors,
 )
 from utils.box_utils import decode_boxes, decode_boxes_with_keypoints
+from utils.config import DEFAULT_INPUT_SIZE, TOTAL_ANCHORS
 
 
 class TestAnchorParity:
@@ -41,7 +42,7 @@ class TestAnchorParity:
         # Guards the regression where three paths hardcoded w=h=1.0.
         anchors = get_anchors()
         assert len(torch.unique(anchors[:, 2:], dim=0)) > 1
-        assert anchors.shape == (896, 4)
+        assert anchors.shape == (TOTAL_ANCHORS, 4)
 
     def test_get_anchors_is_stable_across_calls(self):
         assert torch.equal(get_anchors(), get_anchors())
@@ -66,13 +67,13 @@ class TestDecodeParity:
     def test_pipeline_decode_matches_box_utils(self):
         torch.manual_seed(0)
         anchors = get_anchors()
-        raw = torch.randn(1, 896, 16) * 10
+        raw = torch.randn(1, TOTAL_ANCHORS, 16) * 10
 
         pipeline = BlazeEarInference()
         from_pipeline = pipeline.decode_boxes(raw, anchors)
         from_utils = decode_boxes_with_keypoints(
-            raw, anchors, x_scale=128.0, y_scale=128.0,
-            w_scale=128.0, h_scale=128.0, num_keypoints=0,
+            raw, anchors, x_scale=float(DEFAULT_INPUT_SIZE), y_scale=float(DEFAULT_INPUT_SIZE),
+            w_scale=float(DEFAULT_INPUT_SIZE), h_scale=float(DEFAULT_INPUT_SIZE), num_keypoints=0,
         )[..., :4]
 
         # box_utils does not reorder corners, so compare against ordered output.
@@ -87,11 +88,11 @@ class TestDecodeParity:
     def test_loss_decode_matches_pipeline_decode(self):
         torch.manual_seed(1)
         anchors = get_anchors()
-        raw = torch.randn(1, 896, 4) * 5
+        raw = torch.randn(1, TOTAL_ANCHORS, 4) * 5
 
-        loss_side = decode_boxes(raw, anchors, scale=128.0)
+        loss_side = decode_boxes(raw, anchors, scale=float(DEFAULT_INPUT_SIZE))
         pipeline_side = BlazeEarInference().decode_boxes(
-            torch.cat([raw, torch.zeros(1, 896, 12)], dim=-1), anchors
+            torch.cat([raw, torch.zeros(1, TOTAL_ANCHORS, 12)], dim=-1), anchors
         )
         ordered = torch.stack([
             torch.minimum(loss_side[..., 0], loss_side[..., 2]),
@@ -104,7 +105,7 @@ class TestDecodeParity:
     def test_zero_prediction_decodes_to_the_anchor(self):
         """A zero prediction must reproduce the anchor box itself."""
         anchors = get_anchors()
-        decoded = decode_boxes(torch.zeros(1, 896, 4), anchors, scale=128.0)[0]
+        decoded = decode_boxes(torch.zeros(1, TOTAL_ANCHORS, 4), anchors, scale=float(DEFAULT_INPUT_SIZE))[0]
         expected_h = decoded[:, 2] - decoded[:, 0]
         expected_w = decoded[:, 3] - decoded[:, 1]
         # w/h collapse to zero because decode scales the prediction by the

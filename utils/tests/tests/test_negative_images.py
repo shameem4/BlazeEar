@@ -12,7 +12,7 @@ import pytest
 import torch
 from PIL import Image
 
-from utils.config import IGNORE_ANNOTATION_SOURCE, NEGATIVE_ANNOTATION_SOURCE
+from utils.config import (DEFAULT_INPUT_SIZE, IGNORE_ANNOTATION_SOURCE, NEGATIVE_ANNOTATION_SOURCE)
 
 
 @pytest.fixture
@@ -80,7 +80,8 @@ class TestSampleContents:
         dataset = build(dataset_root, augment=False)
         index = [s['image_path'] for s in dataset.samples].index('background.jpg')
         sample = dataset[index]
-        assert sample['image'].shape[-1] == 128 and sample['image'].shape[-2] == 128
+        assert sample['image'].shape[-2:] == (DEFAULT_INPUT_SIZE,
+                                              DEFAULT_INPUT_SIZE)
         assert len(sample['gt_boxes']) == 0
 
     def test_every_anchor_of_a_background_image_is_negative(self, dataset_root):

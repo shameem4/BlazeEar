@@ -23,6 +23,7 @@ from blazeear import BlazeEar
 from blazebase import generate_reference_anchors, load_mediapipe_weights
 from loss_functions import BlazeEarDetectionLoss, compute_mean_iou
 from utils.anchor_utils import anchor_options
+from utils.config import DEFAULT_INPUT_SIZE, TOTAL_ANCHORS
 
 
 # Test assets
@@ -43,10 +44,10 @@ class TestDataToLossPipeline(unittest.TestCase):
         cls.dataset = CSVDetectorDataset(
             csv_path=str(CSV_PATH),
             root_dir=str(ASSETS_ROOT),
-            target_size=(128, 128),
+            target_size=(DEFAULT_INPUT_SIZE, DEFAULT_INPUT_SIZE),
             augment=False,
         )
-        cls.reference_anchors, _, _ = generate_reference_anchors()
+        cls.reference_anchors, _, _ = generate_reference_anchors(input_size=DEFAULT_INPUT_SIZE)
         cls.loss_fn = BlazeEarDetectionLoss(scale=128)
         cls.device = torch.device("cpu")
 
@@ -63,13 +64,13 @@ class TestDataToLossPipeline(unittest.TestCase):
         anchor_targets = sample["anchor_targets"]
         
         # Verify shapes
-        self.assertEqual(image.shape, torch.Size([3, 128, 128]))
-        self.assertEqual(anchor_targets.shape, torch.Size([896, 5]))
+        self.assertEqual(image.shape, torch.Size([3, DEFAULT_INPUT_SIZE, DEFAULT_INPUT_SIZE]))
+        self.assertEqual(anchor_targets.shape, torch.Size([TOTAL_ANCHORS, 5]))
         
         # Create mock predictions
         batch_size = 1
-        class_preds = torch.rand(batch_size, 896, 1)
-        anchor_preds = torch.randn(batch_size, 896, 4) * 0.1
+        class_preds = torch.rand(batch_size, TOTAL_ANCHORS, 1)
+        anchor_preds = torch.randn(batch_size, TOTAL_ANCHORS, 4) * 0.1
         
         # Compute loss
         loss_dict = self.loss_fn(
@@ -89,7 +90,7 @@ class TestDataToLossPipeline(unittest.TestCase):
             csv_path=str(CSV_PATH),
             root_dir=str(ASSETS_ROOT),
             batch_size=2,
-            target_size=(128, 128),
+            target_size=(DEFAULT_INPUT_SIZE, DEFAULT_INPUT_SIZE),
             augment=False,
             shuffle=False,
             num_workers=0,
@@ -103,12 +104,12 @@ class TestDataToLossPipeline(unittest.TestCase):
         
         # Verify batch shapes
         self.assertEqual(images.shape[0], 2)  # batch size
-        self.assertEqual(images.shape[1:], torch.Size([3, 128, 128]))
-        self.assertEqual(anchor_targets.shape, torch.Size([2, 896, 5]))
+        self.assertEqual(images.shape[1:], torch.Size([3, DEFAULT_INPUT_SIZE, DEFAULT_INPUT_SIZE]))
+        self.assertEqual(anchor_targets.shape, torch.Size([2, TOTAL_ANCHORS, 5]))
         
         # Mock predictions and compute loss
-        class_preds = torch.rand(2, 896, 1)
-        anchor_preds = torch.randn(2, 896, 4) * 0.1
+        class_preds = torch.rand(2, TOTAL_ANCHORS, 1)
+        anchor_preds = torch.randn(2, TOTAL_ANCHORS, 4) * 0.1
         
         loss_dict = self.loss_fn(
             class_preds,
@@ -147,7 +148,7 @@ class TestModelInferencePipeline(unittest.TestCase):
         """Set up model for testing."""
         cls.device = torch.device("cpu")
         cls.model = BlazeEar().to(cls.device)
-        cls.reference_anchors, _, _ = generate_reference_anchors()
+        cls.reference_anchors, _, _ = generate_reference_anchors(input_size=DEFAULT_INPUT_SIZE)
         
         # Load pretrained weights if available
         if WEIGHTS_PATH.exists():
@@ -161,7 +162,7 @@ class TestModelInferencePipeline(unittest.TestCase):
         self.model.eval()
         
         # Random input
-        x = torch.randn(1, 3, 128, 128)
+        x = torch.randn(1, 3, DEFAULT_INPUT_SIZE, DEFAULT_INPUT_SIZE)
         
         with torch.no_grad():
             outputs = self.model(x)
@@ -170,21 +171,21 @@ class TestModelInferencePipeline(unittest.TestCase):
         self.assertEqual(len(outputs), 2)
         
         boxes, scores = outputs
-        self.assertEqual(boxes.shape, torch.Size([1, 896, 16]))
-        self.assertEqual(scores.shape, torch.Size([1, 896, 1]))
+        self.assertEqual(boxes.shape, torch.Size([1, TOTAL_ANCHORS, 16]))
+        self.assertEqual(scores.shape, torch.Size([1, TOTAL_ANCHORS, 1]))
 
     def test_training_outputs_method(self):
         """Test get_training_outputs produces correct format for loss."""
         self.model.eval()
-        x = torch.randn(1, 3, 128, 128)
+        x = torch.randn(1, 3, DEFAULT_INPUT_SIZE, DEFAULT_INPUT_SIZE)
         
         with torch.no_grad():
             raw_boxes, raw_scores = self.model.get_training_outputs(x)
         
-        # raw_boxes: [B, 896, 16] (includes keypoints)
-        # raw_scores: [B, 896, 1] (logits)
-        self.assertEqual(raw_boxes.shape[1], 896)
-        self.assertEqual(raw_scores.shape, torch.Size([1, 896, 1]))
+        # raw_boxes: [B, TOTAL_ANCHORS, 16] (includes keypoints)
+        # raw_scores: [B, TOTAL_ANCHORS, 1] (logits)
+        self.assertEqual(raw_boxes.shape[1], TOTAL_ANCHORS)
+        self.assertEqual(raw_scores.shape, torch.Size([1, TOTAL_ANCHORS, 1]))
         
         # Scores should be logits (can be negative)
         self.assertTrue(raw_scores.min() < 0 or raw_scores.max() > 1 or True)
@@ -201,12 +202,12 @@ class TestModelInferencePipeline(unittest.TestCase):
         dataset = CSVDetectorDataset(
             csv_path=str(CSV_PATH),
             root_dir=str(ASSETS_ROOT),
-            target_size=(128, 128),
+            target_size=(DEFAULT_INPUT_SIZE, DEFAULT_INPUT_SIZE),
             augment=False,
         )
         
         sample = dataset[0]
-        image = sample["image"]  # [3, 128, 128]
+        image = sample["image"]  # [3, DEFAULT_INPUT_SIZE, DEFAULT_INPUT_SIZE]
         
         # Convert to batch format for predict_on_batch (expects uint8 HWC)
         # Actually predict_on_batch expects numpy [B, H, W, C] uint8
@@ -233,14 +234,14 @@ class TestFullTrainingStep(unittest.TestCase):
         
         cls.device = torch.device("cpu")
         cls.model = BlazeEar().to(cls.device)
-        cls.reference_anchors, _, _ = generate_reference_anchors()
+        cls.reference_anchors, _, _ = generate_reference_anchors(input_size=DEFAULT_INPUT_SIZE)
         cls.reference_anchors = cls.reference_anchors.to(cls.device)
         cls.loss_fn = BlazeEarDetectionLoss(scale=128).to(cls.device)
         
         cls.dataset = CSVDetectorDataset(
             csv_path=str(CSV_PATH),
             root_dir=str(ASSETS_ROOT),
-            target_size=(128, 128),
+            target_size=(DEFAULT_INPUT_SIZE, DEFAULT_INPUT_SIZE),
             augment=False,
         )
 
@@ -334,7 +335,7 @@ class TestFullTrainingStep(unittest.TestCase):
             csv_path=str(CSV_PATH),
             root_dir=str(ASSETS_ROOT),
             batch_size=2,
-            target_size=(128, 128),
+            target_size=(DEFAULT_INPUT_SIZE, DEFAULT_INPUT_SIZE),
             augment=False,
             shuffle=False,
             num_workers=0,
@@ -380,7 +381,7 @@ class TestMetricsComputation(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         """Set up test fixtures."""
-        cls.reference_anchors, _, _ = generate_reference_anchors()
+        cls.reference_anchors, _, _ = generate_reference_anchors(input_size=DEFAULT_INPUT_SIZE)
         cls.loss_fn = BlazeEarDetectionLoss(scale=128)
 
     def test_mean_iou_on_decoded_boxes(self):
@@ -404,7 +405,7 @@ class TestMetricsComputation(unittest.TestCase):
     def test_loss_metrics_tracking(self):
         """Test that loss function tracks positive/negative counts."""
         batch_size = 2
-        num_anchors = 896
+        num_anchors = TOTAL_ANCHORS
         
         # Create targets with known positive count
         anchor_targets = torch.zeros(batch_size, num_anchors, 5)
@@ -473,7 +474,7 @@ class TestAnchorEncodingIntegration(unittest.TestCase):
         anchor_targets, _ = assign_anchor_targets(edge_boxes, generate_anchors_from_priors().numpy())
         
         # Should not crash and should produce valid targets
-        self.assertEqual(anchor_targets.shape, (896, 5))
+        self.assertEqual(anchor_targets.shape, (TOTAL_ANCHORS, 5))
         
         # All assigned boxes should have valid coordinates
         positive_mask = anchor_targets[:, 0] == 1

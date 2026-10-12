@@ -17,7 +17,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from utils.config import HARD_NEGATIVE_RATIO
+from utils.config import DEFAULT_INPUT_SIZE, HARD_NEGATIVE_RATIO
 
 from utils.metrics import compute_mean_iou_torch, compute_map_torch
 from utils.box_utils import decode_boxes as _decode_boxes_util
@@ -43,7 +43,7 @@ class BlazeEarDetectionLoss(nn.Module):
         hard_negative_ratio: float = HARD_NEGATIVE_RATIO,
         detection_weight: float = 150.0,
         classification_weight: float = 35.0,
-        scale: int = 128,
+        scale: int = DEFAULT_INPUT_SIZE,
         min_negatives_per_image: int = 10,
         use_focal_loss: bool = False,
         focal_alpha: float = 0.25,

@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from blazeear import BlazeEar
 from train_blazeear import BlazeEarTrainer
+from utils.config import (DEFAULT_INPUT_SIZE, TOTAL_ANCHORS)
 
 
 class _FakeSet(Dataset):
@@ -24,14 +25,14 @@ class _FakeSet(Dataset):
         return self.n
 
     def __getitem__(self, i):
-        targets = torch.zeros(896, 5)
-        targets[i % 896, 0] = 1.0
-        targets[i % 896, 1:] = torch.tensor([0.3, 0.3, 0.5, 0.45])
+        targets = torch.zeros(TOTAL_ANCHORS, 5)
+        targets[i % TOTAL_ANCHORS, 0] = 1.0
+        targets[i % TOTAL_ANCHORS, 1:] = torch.tensor([0.3, 0.3, 0.5, 0.45])
         return {
-            'image': torch.randint(0, 255, (3, 128, 128)).float(),
+            'image': torch.randint(0, 255, (3, DEFAULT_INPUT_SIZE, DEFAULT_INPUT_SIZE)).float(),
             'sample_index': i,
             'anchor_targets': targets,
-            'anchor_ignore': torch.zeros(896, dtype=torch.bool),
+            'anchor_ignore': torch.zeros(TOTAL_ANCHORS, dtype=torch.bool),
             'gt_boxes': torch.tensor([[0.3, 0.3, 0.5, 0.45]]),
         }
 

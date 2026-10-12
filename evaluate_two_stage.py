@@ -22,6 +22,7 @@ from blazebase import checkpoint_is_folded, load_checkpoint_state
 from make_face_crops import crop_window, load_face_detector
 from utils.anchor_utils import generate_reference_anchors
 from utils.config import (
+    FACE_INPUT_SIZE,
     DEFAULT_DATA_ROOT,
     FACE_CROP_EXPAND,
     FACE_CROP_MAX_FACES,
@@ -47,7 +48,8 @@ def load_ear_model(path, score_threshold, device, legacy_anchors=False):
     model.eval().to(device)
     model.min_score_thresh = score_threshold
     if legacy_anchors:
-        anchors, _, _ = generate_reference_anchors(fixed_anchor_size=True)
+        anchors, _, _ = generate_reference_anchors(
+            input_size=FACE_INPUT_SIZE, fixed_anchor_size=True)
         model.anchors = anchors.to(device)
     else:
         # The fitted ear priors, the same set the dataloader and loss use.
