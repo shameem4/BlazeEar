@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Tuple, cast
 import warnings
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torchvision
@@ -24,6 +25,89 @@ from blazeear import BlazeEar
 from utils.box_utils import yxyx_to_xyxy
 from utils.config import (DEFAULT_INPUT_SIZE, DETECTION_SCORE_THRESHOLD,
                           NMS_IOU_THRESHOLD)
+
+
+# The torch.export-based exporter implements opset 18 upwards, and when it
+# cannot down-convert a node it keeps 18 rather than failing -- this model's
+# `Pad` has no 17 adapter, so asking for 17 used to yield an 18 graph labelled
+# as a 17 request. Ask for what we actually get.
+DEFAULT_OPSET = 18
+
+# Tolerances for the check below, per quantity rather than one global number.
+# Raw boxes are offsets in the input's pixel scale (hundreds), so a hundredth
+# of a pixel is already far below anything that could move a detection; raw
+# scores are logits, and a thousandth of a logit cannot cross a threshold.
+# Postprocessed boxes are normalized coordinates and the scores probabilities,
+# so both get the tighter bound.
+RAW_BOX_TOLERANCE = 1e-2
+RAW_SCORE_TOLERANCE = 1e-3
+DETECTION_TOLERANCE = 1e-4
+
+
+def check_against_torch(
+    wrapper: nn.Module,
+    output_path: Path,
+    dummy: torch.Tensor,
+    postprocess: bool,
+) -> bool:
+    """A graph that exported without raising can still disagree with its model.
+
+    This is what replaced the old `--no-fallback`: rather than choosing an
+    exporter and hoping, export and then prove the graph matches.
+    """
+    try:
+        import onnxruntime as ort
+    except ImportError:
+        print("onnxruntime is not installed, so the exported graph was not "
+              "checked against the model.\n"
+              "  Install it with: pip install onnxruntime  "
+              "(or pass --no-check to skip this deliberately).")
+        return True
+
+    with torch.no_grad():
+        expected = wrapper(dummy)
+    want = [expected] if isinstance(expected, torch.Tensor) else list(expected)
+
+    session = ort.InferenceSession(str(output_path),
+                                   providers=["CPUExecutionProvider"])
+    got = session.run(None, {"image": dummy.numpy()})
+
+    if postprocess:
+        # Below-threshold candidates are zeroed and then handed to NMS, so the
+        # tail of zero-score boxes is tie-break order and carries no
+        # information: its length differs between torch and ONNX on the same
+        # input. Compare the detections the graph actually claims.
+        got = [g[g[:, 4] > 0.0] for g in got]
+        want = [w[w[:, 4] > 0.0] for w in want]
+        names = ["detections"]
+        tolerances = [DETECTION_TOLERANCE]
+        if not len(want[0]):
+            # The probe is random noise, which usually scores below threshold.
+            # The network itself is still covered -- it is the same weights the
+            # raw-head export checks -- but decode and NMS saw no box, so say
+            # so instead of reporting an empty comparison as a pass.
+            print("  detections: the random probe produced no detection above "
+                  f"{wrapper.score_thresh:g}, so decode and NMS went "
+                  "unchecked. Re-run without --postprocess to check the "
+                  "network, and check this graph on a real image.")
+            return True
+    else:
+        names = ["raw_boxes", "raw_scores"]
+        tolerances = [RAW_BOX_TOLERANCE, RAW_SCORE_TOLERANCE]
+
+    ok = True
+    for name, tol, g, w in zip(names, tolerances, got, want):
+        w_np = w.numpy()
+        if g.shape != w_np.shape:
+            print(f"  {name}: shape {g.shape} != torch {w_np.shape}  "
+                  f"[MISMATCH]")
+            ok = False
+            continue
+        err = float(np.abs(g - w_np).max()) if g.size else 0.0
+        label = "ok" if err < tol else "MISMATCH"
+        print(f"  {name}: max|d| {err:.2e} (tol {tol:.0e})  [{label}]")
+        ok &= err < tol
+    return ok
 
 
 class BlazeEarONNXWrapper(nn.Module):
@@ -105,20 +189,19 @@ def export_onnx(
     checkpoint_path: Path,
     output_path: Path,
     input_size: int = DEFAULT_INPUT_SIZE,
-    opset: int = 17,
+    opset: int = DEFAULT_OPSET,
     constant_folding: bool = False,
-    fallback: bool = True,
     verbose: bool = False,
+    check: bool = True,
     postprocess: bool = False,
     score_thresh: float = DETECTION_SCORE_THRESHOLD,
     iou_thresh: float = NMS_IOU_THRESHOLD,
     topk: int = 200,
 ) -> None:
-    if not fallback and importlib.util.find_spec("onnxscript") is None:
+    if importlib.util.find_spec("onnxscript") is None:
         raise RuntimeError(
             "The torch.export-based ONNX exporter requires `onnxscript`.\n"
-            "Install it with: pip install onnx onnxscript\n"
-            "(Or run without `--no-fallback` to allow a legacy fallback.)"
+            "Install it with: pip install onnx onnxscript"
         )
 
     # Build whichever architecture the checkpoint was written from. Without
@@ -177,9 +260,16 @@ def export_onnx(
         (dummy,),
         str(output_path),
         dynamo=True,
-        fallback=fallback,
         **export_kwargs,
     )
+
+    if check:
+        print("Checking the exported graph against the PyTorch model:")
+        if not check_against_torch(wrapper, output_path, dummy, postprocess):
+            raise SystemExit(
+                f"{output_path} disagrees with the model it came from; "
+                "do not use it."
+            )
 
 
 def main() -> int:
@@ -206,8 +296,10 @@ def main() -> int:
     parser.add_argument(
         "--opset",
         type=int,
-        default=17,
-        help="ONNX opset version",
+        default=DEFAULT_OPSET,
+        help=f"ONNX opset version (default {DEFAULT_OPSET}; the exporter "
+             f"implements 18 upwards and keeps 18 when it cannot "
+             f"down-convert)",
     )
     parser.add_argument(
         "--constant-folding",
@@ -222,14 +314,17 @@ def main() -> int:
     parser.add_argument(
         "--score-thresh",
         type=float,
-        default=0.70,
-        help="Score threshold used during ONNX postprocessing export.",
+        default=DETECTION_SCORE_THRESHOLD,
+        help=f"Score threshold used during ONNX postprocessing export "
+             f"(default {DETECTION_SCORE_THRESHOLD}, the fitted deployed "
+             f"threshold).",
     )
     parser.add_argument(
         "--iou-thresh",
         type=float,
-        default=0.3,
-        help="IoU threshold used for NMS during ONNX postprocessing export.",
+        default=NMS_IOU_THRESHOLD,
+        help=f"IoU threshold used for NMS during ONNX postprocessing export "
+             f"(default {NMS_IOU_THRESHOLD}).",
     )
     parser.add_argument(
         "--topk",
@@ -238,9 +333,9 @@ def main() -> int:
         help="Top-K candidates before NMS during ONNX postprocessing export.",
     )
     parser.add_argument(
-        "--no-fallback",
+        "--no-check",
         action="store_true",
-        help="Disable the legacy fallback (requires a fully-supported torch.export -> ONNX path).",
+        help="Skip comparing the exported graph against the PyTorch model.",
     )
     parser.add_argument(
         "--verbose",
@@ -282,8 +377,8 @@ def main() -> int:
         input_size=args.input_size,
         opset=args.opset,
         constant_folding=args.constant_folding,
-        fallback=not args.no_fallback,
         verbose=args.verbose,
+        check=not args.no_check,
         postprocess=args.postprocess,
         score_thresh=args.score_thresh,
         iou_thresh=args.iou_thresh,

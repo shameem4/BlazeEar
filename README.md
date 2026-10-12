@@ -436,18 +436,32 @@ This repo includes a small helper script that exports the training checkpoint fo
 (`model_state_dict` inside the `.pth`) to an ONNX graph.
 
 ```bash
-# If needed:
-pip install onnx
 # Needed for the torch.export-based exporter:
-pip install onnxscript
+pip install onnx onnxscript
+# Needed to check the exported graph against the model:
+pip install onnxruntime
 
 python export_onnx.py \
   --checkpoint runs/checkpoints/BlazeEar_best.pth \
   --output runs/checkpoints/BlazeEar_best.onnx
 ```
 
-Note: as of PyTorch 2.8, `torch.export` ONNX export can fall back to the legacy exporter for some ops
-(notably padding). You can enforce a pure `torch.export` path with `--no-fallback` (may fail).
+Every export is then run through ONNX Runtime and compared against the PyTorch
+model it came from; the script refuses a graph that disagrees. `--no-check`
+skips the comparison, and it is skipped with a warning if `onnxruntime` is not
+installed. Exporting without checking is how a graph that is quietly wrong gets
+shipped, so prefer leaving the check on.
+
+Note on opsets: PyTorch 2.9 made the `torch.export`-based exporter the default
+and dropped the `fallback` argument that used to reach the legacy
+TorchScript exporter, so the old `--no-fallback` flag is gone. That exporter
+implements opset 18 upwards and keeps 18 when it cannot down-convert a node --
+this model's `Pad` has no opset 17 adapter -- so `--opset` defaults to 18.
+Asking for 17 produces a noisy conversion failure and an opset 18 graph anyway.
+
+(`export_two_stage_web.py`, which writes the `docs/*.onnx` graphs the browser
+demo loads, deliberately still calls the legacy exporter at opset 17, because
+ONNX Runtime Web is the consumer there.)
 
 The exported model takes `image: (N, 3, 256, 256)` and returns:
 
@@ -464,6 +478,12 @@ python export_onnx.py \
 ```
 
 `detections` is `(num_detections, 5)` in `[ymin, xmin, ymax, xmax, score]` (normalized coords).
+
+The check is weaker for `--postprocess`: it probes with random noise, which
+normally scores below the threshold, so decode and NMS see no box and the
+script says as much rather than reporting a pass. Export without
+`--postprocess` to check the network, and check the postprocessing graph on a
+real image.
 
 `export_onnx.py` inspects the checkpoint and builds the matching architecture,
 so pre-BatchNorm checkpoints still export.
