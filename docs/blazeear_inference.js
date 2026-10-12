@@ -24,6 +24,14 @@
 const ort = (typeof window !== 'undefined' && window.ort) || 
             (typeof globalThis !== 'undefined' && globalThis.ort) ||
             (typeof require !== 'undefined' ? require('onnxruntime-web') : null);
+// Deployed score thresholds, mirroring utils/config.DETECTION_SCORE_THRESHOLD
+// and TTA_SCORE_THRESHOLD; see that file for the measured sweep. Fusion takes
+// a cluster's best member score, so it shifts the whole distribution up and
+// the fused path needs its own, higher threshold. Running TTA at the plain
+// threshold was a measured regression on F1 against no TTA at all, which is
+// what this page shipped.
+const SCORE_THRESHOLD = 0.80;
+const TTA_SCORE_THRESHOLD = 0.85;
 
 /**
  * BlazeEar Ear Detection Pipeline
@@ -42,11 +50,11 @@ class BlazeEarInference {
      *
      * Create a BlazeEar detector instance
      * @param {Object} options - Configuration options
-     * @param {number} options.confidenceThreshold - Minimum confidence for detections (default: 0.70)
+     * @param {number} options.confidenceThreshold - Minimum confidence for detections (default: 0.80)
      * @param {number} options.iouThreshold - IoU threshold for NMS (default: 0.3)
      */
     constructor(options = {}) {
-        this.confidenceThreshold = options.confidenceThreshold ?? 0.70;
+        this.confidenceThreshold = options.confidenceThreshold ?? SCORE_THRESHOLD;
         this.iouThreshold = options.iouThreshold ?? 0.3;
         // Geometric filter, off by default to match the Python paths. With the
         // previous bounds it rejected 25.86% of real ears, and it ran only here
@@ -443,6 +451,7 @@ const TTA_VIEWS = [
 
 const FUSION_IOU_THRESHOLD = 0.5;
 
+
 /**
  * The two-stage pipeline: MediaPipe BlazeFace on the full frame, then the ear
  * model on a square crop around each detected face.
@@ -478,7 +487,8 @@ class BlazeEarTwoStage {
             iouThreshold: this.iouThreshold,
         });
         this.ear = new BlazeEarInference({
-            confidenceThreshold: options.confidenceThreshold ?? 0.70,
+            confidenceThreshold: options.confidenceThreshold
+                ?? (this.views > 1 ? TTA_SCORE_THRESHOLD : SCORE_THRESHOLD),
             iouThreshold: this.iouThreshold,
         });
         this.isLoaded = false;

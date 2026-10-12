@@ -11,7 +11,8 @@ from pathlib import Path
 
 import torch
 
-from utils.config import FACE_CROP_EXPAND
+from utils.config import (DETECTION_SCORE_THRESHOLD, FACE_CROP_EXPAND,
+                          TTA_SCORE_THRESHOLD)
 from utils.tta import VIEWS, flip_boxes_x, merge_views
 
 JS_PATH = Path(__file__).resolve().parents[3] / 'docs' / 'blazeear_inference.js'
@@ -106,6 +107,28 @@ class TestViewsMatchJs(unittest.TestCase):
     def test_first_view_is_the_plain_pipeline(self):
         """views=1 must be exactly the shipped single-crop behaviour."""
         self.assertEqual(VIEWS[0], (FACE_CROP_EXPAND, False))
+
+    def _js_const(self, name):
+        text = JS_PATH.read_text(encoding='utf-8')
+        match = re.search(rf'const {name} = ([\d.]+);', text)
+        self.assertIsNotNone(match, f'{name} not found in the browser pipeline')
+        return float(match.group(1))
+
+    def test_js_uses_the_same_operating_point(self):
+        """The browser page is where the miscalibration actually shipped.
+
+        The fused path needs a higher threshold than the plain one, because
+        `max` fusion gives a cluster its best member's score. Running TTA at
+        the plain threshold measured WORSE on F1 than no TTA at all, so a drift
+        between these two files is not a cosmetic inconsistency.
+        """
+        self.assertEqual(self._js_const('SCORE_THRESHOLD'),
+                         DETECTION_SCORE_THRESHOLD)
+        self.assertEqual(self._js_const('TTA_SCORE_THRESHOLD'),
+                         TTA_SCORE_THRESHOLD)
+
+    def test_fused_threshold_is_above_the_plain_one(self):
+        self.assertGreater(TTA_SCORE_THRESHOLD, DETECTION_SCORE_THRESHOLD)
 
 
 if __name__ == '__main__':

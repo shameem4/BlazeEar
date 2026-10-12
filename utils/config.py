@@ -34,7 +34,36 @@ DEFAULT_INPUT_SIZE = 128
 # implementations at three different IoU thresholds (0.3 in the model, 0.35
 # forced by utils/model_utils, 0.5 in the trainer's evaluation), which meant
 # the reported mAP measured post-processing that nothing deployed used.
-DETECTION_SCORE_THRESHOLD = 0.70
+#
+# The deployed operating point. mAP sweeps the whole score range, so it says
+# nothing about the one threshold that actually ships; this was 0.70, inherited
+# from MediaPipe's face detector and never fitted to this model. Swept on the
+# common held-out set (279 images, 355 ears) at IoU 0.5, precision/recall/F1:
+#
+#   threshold   plain pipeline        with 4-view TTA
+#               prec   rec    F1      prec   rec    F1
+#      0.70     0.614  0.628  0.621   0.508  0.682  0.582
+#      0.75     0.681  0.614  0.646   0.582  0.668  0.622
+#      0.80     0.758  0.592  0.665   0.665  0.642  0.653
+#      0.85     0.838  0.541  0.658   0.769  0.620  0.686
+#      0.90     0.894  0.428  0.579   0.878  0.566  0.688
+#
+# Two separate findings. The plain pipeline peaks at 0.80, not 0.70. And TTA
+# shifts the optimum UP, because `max` fusion gives a cluster its best member's
+# score -- so at 0.70 the shipped TTA was a measured REGRESSION on F1 against
+# no TTA at all (-0.0389, 95% CI [-0.0649, -0.0123], paired bootstrap over
+# 2000 resampled images), even while it gained +0.0467 mAP@0.5. Recalibrating
+# TTA from 0.70 to its own operating point is worth +0.1054 F1
+# (95% CI [+0.0715, +0.1404]).
+#
+# TTA takes 0.85 rather than its argmax 0.90: F1 is flat across 0.85-0.90
+# (0.686 vs 0.688) and then falls off a cliff (0.666 at 0.91, 0.634 at 0.92),
+# so the plateau centre is the safer choice than the edge of it. Both values
+# are fitted on 355 ears; the direction is bootstrap-confirmed, the second
+# decimal is not. The table is here so a deployment that wants precision over
+# recall can re-pick deliberately rather than by inheritance.
+DETECTION_SCORE_THRESHOLD = 0.80
+TTA_SCORE_THRESHOLD = 0.85
 NMS_IOU_THRESHOLD = 0.3
 MAX_DETECTIONS = 100
 

@@ -143,8 +143,9 @@ def build_parser():
                         help='on images with no detected face, fall back to '
                              'the full-frame model from --checkpoint')
     parser.add_argument('--tta', type=int, default=0, metavar='N',
-                        help='fuse detections over the first N augmented '
-                             'views (see utils/tta.VIEWS); 0 disables')
+                        help=f'fuse detections over the first N augmented '
+                             f'views (see utils/tta.VIEWS); 0 disables, '
+                             f'{len(VIEWS)} is the most defined')
     parser.add_argument('--fusion-rule', default='max',
                         choices=['vote', 'max', 'mean'])
     parser.add_argument('--expand', type=float, default=FACE_CROP_EXPAND)
@@ -160,6 +161,13 @@ def build_parser():
 def main():
     parser = build_parser()
     args = parser.parse_args()
+    # VIEWS[:n] silently returns every view when n exceeds the list, so --tta 8
+    # ran four views and reported success -- indistinguishable from the eight
+    # views it claimed. Only a measured view belongs in VIEWS, so ask loudly
+    # rather than quietly substituting a different experiment.
+    if args.tta > len(VIEWS):
+        parser.error(f'--tta {args.tta} but only {len(VIEWS)} views are '
+                     f'defined in utils/tta.VIEWS')
     if not args.checkpoint and not args.crop_checkpoint:
         parser.error('pass --checkpoint, --crop-checkpoint, or both')
 

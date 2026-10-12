@@ -528,6 +528,19 @@ a set this size. It costs one ear-model pass per view per face -- the face
 stage still runs once -- and the ear model is the cheap half at 2.1 ms on one
 CPU thread.
 
+Six and eight views were then measured against the shipped four, extending the
+pattern with flips of the two scale views and a wider scale pair:
+
+| views | mAP@0.5 | mAP@[.5:.95] | det IoU | paired gain vs 4 views, mAP@0.5 |
+|---|---|---|---|---|
+| 6 | 0.6402 | 0.2826 | 0.7325 | +0.0102 [-0.0076, +0.0282] |
+| 8 | 0.6346 | 0.2868 | 0.7338 | +0.0039 [-0.0172, +0.0242] |
+
+Both intervals straddle zero and mAP@0.5 is not even monotonic -- six views
+beats eight -- so four stands. `VIEWS` therefore holds four entries, and
+`--tta N` above that is now an error: `VIEWS[:N]` silently returns the whole
+list, so `--tta 8` had been running four views and reporting success.
+
 Two findings are worth repeating because both cost a measurement to find:
 
 - A fused box takes the **highest** score among its members. Scoring it as
@@ -540,6 +553,35 @@ Two findings are worth repeating because both cost a measurement to find:
 
 The browser pipeline runs four views by default; pass `{views: 1}` to
 `createTwoStageDetector` for the single-crop behaviour.
+
+### TTA needs its own score threshold
+
+mAP sweeps the entire score range, so it says nothing about the single
+threshold a deployment actually sits at -- and fusion moves the score
+distribution, because a fused box takes its best member's score. Sweeping the
+operating point on the same held-out set, at IoU 0.5:
+
+| threshold | plain F1 | TTA 4 F1 |
+|---|---|---|
+| 0.70 (the old shared value) | 0.6212 | 0.5824 |
+| 0.80 | **0.6646** | 0.6533 |
+| 0.85 | 0.6575 | **0.6864** |
+| 0.90 | 0.5790 | 0.6884 |
+
+So the inherited 0.70 was wrong for both paths, and **at 0.70 turning TTA on
+was a measured regression**: -0.0389 F1 against no TTA (95% CI [-0.0649,
+-0.0123]), while still gaining +0.0467 mAP@0.5. A ranking gain and an
+operating-point loss are not in conflict; they are different questions, and
+only the first had been asked. Recalibrating TTA to its own threshold is worth
++0.1054 F1 (95% CI [+0.0715, +0.1404]) -- the largest confirmed gain here, and
+it is a constant, not a model.
+
+`DETECTION_SCORE_THRESHOLD` is now 0.80 and `TTA_SCORE_THRESHOLD` 0.85, mirrored
+in the browser pipeline and pinned by `test_tta.py`. TTA takes 0.85 rather than
+its argmax 0.90 because F1 is flat over 0.85-0.90 and then falls off a cliff
+(0.666 at 0.91); the plateau centre is the safer place to sit. With both paths
+at their own best, TTA's F1 edge is +0.0234 [-0.0028, +0.0496] -- not
+distinguishable. TTA buys ranking quality, not a better operating point.
 
 ## Relabelling
 
@@ -747,8 +789,56 @@ training, its evaluation, or the browser demo needs it. See [NOTICE](NOTICE).
 Areas that naturally follow from the current pipeline:
 
 - Add explicit ear keypoint supervision if labels become available (regressor heads already exist).  
-- Calibrate detection thresholds for different operating points (front‑facing vs profile).  
+- Calibrate detection thresholds per operating point. The shared defaults
+  are now fitted rather than inherited (see above); what remains is a
+  front-facing vs profile split, which needs those subsets labelled.  
 - Export to ONNX/TFLite for edge deployment.
+
+### A higher input resolution is worth taking
+
+The network is fully convolutional, so the MediaPipe weights load unchanged at
+any input size and only the spatial grids grow. At 256 px the stride-8 head
+becomes 32x32 and the stride-16 head 16x16, so the anchor set goes 896 -> 3584
+and anchor centres sit 0.03125 apart instead of 0.0625. The priors need no
+refit: they are normalized to the input, so the same prior simply lands on a
+finer grid. **Nothing about the architecture, the parameter count or the
+two-stage pipeline changes.**
+
+Retrained at 256 with the same data, initialisation, hyperparameters and 100
+epochs, scored through the deployed inference path on `crops_val`
+(2940 images, 2193 ears), paired bootstrap over 1000 resamples:
+
+| input | mAP@0.5 | mAP@[.5:.95] | det IoU | parameters | CPU, 1 thread |
+|---|---|---|---|---|---|
+| 128 | 0.7426 | 0.3405 | 0.7338 | 103,418 | 2.55 ms |
+| 256 | **0.7783** | **0.3596** | **0.7390** | 103,418 | 7.72 ms |
+
+| paired difference | 95% CI | |
+|---|---|---|
+| mAP@0.5 +0.0353 | [+0.0210, +0.0499] | real |
+| mAP@[.5:.95] +0.0188 | [+0.0089, +0.0281] | real |
+| det IoU +0.0052 | [+0.0001, +0.0099] | real, but only just |
+
+Identical parameter count, so this is purely resolution. It costs 3.0x the ear
+model's CPU time. Localisation moves least, which is consistent with everything
+else measured here: det IoU has been the metric least responsive to any
+intervention.
+
+Worth recording that this was predicted to FAIL. The case for 256 rested on
+raising the anchor-match ceiling -- the same argument that justified refitting
+the priors, which measured worse on every metric. The arguments are not
+actually the same: better priors only re-describe boxes the grid already
+cannot place, whereas more pixels supply feature detail as well as a finer
+grid. Mechanism matters, and a ceiling argument alone does not distinguish the
+two cases.
+
+A caution on measuring this. Two different "crop-space" paths exist, and they
+disagree by 0.03 mAP@0.5 on the same checkpoint: `evaluate.py` uses the
+dataloader's letterbox with the trainer's post-processing at NMS 0.5 (0.7106
+for the shipped model), while `model.process` uses `resize_pad` and NMS 0.3 --
+what actually deploys (0.7426). Comparing a number from one against a number
+from the other cancelled this entire effect on the first attempt. The table
+above is the deployed path for both arms.
 
 ### What was measured and ruled out
 
@@ -777,7 +867,22 @@ recording so they are not retried blind:
   shipped narrow pretrained one. Collecting both effects needs a
   function-preserving widening (Net2Net) from the MediaPipe weights rather than
   a wider model trained from scratch.
-
+- **A bigger face stage.** The front BlazeFace finds no face in 2.9% of
+  held-out images, and an ear whose face is missed never reaches the second
+  stage, so this is the pipeline's hard recall ceiling. MediaPipe's
+  back-camera model (136,240 parameters at 256 px, against 101,390 at 128)
+  removes the ceiling completely -- no-face goes to 0.0% at its own swept
+  threshold of 0.10 -- and buys nothing: -0.0078 mAP@0.5, 95% CI [-0.0557,
+  +0.0395], not distinguishable, and the same verdict on mAP@[.5:.95] and det
+  IoU. The ceiling was simply too small to be worth removing. Those 2.9% of
+  images hold **9 of 355 ears (2.5%)**, so perfect face recall could add at
+  most 2.5 recall points, and the back model recovers 3 of the 9. A plausible
+  reason the rest of the frame does not improve either: `make_face_crops.py`
+  built the training crops with the *front* detector, so the ear model's input
+  distribution is front-model crops and a differently-calibrated face box is
+  off-distribution even when it is correct. That is untested -- all the
+  end-to-end intervals here straddle zero, so there is no established
+  regression to explain, only an absent gain.
 For scale: on the same images and labels, YOLOv11m at 640 px reaches 0.8829
 mAP@0.5 against this pipeline's 0.5809, so the headroom is real -- but it
 differs in both capacity and input resolution, and nothing here has separated
