@@ -865,6 +865,28 @@ model's CPU time. Localisation moves least, which is consistent with everything
 else measured here: det IoU has been the metric least responsive to any
 intervention.
 
+**A checkpoint does not record the input size it was trained for.** The
+architecture is fully convolutional, so the 128 px and 256 px models have
+byte-identical state dict shapes and the same 107,506 parameters; only the
+values differ. Loading one at the wrong size therefore does not fail, it just
+gets worse: on the deployed path the 128 px model scores 0.7426 mAP@0.5 at 128
+and 0.4577 at 256. `evaluate.py` and `evaluate_two_stage.py` take
+`--input-size` for this reason, and it has to come from whoever knows the
+provenance of the file.
+
+The superseded 128 px model is kept at
+`model_weights/BlazeEar_best_128px.pth`, since it is the baseline every
+measurement in this README is relative to:
+
+```bash
+python evaluate.py --checkpoint model_weights/BlazeEar_best_128px.pth \
+  --csv data/splits/crops_val.csv --data-root data/face_crops/ --input-size 128
+```
+
+That prints 0.7106, not 0.7426, because `evaluate.py` is the dataloader path
+and the figures above are the deployed one -- see the caution at the end of
+this section. Both are correct; they are not interchangeable.
+
 End to end on the held-out set, 256 subsumes most of what TTA was buying and
 beats 128-with-TTA while costing less than it:
 

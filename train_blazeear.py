@@ -131,7 +131,11 @@ class BlazeEarTrainer:
         
         # The canonical anchors, shared with the dataloader's assignment and
         # with every inference path.
-        self.reference_anchors = get_anchors().float().to(device)
+        # Keyed to `scale`, which is the input edge: the anchor set differs by
+        # size (896 at 128, 3584 at 256), and decoding one against the other is
+        # a shape error at best and a wrong-scale box at worst.
+        self.reference_anchors = get_anchors(
+            input_size=int(scale)).float().to(device)
         
         # Setup loss function
         self.loss_fn = loss_fn if loss_fn else BlazeEarDetectionLoss(scale=scale)

@@ -22,6 +22,7 @@ from blazebase import checkpoint_is_folded, load_checkpoint_state
 from make_face_crops import crop_window, load_face_detector
 from utils.anchor_utils import generate_reference_anchors
 from utils.config import (
+    DEFAULT_INPUT_SIZE,
     FACE_INPUT_SIZE,
     DEFAULT_DATA_ROOT,
     FACE_CROP_EXPAND,
@@ -35,15 +36,23 @@ from utils.nms import suppress_overlapping
 from utils.tta import VIEWS, flip_boxes_x, merge_views
 
 
-def load_ear_model(path, score_threshold, device, legacy_anchors=False):
+def load_ear_model(path, score_threshold, device, legacy_anchors=False,
+                   input_size=DEFAULT_INPUT_SIZE):
     """Build whichever architecture the checkpoint was written from.
 
     `legacy_anchors` decodes with the original w=h=1.0 square anchors. A
     pre-v2 checkpoint was trained against those, so decoding it through the
     fitted ear priors produces boxes at the wrong scale rather than an error.
+
+    `input_size` has to be supplied because the checkpoint does not carry it.
+    The architecture is fully convolutional, so a 128 px and a 256 px model
+    have byte-identical state dict shapes and the same 107,506 parameters --
+    nothing in the file says which it is. Scoring the shipped 128 px model at
+    256 does not raise; it returns 0.4577 mAP@0.5 instead of 0.7426.
     """
     state = load_checkpoint_state(path)
-    model = BlazeEar(use_batchnorm=not checkpoint_is_folded(state))
+    model = BlazeEar(use_batchnorm=not checkpoint_is_folded(state),
+                     input_size=input_size)
     model.load_state_dict(state)
     model.eval().to(device)
     model.min_score_thresh = score_threshold
@@ -137,6 +146,15 @@ def build_parser():
                         help='ear model trained on full frames')
     parser.add_argument('--crop-checkpoint', default=None,
                         help='ear model trained on face crops')
+    parser.add_argument('--input-size', type=int, default=DEFAULT_INPUT_SIZE,
+                        help=f'input edge the EAR checkpoint was trained at '
+                             f'(default {DEFAULT_INPUT_SIZE}). The face stage '
+                             f'is always {FACE_INPUT_SIZE}. Pass 128 to score '
+                             f'a pre-256 checkpoint such as '
+                             f'model_weights/BlazeEar_best_128px.pth: the file '
+                             f'does not record its own input size and running '
+                             f'it at the wrong one silently loses accuracy '
+                             f'rather than failing.')
     parser.add_argument('--legacy-anchors', action='store_true',
                         help='decode --checkpoint with the original w=h=1.0 '
                              'anchors, for checkpoints from before the fitted '
@@ -179,10 +197,11 @@ def main():
         groups = groups[:args.limit]
 
     single = (load_ear_model(args.checkpoint, args.score_threshold, args.device,
-                             legacy_anchors=args.legacy_anchors)
+                             legacy_anchors=args.legacy_anchors,
+                             input_size=args.input_size)
               if args.checkpoint else None)
     crop_model = (load_ear_model(args.crop_checkpoint, args.score_threshold,
-                                 args.device)
+                                 args.device, input_size=args.input_size)
                   if args.crop_checkpoint else None)
     face_detector = (load_face_detector(args.face_threshold, args.device)
                      if crop_model else None)

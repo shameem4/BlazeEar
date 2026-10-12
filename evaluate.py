@@ -34,10 +34,11 @@ from blazebase import checkpoint_is_folded, load_checkpoint_state
 from blazeear import BlazeEar
 from dataloader import create_dataloader
 from utils.config import (
-    FACE_INPUT_SIZE,
     DEFAULT_BEST_CHECKPOINT,
     DEFAULT_DATA_ROOT,
+    DEFAULT_INPUT_SIZE,
     DEFAULT_VAL_CSV,
+    FACE_INPUT_SIZE,
     HUMAN_ANNOTATION_SOURCES,
     IGNORE_ANNOTATION_SOURCE,
     NEGATIVE_ANNOTATION_SOURCE,
@@ -91,6 +92,13 @@ def main() -> None:
                         help='Detections below this are discarded before scoring. '
                              'Keep it low: average precision needs the full curve.')
     parser.add_argument('--nms-threshold', type=float, default=0.5)
+    parser.add_argument('--input-size', type=int, default=DEFAULT_INPUT_SIZE,
+                        help=f'input edge the checkpoint was trained at '
+                             f'(default {DEFAULT_INPUT_SIZE}). The file does '
+                             f'not record it -- a 128 px and a 256 px model '
+                             f'have identical state dicts -- and the wrong '
+                             f'value silently loses accuracy rather than '
+                             f'failing. Pass 128 for a pre-256 checkpoint.')
     parser.add_argument('--legacy-anchors', action='store_true',
                         help='Decode with the original w=h=1.0 anchors. Required to '
                              'score checkpoints trained before the anchor change.')
@@ -101,6 +109,7 @@ def main() -> None:
     loader = create_dataloader(
         csv_path=args.csv, root_dir=args.data_root, batch_size=args.batch_size,
         shuffle=False, num_workers=args.num_workers, augment=False, pin_memory=True,
+        target_size=(args.input_size, args.input_size),
     )
     dataset = loader.dataset
     sources_by_image = load_sources_by_image(args.csv)
@@ -116,7 +125,7 @@ def main() -> None:
         print('Note: it was also trained against w=h=1.0 anchors, so its decode '
               'differs from current training. Scores are not comparable to a '
               'checkpoint trained after the anchor change.')
-    model = BlazeEar(use_batchnorm=not folded)
+    model = BlazeEar(use_batchnorm=not folded, input_size=args.input_size)
     model.load_state_dict(state)
 
     # Reuse the trainer's detection path so evaluation cannot drift from the
@@ -127,8 +136,14 @@ def main() -> None:
         model=model, train_loader=loader, val_loader=loader, device=device,
         checkpoint_dir='runs/checkpoints', log_dir='runs/logs/evaluate',
         eval_score_threshold=args.score_threshold, nms_iou_threshold=args.nms_threshold,
-        use_amp=False,
+        use_amp=False, scale=args.input_size,
     )
+    # The three have to agree or the model is scored on geometry it never
+    # trained against -- images at one size decoded at another.
+    assert loader.dataset.target_size == (args.input_size, args.input_size)
+    assert model.input_size == args.input_size
+    assert trainer.scale == args.input_size
+
     if args.legacy_anchors:
         from utils.anchor_utils import generate_reference_anchors
         legacy, _, _ = generate_reference_anchors(
