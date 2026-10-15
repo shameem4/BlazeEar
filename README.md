@@ -1100,8 +1100,10 @@ the second is still open:
   so a bigger concentric square buys periphery in every direction while paying
   resolution everywhere. Anything aimed at those 31 ears needs a different crop
   *placement or shape*, not a larger scalar.
-- **A same-size lateral shift is the one crop change the sweep never tested,
-  and it has a measured ceiling of 5.1pp.** The expand sweep varied one
+- **A same-size lateral shift has a ceiling of 5.1pp, and no way to aim it.**
+  It was the one crop change the sweep never tested, and it is now measured
+  on both halves: the geometry is favourable and the direction is not
+  predictable. The expand sweep varied one
   scalar on a *concentric* square, which is why coverage and resolution
   traded against each other: growing the window to reach one ear shrinks
   every ear in it. Translating a window of the *same* side pays no resolution
@@ -1121,20 +1123,46 @@ the second is still open:
   sit at a median radial offset of 0.361 sides, p90 0.443, so a shifted
   window puts its ear where the model has always seen ears.
 
-  The open problem is **which way to shift**, and it is a strictly weaker
-  requirement than the tragion crop that died below: that one needed a
-  predicted *position* and had none, whereas a shift needs only a direction
-  and a fixed magnitude. Eye and nose keypoints are the untested candidates
-  -- the face stage carries all six trained keypoints, and the two eyes and
-  the nose give a yaw sign even where the tragions are occluded. Nothing has
-  measured whether that sign agrees with the direction these 31 ears lie in.
-  Until it has, the 5.1pp is a ceiling on a direction oracle, not a result.
+  **The direction oracle has since been tested and there is not one, so the
+  5.1pp stays a ceiling and this is closed as a post-hoc rule.** The open
+  question was which way to shift -- a strictly weaker requirement than the
+  tragion crop below, which needed a predicted *position*. Measured
+  externally (Ear_Landmarker, 2026-10-15) on 3,000 images / 3,525 ears, share
+  of ears whose true shift direction a predictor gets right:
+
+  | predictor | escaping (n=290) | delivered (n=3235) |
+  |---|---|---|
+  | eye midpoint minus nose | 57.6% | **76.4%** |
+  | far tragion | 57.6% | 78.6% |
+  | eye midpoint minus crop centre | 41.7% | 24.0% |
+  | always shift right | 30.3% | 51.4% |
+  | *majority class* | *69.7%* | *51.4%* |
+
+  The keypoints do carry real direction information -- 76.4% against a 51.4%
+  baseline on delivered ears, p=3e-188 -- which is what makes the escaping
+  column decisive rather than merely negative. There it falls to 57.6%
+  [51.7, 63.3], and **worse than always shifting the same way** (69.7%,
+  p=1.3e-05). A keypoint rule is beaten by a constant on the only ears it
+  would ever be applied to, and that constant is just this corpus's
+  handedness skew, so it is not a rule either.
 
   What could *not* be established: whether the 31 split into a geometry group
   and a detector group. The offsets are a near-continuum (0.89, 0.90, 0.96,
   1.04, 1.08 ...), the largest gap is a lone 3.41 outlier, and the ordering
   of any two-group story flips between a cut at 1.0 and one at 1.25. So they
   are one population as far as this measurement can tell.
+- **The general lesson, which is worth more than any of the three results:
+  face keypoints cannot rescue a face-box crop, because they fail together
+  with it.** Three separate attempts now -- the tragion as a position
+  predictor (9.7% within one ear-size), the tragion-centred crop, and
+  eye-nose shift direction -- each show strong signal on the ears the crop
+  already delivers and none on the ears that escape it. That is one property
+  of the problem rather than three findings. Whatever puts an ear outside a
+  face-centred window is a turned or partly out-of-frame head, and that is
+  the same condition that degrades every cue derived from the face box. So
+  the 8.7% is not addressable by any post-hoc rule built on face-stage
+  output, however the rule is shaped. What remains is re-targeting the first
+  stage so the box is right to begin with, which is a different project.
 - **Measure per-ear reachability on `crops_val` too.** The 11.3% is from 355
   ears on one 279-image set. The direction is not in doubt -- the 31 ears were
   counted directly -- but the magnitude deserves the larger split. Still open.
