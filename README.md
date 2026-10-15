@@ -1041,17 +1041,44 @@ stratum, which is how this was confirmed rather than inferred.
 This is why the back-camera face model removed the no-face rate completely and
 bought nothing measurable: it was fixing the 2.5%.
 
-Two things follow, neither yet done:
+Two things followed. The first has since been measured and came back null;
+the second is still open:
 
-- **Re-sweep `FACE_CROP_EXPAND` at 256 px.** A wider crop captures more ears
-  and shrinks the ear in model pixels, so it trades coverage against exactly
-  the quantity the stratified results say matters most. That trade was settled
-  at 128 px, where resolution was scarce; at 256 there is resolution to spare,
-  so the optimum should have moved. 1.5 is inherited, not fitted to this
-  pipeline.
+- **Re-sweeping `FACE_CROP_EXPAND` at 256 px does not pay. 1.5 is already the
+  optimum.** This was the recommendation above, and it was wrong about where
+  the optimum would move. Measured externally (Ear_Landmarker, 2026-10-15) on
+  1,200 full frames / 1,400 human-labelled ears, two-stage recall at IoU>=0.3:
+
+  | expand | recall | vs 1.5 | p | paired counts |
+  |---|---|---|---|---|
+  | 1.20 | 71.93% | **-7.93pp** | 6.8e-19 | lost 139, gained 28 |
+  | **1.50** | **79.86%** | optimal | | |
+  | 1.90 | 75.57% | **-4.29pp** | 2.6e-09 | lost 82, gained 22 |
+  | 2.40 | 70.86% | **-9.00pp** | 4.0e-24 | lost 148, gained 22 |
+
+  The predicted mechanism is in the paired counts and it does not break even
+  at any setting: every widening gains a couple of dozen ears by covering more
+  of them and loses three to five times that many by shrinking the ear in the
+  crop. Coverage and resolution trade directly, and at 256 px resolution still
+  wins -- the reasoning above assumed there was resolution to spare, and there
+  is not.
+
+  These figures are final: the same ranking and the same mechanism appeared on
+  three independent ground-truth bases, and 1.5 scored 79.86% here against
+  79.55% on a separate human-basis run. One caveat remains, and it does not
+  rescue the recommendation: the statistic is not the same one as the 8.7%
+  (that is per-ear reachability on `common_heldout`; this is two-stage recall
+  on full frames), so the two are compatible rather than directly comparable.
+
+  What this changes: the 8.7% is still the larger share of the recall ceiling,
+  and `FACE_CROP_EXPAND` is still what causes it -- but it is **not recoverable
+  by widening the crop**. Ears sit lateral and posterior to a frontal face box,
+  so a bigger concentric square buys periphery in every direction while paying
+  resolution everywhere. Anything aimed at those 31 ears needs a different crop
+  *placement or shape*, not a larger scalar.
 - **Measure per-ear reachability on `crops_val` too.** The 11.3% is from 355
   ears on one 279-image set. The direction is not in doubt -- the 31 ears were
-  counted directly -- but the magnitude deserves the larger split.
+  counted directly -- but the magnitude deserves the larger split. Still open.
 
 ### What was measured and ruled out
 

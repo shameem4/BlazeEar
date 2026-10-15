@@ -152,11 +152,35 @@ NEGATIVE_ANNOTATION_SOURCE = "NEGATIVE"
 # were confirmed.
 #
 # Raising this captures more ears and spends more of the input on background,
-# so it trades coverage against the ear's size in model pixels. That trade was
-# settled at 128 px. It has NOT been re-swept at 256, where there is
-# resolution to spare, and the stratified results in the README suggest the
-# model-pixel side of the trade is exactly what matters most -- so 1.5 is the
-# value inherited from the 128 px pipeline rather than one fitted to this one.
+# so it trades coverage against the ear's size in model pixels. 1.5 HAS now
+# been re-swept at 256 px and it is the optimum; do not re-run this expecting
+# a win. Two-stage recall at IoU>=0.3 over 1,200 full frames / 1,400 human
+# ear boxes (measured by the Ear_Landmarker project, 2026-10-15):
+#
+#   expand   recall     vs 1.5                paired
+#     1.20   71.93%    -7.93pp  p=6.8e-19     lost 139, gained 28
+#     1.50   79.86%    optimal
+#     1.90   75.57%    -4.29pp  p=2.6e-09     lost  82, gained 22
+#     2.40   70.86%    -9.00pp  p=4.0e-24     lost 148, gained 22
+#
+# The trade is in the paired counts and breaks even at no setting: each
+# widening covers a couple of dozen more ears and loses three to five times
+# that many to the ear shrinking in the crop. An earlier version of this note
+# argued the optimum should have moved at 256 because there is "resolution to
+# spare" -- there is not, and that reasoning was wrong.
+#
+# So the 8.7% above is still the larger share of the ceiling and this constant
+# is still its cause, but it is NOT recoverable by widening: a concentric
+# square buys periphery in every direction while paying resolution everywhere,
+# and ears sit lateral and posterior to a frontal face box. Anything aimed at
+# those 31 ears needs a different crop PLACEMENT or SHAPE, not a larger scalar.
+# The figures are final: the ranking and the mechanism reproduced on three
+# independent ground-truth bases, and 1.5 scored 79.86% here against 79.55%
+# on a separate human-basis run. One caveat stands -- the statistic is not the
+# same one as the 8.7%, which is per-ear reachability on common_heldout rather
+# than two-stage recall on full frames, so the two are compatible rather than
+# directly comparable.
+# See README.md for the long form.
 FACE_CROP_EXPAND = 1.5
 # Face score floor. One of the two levers on the recall ceiling, and the
 # smaller one (see above): an ear whose face is missed never reaches the second
