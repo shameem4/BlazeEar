@@ -1389,6 +1389,67 @@ but that is 0.9% of a 22 ms training step -- about 10 seconds over a
 100-epoch run. At inference it costs exactly nothing, since the loss does not
 run there.
 
+### The three-arm A/B: both levers are null, and one costs the mode
+
+Run 2026-10-15, 100 epochs per arm on `crops_train`, scored on `crops_val`
+(2,193 human ears in 2,033 crops) at the deployed 0.80 gate, hit = IoU >= 0.5.
+`python score_arm_bands.py`. Arms differ only in the two constants:
+
+| band | n | baseline | cap_only | treatment | cap - base | B1 |
+|---|---|---|---|---|---|---|
+| 0-32 | 123 | 2.4% | 2.4% | 4.9% | +0.0 | **+2.4** |
+| 32-48 | 250 | 38.4% | 35.6% | 37.6% | -2.8 | +2.0 |
+| 48-64 | 698 | 77.2% | 76.5% | 76.5% | -0.7 | +0.0 |
+| **64-80 (mode)** | **758** | **89.2%** | **88.0%** | **86.8%** | **-1.2** | **-1.2** |
+| 80-96 | 230 | 84.3% | 86.1% | 83.0% | +1.7 | -3.0 |
+| 96-120 | 88 | 71.6% | 73.9% | 70.5% | +2.3 | -3.4 |
+| 120+ | 46 | 78.3% | 69.6% | 76.1% | -8.7 | +6.5 |
+| **all** | **2193** | **73.3%** | **72.4%** | **72.0%** | **-0.9** | **-0.4** |
+
+False positives per image are flat: 0.12 / 0.12 / 0.11, and FP at >= 96 px is
+0.00 in all three arms, so the cap's specific risk -- fewer negatives on the
+prior that suppresses large false positives -- did not materialise. Neither
+did its benefit.
+
+**Read against the standard pre-registered in `queue_augment_scale_ab.sh`
+before the run, this is a non-result, and a worse shape than the one that
+standard rejects.** It says a single band improved by a couple of points with
+the mode flat is not a result. Here the one band that improved is 0-32 at
++2.4pp, which on n=123 is **three ears becoming six**; and the mode is not
+flat, it is down 1.2pp on 758 ears, about nine ears lost. B1 trades nine ears
+at the mode for three at the bottom. The 120+ swings (-8.7, +6.5) are four
+and three ears on n=46 and carry no information.
+
+**Why B1 failing was predictable from the scoping measurement, which was
+taken too late to stop the run.** The 0-32 px band is information-limited:
+median ear 24 *real* pixels, 70.9% under 32 real px, crops resampling at
+0.94x. Augmentation can put a 24 px ear in front of the model, but it cannot
+put detail there that the camera never captured. The band's recall is 2.4%,
+not 18.2% as measured elsewhere on a different basis -- at the deployed gate
+on this split it is almost entirely unreachable.
+
+**The cap engaged and did not pay.** Verified rather than assumed, with
+`measure_anchor_budget.py --mine --prior-cap`: the worst single-prior share
+is 25.2% in `cap_only` against 47.6% in `baseline`, so the ceiling bound
+exactly as designed and the rebalance happened. It bought -0.9pp.
+
+**A third correction to the mechanism, and the most important thing here.**
+The concentration is real and reproducible; *which prior* concentrates is
+not. On the shipped checkpoint, 129.8 x 178.2 took 53.5% of the budget. On
+`baseline` -- same code, same data, a fresh 100-epoch run -- the worst prior
+is **12.5 x 24.3 at 47.6%**, and 129.8 x 178.2 takes only 14.4%. So "one
+prior absorbs half the negative budget" survives as a phenomenon and "the
+large-ear prior does" does not. The prediction built on it -- that capping
+would relieve the large-ear discard -- was therefore never really under test
+in this run, and the 120+ band is too small to have tested it anyway.
+
+What that leaves: the budget concentration is real, it is not the binding
+constraint on recall, and removing it costs slightly more than it buys. Both
+constants stay at their new values only because the losses are inside noise;
+neither is justified by a gain. A second draw is what the pre-registered
+standard asks for before believing the mode loss, and nothing here argues for
+spending it.
+
 ### How the measurements here were checked
 
 Worth recording because the numbers above are only as good as this, and

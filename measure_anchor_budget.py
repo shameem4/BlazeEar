@@ -47,7 +47,8 @@ import numpy as np
 from utils.anchor_utils import (_iou_matrix, anchors_to_corners,
                                 assign_anchor_targets, get_anchors)
 from utils.config import (ANCHOR_TOP_K, DEFAULT_INPUT_SIZE,
-                          HARD_NEGATIVE_RATIO, HUMAN_ANNOTATION_SOURCES)
+                          HARD_NEGATIVE_PRIOR_CAP, HARD_NEGATIVE_RATIO,
+                          HUMAN_ANNOTATION_SOURCES)
 
 # Ear size in pixels within the model's input, as the band boundaries.
 BANDS = ((0, 32), (32, 48), (48, 64), (64, 80), (80, 96), (96, 120),
@@ -171,11 +172,11 @@ def report(anchors, stats, size):
 def measure_mining(args):
     """Where the mined negatives actually land, per prior.
 
-    Reproduces the loss's own selection: `BlazeEarDetectionLoss` masks
-    positives and ignore-band anchors to the dtype minimum and takes a global
-    top-k of the remaining background logits, k = positives * ratio / batch.
-    So the budget goes wherever the model is most wrong, which is the thing
-    slot counts cannot tell you.
+    Reproduces the loss's own selection by CALLING it, rather than by
+    reimplementing a global top-k here. An earlier version of this function
+    did reimplement it, and once HARD_NEGATIVE_PRIOR_CAP existed that copy
+    silently ignored the cap -- so it reported what uncapped mining would pick
+    on capped weights and read as though the cap had failed to apply.
     """
     import torch
     from torch.utils.data import DataLoader
@@ -194,8 +195,13 @@ def measure_mining(args):
     model.eval().to(device)
 
     anchors = get_anchors(input_size=args.input_size).cpu().numpy()
+    anchor_tensor = get_anchors(input_size=args.input_size).to(device)
     prior_of = {i: (round(float(w), 4), round(float(h), 4))
                 for i, (w, h) in enumerate(anchors[:, 2:])}
+    from loss_functions import BlazeEarDetectionLoss
+    loss = BlazeEarDetectionLoss(
+        hard_negative_prior_cap=args.prior_cap)
+    print(f'mining with HARD_NEGATIVE_PRIOR_CAP = {args.prior_cap}')
 
     dataset = CSVDetectorDataset(args.csv, args.images, augment=True)
     loader = DataLoader(dataset, batch_size=32, shuffle=True,
@@ -219,12 +225,15 @@ def measure_mining(args):
             budget = max(int(positive.float().sum().item()
                              * HARD_NEGATIVE_RATIO) // per_image, 10)
             budget = min(budget, int((~excluded).sum(1).min().item()))
-            chosen = torch.topk(
-                logits.masked_fill(excluded,
-                                   torch.finfo(logits.dtype).min),
-                k=budget, dim=1).indices.cpu().numpy()
-            for row in chosen:
-                for i in row:
+            masked = logits.masked_fill(excluded,
+                                        torch.finfo(logits.dtype).min)
+            selected = loss._mine_negatives(masked, budget, anchor_tensor)
+            # _mine_negatives returns values, not indices, so recover which
+            # anchors they were. Ties are vanishingly unlikely in float logits
+            # and would only shuffle counts within a prior.
+            for row in range(masked.shape[0]):
+                picked = torch.isin(masked[row], selected[row])
+                for i in torch.nonzero(picked, as_tuple=True)[0].tolist():
                     mined[prior_of[int(i)]] += 1
             for i in torch.nonzero(positive.cpu())[:, 1].numpy():
                 positives[prior_of[int(i)]] += 1
@@ -261,6 +270,10 @@ def build_parser():
                         help='image root for --mine')
     parser.add_argument('--batches', type=int, default=40,
                         help='batches of 32 to accumulate for --mine')
+    parser.add_argument('--prior-cap', type=float,
+                        default=HARD_NEGATIVE_PRIOR_CAP,
+                        help='the cap to mine UNDER; pass 1.0 to see what '
+                             'uncapped mining would select on these weights')
     parser.add_argument('--csv', default='data/splits/crops_train.csv',
                         help='face-crop split whose human ear boxes to assign')
     parser.add_argument('--input-size', type=int, default=DEFAULT_INPUT_SIZE)
