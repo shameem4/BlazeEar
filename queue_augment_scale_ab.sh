@@ -86,8 +86,20 @@ run_arm control   0.75 1.25
 run_arm treatment 0.35 1.25
 
 echo
-echo "Both arms done. Compare them PAIRED, per image, stratified by ear size:"
-echo "  $PY evaluate_two_stage.py --help    # for the band-stratified path"
-echo "and read the band recalls, not the headline mAP -- the hypothesis is"
-echo "about 0-32 px and 32-48 px specifically, which are 5.9% and 10.5% of"
-echo "the data and can move a lot without moving a headline at all."
+echo "Both arms done. Compare them PAIRED, per image, and report THREE things:"
+echo
+echo "  1. Band recalls, not the headline mAP. The hypothesis is about 0-32 px"
+echo "     and 32-48 px, which are 5.9% and 10.5% of the data and can move a"
+echo "     lot without moving a headline at all."
+echo "       $PY evaluate_two_stage.py --help   # for the band-stratified path"
+echo
+echo "  2. The 64-80 px MODE band, on both arms, alongside (1). 1,402 of 3,790"
+echo "     ears sit in that mode. A pure rebalance that lifted 0-48 px by"
+echo "     starving the mode would read as a win on the band you aimed at and"
+echo "     a loss in aggregate -- so the mode is the guard, not an extra."
+echo "     (Guard from Ear_Landmarker, who scoped the lever.)"
+echo
+echo "  3. Mean positives-per-ear and per-prior positive share, per arm, since"
+echo "     the assignment statistics move BEFORE recall does and will say"
+echo "     whether the rebalance happened at all:"
+echo "       BLAZEEAR_AUGMENT_SCALE_LOW=... $PY measure_anchor_budget.py"
