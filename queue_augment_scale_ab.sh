@@ -90,9 +90,10 @@ run_arm () {
         return 1
     fi
 
-    # The range is read from config at import, so the arm sets it in the
-    # environment and a one-line sitecustomize-free shim applies it. Editing
-    # config.py between arms would break the as-run snapshot above.
+    # utils/config.py reads both knobs from the environment at import, so an
+    # arm is configured by --setenv and nothing is edited between arms.
+    # Editing config.py here would invalidate the as-run snapshot above, which
+    # is the thing that makes a finished arm interpretable later.
     echo "=== arm $name: scale=($low, $high)  prior cap=$cap ==="
     systemd-run --user --unit="blazeear-$name" --same-dir --wait --collect \
         --setenv=LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
@@ -132,7 +133,7 @@ run_arm cap_only  0.75 1.25 0.25
 run_arm treatment 0.35 1.25 0.25
 
 echo
-echo "Both arms done. Compare them PAIRED, per image, and report THREE things:"
+echo "All three arms done. Compare them PAIRED, per image, and report:"
 echo
 echo "  1. Band recalls, not the headline mAP. The hypothesis is about 0-32 px"
 echo "     and 32-48 px, which are 5.9% and 10.5% of the data and can move a"
