@@ -503,13 +503,43 @@ python export_onnx.py \
   --output runs/checkpoints/BlazeEar_best_post.onnx
 ```
 
-`detections` is `(num_detections, 5)` in `[ymin, xmin, ymax, xmax, score]` (normalized coords).
+`detections` is `(num_detections, 5)` in `[ymin, xmin, ymax, xmax, score]`
+(normalized coords), and as of now that is what it actually returns.
 
-The check is weaker for `--postprocess`: it probes with random noise, which
-normally scores below the threshold, so decode and NMS see no box and the
-script says as much rather than reporting a pass. Export without
-`--postprocess` to check the network, and check the postprocessing graph on a
-real image.
+**It used to return the zeroed tail as well.** Sub-threshold candidates are
+zeroed rather than removed, because `topk` needs a fixed length -- but the
+zeros were then passed through NMS and returned. On a real crop the graph
+emitted 56 to 72 rows where 1 or 2 cleared the gate, the rest at score
+exactly 0.0, so a caller that did not re-filter got dozens of phantom boxes
+per image. Nothing shipped consumed it: `docs/blazeear_inference.js` requires
+outputs named `boxes` and `scores` and refuses any other graph, and this one
+emits `detections`.
+
+The tail was known -- the self-check filtered `score > 0.0` on both sides
+before comparing, with a comment saying why -- so the graph was never
+numerically wrong where it was checked. It was a contract defect, and it had
+one real consequence: **the graph could not be compared against its own
+wrapper at all.** The tail's order is NMS tie-break among equal zero scores,
+which torch and onnxruntime resolve differently, so row counts disagreed (165
+against 56) while every real detection matched exactly. Dropping the tail
+makes the comparison exact. Measured over 300 real crops: 0 shape mismatches
+against 300 before, 197 detections rather than ~17,000 rows containing 197
+real ones, agreement to 1.43e-06, and the same 197 that `BlazeEarInference`
+produces on the same inputs.
+
+**Use `--check-image` with `--postprocess`.** The default probe is
+`torch.randn`, and the wrapper maps its input through `x / 127.5 - 1.0`, so
+that probe lands in roughly [-1.03, -0.97] -- near-uniform grey, scoring
+nowhere near the 0.8 gate. Decode, NMS and the gate then go unverified, and
+the script now says that in those words rather than implying a pass. On a real
+image the same check reports `max|d| 5.96e-08`:
+
+```bash
+python export_onnx.py \
+  --postprocess --check-image data/face_crops/<some>/<crop>.jpg \
+  --checkpoint runs/checkpoints/BlazeEar_best.pth \
+  --output runs/checkpoints/BlazeEar_best_post.onnx
+```
 
 `export_onnx.py` inspects the checkpoint and builds the matching architecture,
 so pre-BatchNorm checkpoints still export.
@@ -1324,6 +1354,18 @@ recording so they are not retried blind:
   ear model -- the crop training data has no keypoint labels -- but not of the
   face stage, which is MediaPipe's weights unchanged and loads its keypoint
   heads with zero missing keys.
+- **The `--postprocess` ONNX graph returned a tail of zero-score boxes
+  (fixed).** Not a numerical defect -- it was checked, and the check filtered
+  the tail deliberately -- but `detections` did not mean what the README said,
+  and the tail made the graph uncheckable against its own wrapper because its
+  order is NMS tie-break among equal zeros, which torch and onnxruntime
+  resolve differently. The instructive half is the self-check: it probed with
+  `torch.randn`, which the wrapper's own `x / 127.5 - 1.0` turns into
+  near-uniform grey, so nothing cleared the 0.8 gate, decode and NMS saw no
+  box, and the script returned success. A check that passed loudest when it
+  had verified nothing. There is now a `--check-image`, and the no-detection
+  case says it is unverified rather than implying a pass. See the export
+  section for the numbers.
 - **A latent disagreement between `process` and the export path (fixed).**
   Found while adding the emitted-detections parity test.
   `_tensors_to_detections` dropped decoded boxes with no area and non-finite
