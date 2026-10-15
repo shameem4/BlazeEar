@@ -1443,12 +1443,32 @@ large-ear prior does" does not. The prediction built on it -- that capping
 would relieve the large-ear discard -- was therefore never really under test
 in this run, and the 120+ band is too small to have tested it anyway.
 
-What that leaves: the budget concentration is real, it is not the binding
-constraint on recall, and removing it costs slightly more than it buys. Both
-constants stay at their new values only because the losses are inside noise;
-neither is justified by a gain. A second draw is what the pre-registered
-standard asks for before believing the mode loss, and nothing here argues for
-spending it.
+**Both constants are reverted, because "inside noise" was wrong.** That was
+asserted and then tested, paired per ear with McNemar over all 2,193:
+
+| comparison | lost | gained | delta | p |
+|---|---|---|---|---|
+| cap vs baseline | 99 | 80 | -0.87pp | 0.178 |
+| B1 vs cap_only | 92 | 84 | -0.36pp | 0.598 |
+| **both vs baseline** | **101** | **74** | **-1.23pp** | **0.049** |
+| **both, 64-80 mode band** | **31** | **13** | **-2.37pp** | **0.0096** |
+
+Neither lever reaches significance alone, and together they do: -1.23pp
+overall and -2.37pp on the mode band, which is the largest band by mass. The
+mode result is the solid one -- p=0.0096 on 758 ears, 31 lost against 13
+gained -- and the overall p=0.049 is marginal and would not survive a
+correction for the three comparisons. Either way nothing here is a gain, so
+the values go back: `AUGMENT_SCALE_RANGE = (0.75, 1.25)` and
+`HARD_NEGATIVE_PRIOR_CAP = 1.0`.
+
+The cap's implementation and tests stay in place, defaulted off. They are
+correct and cheap, 1.0 restores the exact previous arithmetic, and a future
+run that finds a *reproducible* concentration has the lever ready.
+
+What this leaves established: the budget concentration is real but is not the
+binding constraint on recall; the prior it lands on is not stable across runs;
+and the 0-32 px band is information-limited rather than exposure-limited, so
+it is not reachable from the loss or the augmentation at all.
 
 ### How the measurements here were checked
 

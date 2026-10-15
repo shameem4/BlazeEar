@@ -305,8 +305,20 @@ HARD_NEGATIVE_RATIO = 50.0
 # checked-out tree. Editing this file between arms would invalidate the as-run
 # snapshot the arms are compared under, which is the thing that makes a
 # finished run interpretable later.
+# MEASURED AND REVERTED. 0.35 was tried as a three-arm A/B on 2026-10-15 and
+# lost: paired over 2,193 ears on crops_val, the two changes together cost
+# -1.23pp recall (McNemar p=0.0491) and -2.37pp on the 64-80 px mode band
+# (p=0.0096, 31 ears lost against 13 gained). The 0-32 px band it was aimed at
+# went 2.4% -> 4.9%, which is three ears becoming six on n=123.
+#
+# The reason it could not work was measurable before the run and was measured
+# too late: the 0-32 px band is information-limited, not exposure-limited.
+# Median ear there is 24 REAL pixels with 70.9% under 32 real px, and the crop
+# resamples at 0.94x, so the ears are small in the source. Augmentation can
+# put a 24 px ear in front of the model; it cannot put detail there that the
+# camera never captured. Do not retry this expecting a different answer.
 AUGMENT_SCALE_RANGE = (
-    float(os.environ.get('BLAZEEAR_AUGMENT_SCALE_LOW', 0.35)),
+    float(os.environ.get('BLAZEEAR_AUGMENT_SCALE_LOW', 0.75)),
     float(os.environ.get('BLAZEEAR_AUGMENT_SCALE_HIGH', 1.25)),
 )
 
@@ -334,8 +346,24 @@ AUGMENT_SCALE_RANGE = (
 #
 # The total number of mined negatives is unchanged, so the loss scale does
 # not move -- only which anchors fill the budget.
+# MEASURED AND DEFAULTED OFF. The cap works mechanically -- it took the worst
+# single-prior share from 47.6% to 25.2%, verified with
+# `measure_anchor_budget.py --mine --prior-cap` -- and bought nothing: -0.87pp
+# recall, McNemar p=0.1783, which is inside noise on its own but is a loss in
+# combination with the augmentation change above.
+#
+# The mechanism it was built on also did not survive. The shipped checkpoint
+# put 53.5% of the budget on the 129.8 x 178.2 prior, which has 1.0% of the
+# positives, and that was the argument for capping. A fresh 100-epoch run of
+# the same code puts 47.6% on 12.5 x 24.3 instead and only 14.4% on the large
+# prior. So the concentration is reproducible but WHICH prior concentrates is
+# not, and the large-ear prediction was never actually under test.
+#
+# Kept at 1.0 rather than deleted: the implementation and its tests are
+# correct and cheap, and a future run that finds a reproducible concentration
+# has the lever ready. 1.0 restores the exact previous arithmetic.
 HARD_NEGATIVE_PRIOR_CAP = float(
-    os.environ.get('BLAZEEAR_HARD_NEGATIVE_PRIOR_CAP', 0.25))
+    os.environ.get('BLAZEEAR_HARD_NEGATIVE_PRIOR_CAP', 1.0))
 
 # Anchor assignment
 ANCHOR_TOP_K = 3          # positives per ground-truth box
