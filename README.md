@@ -78,7 +78,7 @@ In short: `trainable_blazeface` made BlazeFace trainable; BlazeEar uses that fou
 - `blazedetector.py`  
   Base detector class with MediaPipe preprocessing, batched inference, NMS, and a `get_training_outputs()` path that bypasses post‑processing.
 - `blazeear.py`  
-  BlazeEar architecture. Outputs 896 anchors (512 from 16×16×2 + 384 from 8×8×6). Regressor outputs 16 coords per anchor (4 box + 6 keypoints ×2), though only box coords are supervised by default.
+  BlazeEar architecture. Anchor count follows the input size: 3584 at the shipped 256 px (2048 from 32×32×2 + 1536 from 16×16×6), 896 at 128 px (512 from 16×16×2 + 384 from 8×8×6). Regressor outputs 16 coords per anchor (4 box + 6 keypoints ×2), though only box coords are supervised by default.
 - `train_blazeear.py`  
   Full training pipeline: CSV/NPY dataloading, anchor target encoding, loss, metrics, mixed precision, checkpointing, and TensorBoard logging.
 - `data_prep.py`  
@@ -87,6 +87,13 @@ In short: `trainable_blazeface` made BlazeFace trainable; BlazeEar uses that fou
   CSV dataset with resize‑pad to square, strong augmentations, and encoding into BlazeFace anchors via `utils/anchor_utils.py`.
 - `loss_functions.py`  
   `BlazeEarDetectionLoss`: hard negative mining + BCE or focal classification + SmoothL1 regression.
+- `measure_tragion_coverage.py`, `measure_crop_shift.py`,
+  `measure_anchor_budget.py`  
+  Standalone measurements behind claims in this README, kept runnable so the
+  numbers can be rechecked rather than trusted: whether the face stage's
+  predicted tragions land on the ears that escape the crop (they do not), what
+  a same-size shifted crop could recover (5.1pp, given a direction), and where
+  the anchor budget goes against where the ears actually are.
 - `utils/`  
   Anchor helpers, augmentations, visualization, metric utilities, debug scripts, and tests.
 - `runs/`  
@@ -1099,7 +1106,8 @@ the second is still open:
   traded against each other: growing the window to reach one ear shrinks
   every ear in it. Translating a window of the *same* side pays no resolution
   at all, and nothing in the sweep covers it. On the 355 ears of
-  `common_heldout`, offsets measured in crop sides (0.5 is the window edge):
+  `common_heldout` (`python measure_crop_shift.py`), offsets measured in crop
+  sides (0.5 is the window edge):
 
   | | n | median max offset | shift <=0.1 | <=0.2 | <=0.3 | <=0.5 |
   |---|---|---|---|---|---|---|
@@ -1182,7 +1190,7 @@ size is not how many anchors an ear gets but how much *negative* pressure
 sits on the prior serving it. `HARD_NEGATIVE_RATIO = 50.0` mines globally
 across all 3584 anchors, so a prior's negative exposure scales with its
 anchor count while its positive exposure scales with how often ears land on
-it:
+it (`python measure_anchor_budget.py`):
 
 | prior (px) | anchors | positives | pos per anchor | share of positives |
 |---|---|---|---|---|
