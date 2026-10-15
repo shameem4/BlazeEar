@@ -12,11 +12,15 @@ Two things come out of it. First, positive supervision is NOT starved by size:
 prior fit, so the mean is exactly 3.00 positives per ear in every band. That
 is the design working, and it rules out the intuitive explanation.
 
-Second, the budget is spent where the ears are not. `HARD_NEGATIVE_RATIO`
-mines negatives GLOBALLY across all anchors, so a prior's negative exposure
-scales with its anchor count while its positive exposure scales with how often
-ears land on it. The two 32x32 levels hold 57% of the slots and receive under
-8% of the positives -- and they are the levels a small ear has to land on.
+Second, the negative budget concentrates on a prior that has almost no
+positives. `--mine` measures this directly rather than inferring it from slot
+counts, which is the mistake this script's first version made: mining is
+adaptive, so a prior's negative exposure follows how CONFUSING it is, not how
+many slots it owns. At convergence one prior -- 129.8 x 178.2 px, 7.1% of
+slots, 0.6% of positives -- absorbs 54% of the whole negative budget, a 91x
+over-representation, while the three priors carrying 63% of positives receive
+0.6% between them. It is learned: at initialisation that same prior takes
+2.1%.
 
 Two gradients that run the same way come out of the band table: positive match
 quality (median IoU of the assigned anchors) and ignore-band protection (how
@@ -164,8 +168,99 @@ def report(anchors, stats, size):
               f'({100 * hits / sum(counts.values()):.0f}% of its positives)')
 
 
+def measure_mining(args):
+    """Where the mined negatives actually land, per prior.
+
+    Reproduces the loss's own selection: `BlazeEarDetectionLoss` masks
+    positives and ignore-band anchors to the dtype minimum and takes a global
+    top-k of the remaining background logits, k = positives * ratio / batch.
+    So the budget goes wherever the model is most wrong, which is the thing
+    slot counts cannot tell you.
+    """
+    import torch
+    from torch.utils.data import DataLoader
+    from dataloader import CSVDetectorDataset, collate_detector_fn
+    from blazeear import BlazeEar
+    from utils.anchor_utils import anchor_options
+
+    model = BlazeEar()
+    model.generate_anchors(anchor_options)
+    if args.checkpoint:
+        state = torch.load(args.checkpoint, map_location='cpu',
+                           weights_only=False)
+        model.load_state_dict(state.get('model_state_dict', state),
+                              strict=False)
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    model.eval().to(device)
+
+    anchors = get_anchors(input_size=args.input_size).cpu().numpy()
+    prior_of = {i: (round(float(w), 4), round(float(h), 4))
+                for i, (w, h) in enumerate(anchors[:, 2:])}
+
+    dataset = CSVDetectorDataset(args.csv, args.images, augment=True)
+    loader = DataLoader(dataset, batch_size=32, shuffle=True,
+                        collate_fn=collate_detector_fn, num_workers=4)
+
+    mined, positives = collections.Counter(), collections.Counter()
+    with torch.no_grad():
+        for index, batch in enumerate(loader):
+            if index >= args.batches:
+                break
+            _, logits = model(batch['image'].to(device))
+            logits = logits.squeeze(-1)
+            targets = batch['anchor_targets'].to(device)
+            positive = targets[..., 0] > 0.5
+            excluded = positive.clone()
+            ignore = batch.get('anchor_ignore')
+            if ignore is not None:
+                excluded = excluded | ignore.to(device).bool()
+
+            per_image = logits.shape[0]
+            budget = max(int(positive.float().sum().item()
+                             * HARD_NEGATIVE_RATIO) // per_image, 10)
+            budget = min(budget, int((~excluded).sum(1).min().item()))
+            chosen = torch.topk(
+                logits.masked_fill(excluded,
+                                   torch.finfo(logits.dtype).min),
+                k=budget, dim=1).indices.cpu().numpy()
+            for row in chosen:
+                for i in row:
+                    mined[prior_of[int(i)]] += 1
+            for i in torch.nonzero(positive.cpu())[:, 1].numpy():
+                positives[prior_of[int(i)]] += 1
+    return anchors, mined, positives
+
+
+def report_mining(anchors, mined, positives, size):
+    total_mined = max(sum(mined.values()), 1)
+    total_pos = max(sum(positives.values()), 1)
+    print('\nwhere the mined negatives actually land. Mining is ADAPTIVE -- it '
+          'takes a\nglobal top-k of background logits -- so this follows how '
+          'confusing a prior is,\nnot how many slots it owns, and slot counts '
+          'do not predict it:')
+    print(f"\n{'prior (px)':>18s} {'slots':>6s} {'% mined neg':>12s} "
+          f"{'% positives':>12s} {'neg:pos':>9s}")
+    for (width, height), indices in distinct_priors(anchors).items():
+        share_neg = 100 * mined[(width, height)] / total_mined
+        share_pos = 100 * positives[(width, height)] / total_pos
+        ratio = f'{share_neg / share_pos:8.1f}x' if share_pos else '     inf'
+        print(f'{width * size:7.1f} x {height * size:6.1f} {len(indices):6d} '
+              f'{share_neg:11.1f}% {share_pos:11.1f}% {ratio}')
+
+
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
+    parser.add_argument('--mine', action='store_true',
+                        help='also measure where the mined negatives land, '
+                             'which needs a forward pass and a checkpoint')
+    parser.add_argument('--checkpoint',
+                        default='model_weights/BlazeEar_best_256px.pth',
+                        help='weights to mine against; pass "" for untrained, '
+                             'which is what mining does at the start of a run')
+    parser.add_argument('--images', default='data/face_crops',
+                        help='image root for --mine')
+    parser.add_argument('--batches', type=int, default=40,
+                        help='batches of 32 to accumulate for --mine')
     parser.add_argument('--csv', default='data/splits/crops_train.csv',
                         help='face-crop split whose human ear boxes to assign')
     parser.add_argument('--input-size', type=int, default=DEFAULT_INPUT_SIZE)
@@ -179,6 +274,8 @@ def main():
     os.chdir(pathlib.Path(__file__).resolve().parent)
     anchors, stats = measure(args)
     report(anchors, stats, args.input_size)
+    if args.mine:
+        report_mining(*measure_mining(args), args.input_size)
 
 
 if __name__ == '__main__':

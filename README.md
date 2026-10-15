@@ -1269,12 +1269,10 @@ every box claim its three best anchors regardless of prior fit, so over the
 12,595 human training ears the mean is exactly 3.00 positives per ear in
 every size band from 0-32 px to 120+. That is the design working.
 
-**Found: the anchor budget is spent where the ears are not.** What varies by
-size is not how many anchors an ear gets but how much *negative* pressure
-sits on the prior serving it. `HARD_NEGATIVE_RATIO = 50.0` mines globally
-across all 3584 anchors, so a prior's negative exposure scales with its
-anchor count while its positive exposure scales with how often ears land on
-it (`python measure_anchor_budget.py`):
+**Found: one prior absorbs over half the negative budget and has almost no
+positives.** What varies by size is not how many anchors an ear gets but how
+much *negative* pressure sits on the prior serving it
+(`python measure_anchor_budget.py`, and `--mine` for the second table):
 
 | prior (px) | anchors | positives | pos per anchor | share of positives |
 |---|---|---|---|---|
@@ -1287,20 +1285,49 @@ it (`python measure_anchor_budget.py`):
 | 129.8 x 178.2 | 256 | 405 | 1.58 | 1.1% |
 | 191.5 x 260.4 | 256 | 93 | 0.36 | 0.2% |
 
-**2048 of 3584 slots -- 57% of the whole budget -- receive 7.7% of all
-positives**, a 27x gap in positives per slot against the prior that carries
-the mode. Those two starved priors are the 32x32 grid, and they are exactly
-the ones a small ear must land on: the 0-32 px band draws 67% of its
-positives from the 12.5 x 24.3 prior. Each small ear still gets its three
-anchors, but it gets them on a level whose other thousand slots spend the run
-being mined as background. Two secondary gradients run the same way:
+2048 of 3584 slots -- 57% of the budget -- receive 7.7% of all positives, a
+27x gap in positives per slot against the prior carrying the mode. **An
+earlier version of this section stopped there and concluded that those slots
+therefore absorb the negative budget. That was an inference from slot counts,
+and measuring it shows it is wrong.** `HARD_NEGATIVE_RATIO = 50.0` mines a
+global top-k of background logits, so the budget follows how *confusing* a
+prior is, not how many slots it owns. Measured on the shipped weights over
+1,280 augmented training images:
+
+| prior (px) | slots | % mined neg | % positives | neg:pos |
+|---|---|---|---|---|
+| 6.9 x 11.3 | 1024 | 9.6% | 1.0% | 9.4x |
+| 12.5 x 24.3 | 1024 | 16.8% | 12.6% | 1.3x |
+| 17.7 x 41.2 | 256 | 0.2% | 9.2% | 0.0x |
+| 34.8 x 39.9 | 256 | 0.1% | 18.3% | 0.0x |
+| 29.2 x 62.7 | 256 | 0.3% | 35.0% | 0.0x |
+| 58.4 x 101.1 | 256 | 19.3% | 22.3% | 0.9x |
+| **129.8 x 178.2** | 256 | **53.5%** | **1.0%** | **52x** |
+| 191.5 x 260.4 | 256 | 0.1% | 0.6% | 0.2x |
+
+The pathology is at the **large** end, not the small one. One prior, 7.1% of
+slots and 1.0% of positives, takes over half the entire negative budget. The
+three priors carrying 62.5% of positives take 0.6% between them, which is why
+the mode reaches 95.7% recall. The 32x32 priors a small ear lands on are
+close to balanced -- 12.5 x 24.3 sits at 1.3x -- so mining is *not* what
+holds the small bands back. And the concentration is learned: at
+initialisation that same large prior takes 2.1% and 58.4 x 101.1 takes 87%,
+so it drifts there over the run.
+
+This independently predicts the thing that looked anomalous above: **the
+score head's worst discard is at the largest ears, 36.9pp at 198 px.** The
+prior serving them is trained roughly 52:1 against. Two measurements taken
+for different reasons agree, which is the only reason either is quoted here.
+
+Two secondary gradients run with size as well:
 positive match quality, median IoU 0.425 at 0-32 px against 0.535 at the
 mode and 0.648 at 120+; and ignore-band protection, 0.94 anchors parked in
 the ignore band per small ear against 8.84 at the mode and 67.63 at 120+, so
 a near-miss next to a small ear is scored as background where the same
 near-miss next to a large one is excused.
 
-Two levers follow, and the cheap one is not the one that looks cheap:
+Three levers follow. They do not target the same ears, and the measurement
+above reorders them against the obvious guess:
 
 - **Widen `augment_scale`'s low end.** `dataloader.py:197` augments with
   `scale_range=(0.75, 1.25)`. The median training ear is 64.9 px in a 256
@@ -1308,10 +1335,38 @@ Two levers follow, and the cheap one is not the one that looks cheap:
   ear*, and the band the model is worst at is the band it was never shown at
   volume (5.9% of boxes). Taking the low end to about 0.35 is a one-line
   change that moves mass onto the starved priors without touching the loss.
-  It makes the easy bands slightly harder, which is the point.
-- **Cap hard-negative mining per level.** The misallocation above is a
-  property of global mining, and a per-level cap is the direct fix. It is
-  more invasive, so it comes second.
+  It makes the easy bands slightly harder, which is the point. This is the
+  highest-mass lever of the three and the only one aimed at where the ears
+  actually are. Queued as a two-arm A/B, not run -- see
+  `queue_augment_scale_ab.sh`.
+- **Accept that the 0-32 px band is information-limited, and aim at 32-48
+  instead.** The band the model is worst at is small because the ears are
+  genuinely small *in the source*, not because the pipeline shrank them: over
+  the 741 training ears in it, the median ear is **24 real pixels**, 70.9% are
+  under 32 real pixels, and the crop resamples at 0.94x -- essentially 1:1.
+  A 24 px ear carries a few hundred pixels of signal, and no loss
+  re-weighting, anchor rebalance or augmentation manufactures information that
+  was never captured. 32-48 px is the band worth attacking: 1,322 training
+  ears, a median 38 real pixels, only 36.5% under 32 real, and 58.0% recall
+  against the mode's 95.7%. There the information exists and is not being
+  used.
+- **Put a ceiling on any one prior's share of the negative budget.** The
+  concentration above is a property of global top-k mining, and the direct
+  fix is roughly fifteen lines in `loss_functions.py`: replace the single
+  `torch.sort(...)[:, :background_num]` with the same selection applied under
+  a per-prior cap.
+
+  It must be a **ceiling, not a quota.** A uniform per-prior quota would hand
+  each of the eight priors an eighth of the budget, which means giving the
+  three mode priors -- currently at 0.1 to 0.3% -- roughly a hundred times
+  more background pressure than they have now, on the priors carrying 62.5%
+  of all positives and reaching 95.7% recall. That is how a rebalance turns
+  into a regression. Capping the maximum any single prior may take, without
+  imposing a floor, removes the pathology and adds pressure nowhere.
+
+  Be clear about the payoff, though: it targets the large-ear discard, and
+  large ears are 17 to 34 of 3,790 held-out ears. It should fix a real and
+  measured 36.9pp defect on about 1% of the data.
 
 Focal loss is **not** a third lever -- it has been on by default for every run
 in this repository's history (see the training flags above), so it is already
