@@ -1344,6 +1344,18 @@ error and no failed assertion, but it cannot agree with an independent
 quantity. So the cheap detector is to always have one, and the discipline is
 to *name it before trusting the result* rather than after being contradicted.
 
+The scope of that claim is narrow and worth stating precisely, because the
+loose version is wrong. Reading code works, and found most of what was fixed
+in this round: focal loss documented as opt-in when the trainer has always
+defaulted it on, a `--csv-format` flag documented as the primary training
+command that no parser has ever accepted, a parity docstring claiming to pin
+the exported graphs, two inference paths with different candidate filters, and
+a self-check whose probe could not reach the code path it claimed to check.
+Every one of those came from reading. What reading cannot see is a *measurement*
+error, because a wrong measurement is not a defect in the code that produced
+it -- the script is correct and the question it answers is not the one asked.
+Eight cases with none caught by review supports that much, and not more.
+
 Two traps were hit twice each, from different directions, which is what makes
 them structural rather than careless:
 
