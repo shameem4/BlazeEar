@@ -1925,11 +1925,41 @@ part of the README has been tuning.
 | between | 715 | 1.0 | 4.0 | 5.5% | 0.620 |
 | lateral | 1448 | 1.0 | 5.0 | 5.2% | 0.618 |
 
-Two caveats belong with the 19.2% and neither is optional. **The magnitude
-does not transfer**: this is hand-held exercise footage with small, turned,
-fast-moving faces, where the still-image rate on `val_v2` is 1.2%. A head-on
-webcam selfie should be far better, so the mechanism carries and the number
-does not. And **this corpus cannot settle whether midline candidates persist
+**Most of that 19.2% is not a detector failure, and the corpus is the wrong
+instrument.** Two follow-ups, prompted by the objection that whole-body
+exercise framing makes faces and ears tiny. The size explanation does *not*
+hold: the largest face per frame is a median 0.284 of frame height here
+against 0.327 in `val_v2` stills, only 1.2x, with near-identical p90s (0.599
+against 0.597). A 1.2x size gap cannot produce a 21x dropout gap (19.2%
+against 0.9%). What does explain it is visibility, which gap run-lengths
+separate:
+
+| gap length | frames | share of no-face frames | reading |
+|---|---|---|---|
+| 1 frame | 72 | 7.0% | present but missed |
+| 2-3 | 155 | 15.0% | present but missed |
+| 4-10 | 298 | 28.8% | ambiguous |
+| 11-30 | 422 | 40.8% | no face to find |
+| 31+ | 88 | 8.5% | no face to find |
+
+**49.3% of no-face frames sit in gaps of 11 or more**, and 19.1% are in a gap
+starting at frame 0 -- intro cards, cutaways, and people bent over or facing
+the floor mid-repetition. None of that is the detector missing a face, and
+none of it is the deployment condition, where a webcam or video-call face is
+continuously present and roughly frontal.
+
+**The number that transfers is the transient rate: 227 frames, 4.2% of all
+frames, in gaps of 1 to 3.** That is a face the detector should have found and
+did not -- one frame in 24, enough to flicker, and the only part a face
+tracker can legitimately repair. Two consequences. `maxMisses = 3` covers
+exactly that class, which was picked from principle and is now measured. And
+a face tracker has to keep the same bound: coasting until a face returns
+would draw ears over a twenty-frame cutaway, so the rule is reuse the last
+crop for at most three frames, not reuse it until detection recovers.
+
+The still-image rate on `val_v2` is 1.2%, so the honest range for transient
+face dropout on selfie or video-call footage is somewhere between that and
+4.2%, and this corpus cannot narrow it. And **this corpus cannot settle whether midline candidates persist
 like ears do.** They are indistinguishable here, but that is because nothing
 persists, not because they are alike -- so the claim that a stationary nose
 bridge defeats temporal filtering remains consistent with the data and
@@ -1952,14 +1982,19 @@ not be raised. The sweep is run through a Python mirror of the shipped
 which caught a one-frame disagreement on the first attempt, where `drawn` was
 incremented before the `maxMisses` filter rather than after it.
 
-**So the next change is a face tracker, not a better ear gate.** The
-hysteresis now shipping tracks ears, while the instability is in the face
-box: reusing the previous crop when face detection drops, and smoothing the
-box when it jitters, would stabilise the ear model's *input* instead of
-repairing its output one stage later. `maxMisses = 3` is currently papering
-over face dropout from the wrong side. This supersedes nothing already
-measured -- the gates and the ear tracker keep their justifications -- but it
-relocates where the remaining flicker lives.
+**So the next change is probably a face tracker rather than a better ear
+gate, on a smaller claim than this section first made.** The hysteresis now
+shipping tracks ears, while the instability that remains is in the face box:
+reusing the previous crop for up to three frames when detection drops, and
+smoothing the box when it jitters, would stabilise the ear model's *input*
+instead of repairing its output a stage later. That addresses the 4.2%
+transient rate, not the 19.2% headline. This supersedes nothing already
+measured -- the gates and the ear tracker keep their justifications.
+
+**What is still needed is the right corpus**: selfie or video-call footage
+with head movement, where the face is continuously present so that structural
+gaps vanish and the transient rate can be measured on its own. Exercise video
+cannot provide it, and that is now demonstrated rather than assumed.
 
 ### Where this can go next, and what it is worth
 
