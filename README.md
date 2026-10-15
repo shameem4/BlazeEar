@@ -1894,6 +1894,73 @@ not reachable from the loss or the augmentation at all; and at the deployed
 gate the second stage localises 87.9% of ears while reporting 72.4%, of which
 about 6.5pp is available for 0.11 FP/image and the rest is not cheap.
 
+### The flicker is upstream: the face stage drops out
+
+`measure_video_dynamics.py`, label-free, on 5,378 frames of 60 hand-held
+videos. No annotation is needed because the two constants in question --
+`minHits` and `maxMisses` -- are about candidate *persistence* rather than
+correctness, and because geometry splits the population for free: midline
+candidates (|u| < 0.15, the nose and brow) are mostly false positives and
+lateral ones (|u| > 0.25) mostly ears. Noisy, since 11.4% of real ears are
+midline, but enough for the question asked.
+
+| face stage | |
+|---|---|
+| frames with **no face at all** | **19.2%** (1,035 of 5,378) |
+| faces per frame, mean | 1.31 |
+| face-box IoU between adjacent frames, median | 0.914 |
+| ... p10 | 0.565 |
+| ... below 0.5 | 6.8% of transitions |
+
+**19.2% of frames lose the face entirely**, and a frame with no face has no
+crop, so it has no ear detection whatever the ear model or the gate does.
+That single number explains the ear-side result: median candidate lifetime is
+1 frame for *every* position class, because a track cannot survive a frame
+that produced no crop. The flicker originates one stage above everything this
+part of the README has been tuning.
+
+| candidate persistence | tracks | median life | p90 | ever >= 0.85 | mean peak |
+|---|---|---|---|---|---|
+| midline | 1112 | 1.0 | 4.0 | 4.0% | 0.610 |
+| between | 715 | 1.0 | 4.0 | 5.5% | 0.620 |
+| lateral | 1448 | 1.0 | 5.0 | 5.2% | 0.618 |
+
+Two caveats belong with the 19.2% and neither is optional. **The magnitude
+does not transfer**: this is hand-held exercise footage with small, turned,
+fast-moving faces, where the still-image rate on `val_v2` is 1.2%. A head-on
+webcam selfie should be far better, so the mechanism carries and the number
+does not. And **this corpus cannot settle whether midline candidates persist
+like ears do.** They are indistinguishable here, but that is because nothing
+persists, not because they are alike -- so the claim that a stationary nose
+bridge defeats temporal filtering remains consistent with the data and
+untested by it.
+
+**`minHits` is a weak instrument, which is a result rather than a gap.**
+
+| minHits | maxMisses | midline confirmed | lateral confirmed | ratio |
+|---|---|---|---|---|
+| 1 | 3 | 37 | 67 | 1.81 |
+| 2 | 3 | 27 | 49 | 1.81 |
+| 3 | 3 | 22 | 42 | 1.91 |
+| 4 | 3 | 19 | 40 | 2.11 |
+
+Going from 1 to 4 moves the lateral-to-midline ratio only 1.81 -> 2.11 while
+cutting lateral confirmations 67 -> 40. It discards likely-real detections
+about as fast as it removes midline ones, so `minHits = 2` stands and should
+not be raised. The sweep is run through a Python mirror of the shipped
+`EarTracker`, checked against the same five behaviour cases the JS passes --
+which caught a one-frame disagreement on the first attempt, where `drawn` was
+incremented before the `maxMisses` filter rather than after it.
+
+**So the next change is a face tracker, not a better ear gate.** The
+hysteresis now shipping tracks ears, while the instability is in the face
+box: reusing the previous crop when face detection drops, and smoothing the
+box when it jitters, would stabilise the ear model's *input* instead of
+repairing its output one stage later. `maxMisses = 3` is currently papering
+over face dropout from the wrong side. This supersedes nothing already
+measured -- the gates and the ear tracker keep their justifications -- but it
+relocates where the remaining flicker lives.
+
 ### Where this can go next, and what it is worth
 
 Written at the close of the gate/tracker work, so the next person does not
