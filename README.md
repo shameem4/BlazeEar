@@ -843,7 +843,17 @@ Areas that naturally follow from the current pipeline:
 - Add explicit ear keypoint supervision if labels become available (regressor heads already exist).  
 - Calibrate detection thresholds per operating point. The shared defaults
   are now fitted rather than inherited (see above); what remains is a
-  front-facing vs profile split, which needs those subsets labelled.  
+  front-facing vs profile split, which needs those subsets labelled. Note
+  that the *size* axis of this is already closed -- a per-size gate was
+  swept and has no headroom, because the ranking inside each band is fine
+  and the base rate is not. See "The score head discards ears it has
+  already localised".
+- Widen `augment_scale`'s low end from 0.75 to about 0.35, so the training
+  distribution reaches the size band the model is worst at. One line, 1-3
+  GPU-hours, untested; the reasoning is in the score-head section below.
+- Cap hard-negative mining per feature level. 57% of the anchor budget
+  currently takes global mining pressure while receiving 7.7% of the
+  positives. Same section.
 - Export to ONNX/TFLite for edge deployment.
 - Price 320 px. 256 paid, the grid argument keeps scaling, and the
   anchor machinery is now size-parameterised, so the run is a constant
