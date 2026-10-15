@@ -1548,59 +1548,61 @@ that wants precision over recall can re-pick deliberately rather than by
 inheritance". What was missing was a crop-space curve at full sample size to
 re-pick against.
 
-**The gate is now 0.70**, in `utils/config.py` and mirrored in
-`docs/blazeear_inference.js`. That is the recall side of a flat optimum rather
-than its argmax: against 0.80 it buys 5.1pp of recall (112 ears) for 0.074
-more false positives per image, at an F1 difference of 0.004 this sample
-cannot resolve. The pick is deliberate on the ground that a missed ear yields
-the next stage nothing while a false ear yields a box a consumer can reject --
-which is a judgement about the consumer, not a result from the table.
+**The gate was briefly moved to 0.70 on both paths, and is back at 0.80 /
+0.85.** The move was argued from the crop-space table above; the regression
+was caught by eye on the demo page as a flickering false box on the nose
+bridge, and then measured. `sweep_tta_gate.py` sweeps the whole two-stage
+path on `val_v2` -- 2,414 human ears in 2,021 images, the shipped
+`runs/checkpoints_crop` model, IoU 0.5:
 
-**`TTA_SCORE_THRESHOLD` now follows at 0.70, so one gate applies on every
-path.** That is a consistency property, asked for deliberately, and it is not
-what the measurements recommend. `BlazeEarInference` defaults to `views: 4`
-and its threshold default is `this.views > 1 ? TTA_SCORE_THRESHOLD :
-SCORE_THRESHOLD`, so the fused value is the one that governs the browser page.
+| path | gate | precision | recall | F1 | FP/image | midline FP/image |
+|---|---|---|---|---|---|---|
+| plain | 0.70 | 0.723 | 0.694 | 0.7081 | 0.318 | 0.058 |
+| plain | 0.75 | 0.770 | 0.682 | 0.7234 | 0.243 | 0.035 |
+| **plain** | **0.80** | 0.821 | 0.653 | **0.7273** | 0.170 | 0.022 |
+| plain | 0.85 | 0.874 | 0.604 | 0.7147 | 0.104 | 0.013 |
+| TTA 4 | 0.70 | 0.644 | 0.740 | 0.6886 | 0.488 | 0.104 |
+| TTA 4 | 0.80 | 0.774 | 0.710 | 0.7410 | 0.247 | 0.040 |
+| **TTA 4** | **0.85** | 0.841 | 0.676 | **0.7497** | 0.152 | 0.023 |
+| TTA 4 | 0.90 | 0.903 | 0.600 | 0.7208 | 0.077 | 0.011 |
 
-The risk is specific and worth stating plainly. The TTA path has never been
-swept in crop space; the only TTA evidence is the 355-ear end-to-end sweep
-above, and in it **0.70 was the worst of the four TTA points measured** -- F1
-0.5824 against 0.6864 at 0.85, and -0.0389 F1 against not running TTA at all
-(95% CI [-0.0649, -0.0123]). The mechanism is not incidental: `max` fusion
-gives a cluster its best member's score, so the fused distribution sits above
-the plain one and the same gate admits more of it. The expected regression is
-therefore extra false boxes, not missing true ones -- which is what to look
-for on the demo page.
+**There is no plateau on either path end to end.** F1 rises to a clear argmax
+-- 0.80 plain, 0.85 fused -- so 0.70 cost 0.019 F1 on one and 0.061 on the
+other while roughly doubling and tripling false positives. The 355-ear
+end-to-end sweep further up this file had said exactly this. The crop-space
+curve was the outlier among three measurements, and it was the one acted on.
 
-Two things keep this cheap to undo. The fused value stays its own constant
-rather than being folded into the plain one, so a crop-space TTA sweep can
-move it back without re-plumbing. And `test_tta.py`'s
-`test_fused_threshold_is_above_the_plain_one` was relaxed to
-`..._is_not_below_...` (`>` to `>=`) rather than deleted, so the finding it
-encoded is still recorded and a value *below* the plain gate is still a
-failure. **The crop-space TTA sweep is the outstanding measurement here.**
+"Midline FP" is a false positive whose centre is within 0.15 face-box sides of
+the crop centre -- the nose and brow, since the crop is centred on the face
+and ears are lateral. It is the column that explains the symptom. At 0.70 the
+fused path puts a box on the facial midline in **one frame in ten** against
+one in forty-three at 0.85, and it flickers because those scores sit on the
+decision boundary. The lower gate admits midline junk preferentially: 24.0% of
+the false positives in the 0.70-0.85 band are midline, against 15.3% above
+0.85.
 
-**Does the lower gate revive either reverted lever?** No, and it changes the
-reason for one of them. Re-reading the three arms' pre-gate scores (paired,
-2,193 ears, no re-run needed):
+**The mistake was the choice of measurement, not the arithmetic.** Crop space
+scores stage 2 on pre-made crops, so it excludes the face stage's recall
+ceiling and every false positive the pipeline can place outside a crop. That
+makes it the right context for comparing two stage-2 checkpoints -- which is
+what it was built for, and where the three-arm A/B above still stands -- and
+the wrong one for picking a deployed gate. A deployed default should have been
+swept on the deployed path before it moved, not after a human noticed.
 
-| gate | baseline | cap_only | treatment | cap - base | p | treat - base | p |
-|---|---|---|---|---|---|---|---|
-| 0.60 | 80.3% | 79.3% | 80.4% | -1.09 | 0.045 | +0.05 | 1.000 |
-| 0.65 | 79.4% | 78.7% | 79.2% | -0.78 | 0.171 | -0.23 | 0.740 |
-| **0.70** | **78.2%** | **77.2%** | **77.8%** | **-1.09** | **0.058** | **-0.46** | **0.474** |
-| 0.75 | 76.4% | 75.2% | 75.2% | -1.19 | 0.045 | -1.14 | 0.052 |
-| 0.80 | 73.1% | 72.4% | 71.9% | -0.78 | 0.234 | -1.23 | 0.050 |
+What survives from the crop-space table is narrower: between two stage-2
+checkpoints, gates 0.65-0.80 do not separate them on F1. A deployment that
+genuinely wants recall over precision can still re-pick, against the
+end-to-end table here, expecting midline false positives to be the first
+thing that degrades.
 
-Two different shapes, and the earlier calibration reading covered only one of
-them. The **treatment** arm's deficit does grow with the gate and is gone at
-0.70 (-0.46pp, p=0.47) -- so the measured harm that the revert was argued on
-is specific to the 0.80 operating point. But nothing replaces it with a gain:
-no band moves beyond noise, and B1's small-ear bet is 6 ears of 123 becoming
-10. The revert stands on *no benefit* rather than on harm. The **cap**, by
-contrast, is down about a point at every gate from 0.60 to 0.80 and does not
-recover as the gate falls, which is not a calibration signature; lowering the
-gate makes its case slightly worse, not better. Both stay reverted.
+One trap worth recording, since it nearly produced a confident wrong answer:
+`export_onnx.py` defaults `--checkpoint` to `runs/checkpoints/BlazeEar_best.pth`,
+which is a December single-stage relic, not the shipped crop model. Pointed at
+it, this sweep reported 0.004 precision and 2.8% recall -- and
+`evaluate_two_stage.py` independently reported 0.0052 mAP@0.5 on the same
+file, which is what identified the checkpoint rather than the harness as the
+fault. The shipped model is `runs/checkpoints_crop/BlazeEar_best.pth`, dated
+one minute before `docs/BlazeEar_web.onnx`.
 
 **What the levers actually do, paired.** Per-arm median score on small ears
 reads like a mechanism -- 0.748 baseline, 0.696 cap_only, 0.761 treatment,

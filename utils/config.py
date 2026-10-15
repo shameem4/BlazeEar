@@ -79,53 +79,46 @@ DEFAULT_SAVE_EVERY = 10
 #      0.85     0.838  0.541  0.658   0.769  0.620  0.686
 #      0.90     0.894  0.428  0.579   0.878  0.566  0.688
 #
-# SUPERSEDED FOR THE PLAIN PATH, which is now 0.70. The sweep above is end to
-# end on 355 ears and optimises F1. Re-swept in crop space on `crops_val`'s
-# 2,193 ears (203,300 candidates, 2,033 images, the shipped 256 px model),
-# which is 6x the sample and the operating context stage 2 actually runs in:
+# RE-SWEPT END TO END, and the answer came back 0.80. Both values below were
+# briefly moved to 0.70 and are now back. Recording why, because the mistake
+# was in the choice of measurement rather than in the arithmetic.
 #
-#   gate   precision  recall     F1   FP/image
-#   0.60     0.760     0.803   0.781    0.273
-#   0.65     0.789     0.789   0.789    0.228
-#   0.70     0.813     0.775   0.794    0.192     <- now deployed
-#   0.75     0.839     0.755   0.795    0.156     <- F1 argmax
-#   0.80     0.869     0.724   0.790    0.118     <- was deployed
-#   0.85     0.901     0.665   0.765    0.079
+# The move was argued from a CROP-SPACE sweep on `crops_val` (2,193 ears),
+# where F1 is genuinely flat from 0.65 to 0.80 (0.789 / 0.794 / 0.795 / 0.790)
+# while recall falls 0.789 -> 0.724, so 0.70 looked like free recall on the
+# flat side of an optimum. Crop space scores stage 2 on pre-made crops: it
+# excludes the face stage's recall ceiling and every false positive the real
+# pipeline can place outside a crop. It is the right context for comparing two
+# stage-2 checkpoints and the wrong one for picking a deployed gate.
 #
-# F1 is flat from 0.65 to 0.80 (0.789, 0.794, 0.795, 0.790 -- a spread of
-# 0.006) while recall over the same span runs 0.789 down to 0.724. So 0.80 was
-# paying 5.1pp of recall against 0.70 for 0.074 fewer false positives per
-# image, at an F1 difference of 0.004 that the sample cannot resolve. 0.70 is
-# the deliberate pick on the recall side of a flat optimum, chosen because a
-# missed ear yields nothing downstream while a false ear is a box a consumer
-# can reject.
+# `sweep_tta_gate.py` sweeps the whole two-stage path on val_v2's 2,414 human
+# ears in 2,021 images, which is what actually ships. There is no plateau on
+# either path:
 #
-# Note what F1 assumes and this repository cannot settle: that a missed ear
-# and a false ear cost the same. They do not obviously, and the right value
-# depends on the consumer rather than on this table. Below 0.60 the trade
-# stops being graceful -- 0.50 buys 2pp more recall for double the false
-# positives, 0.30 reaches 85.6% recall at 2.3 FP/image -- so 0.60 is the floor
-# of the defensible range, not a further option.
+#   path     gate  prec  recall      F1   FP/img  midline FP/img
+#   plain    0.70  0.723  0.694   0.7081   0.318      0.058
+#   plain    0.80  0.821  0.653   0.7273   0.170      0.022   <- argmax
+#   TTA 4    0.70  0.644  0.740   0.6886   0.488      0.104
+#   TTA 4    0.85  0.841  0.676   0.7497   0.152      0.023   <- argmax
 #
-# TTA_SCORE_THRESHOLD now FOLLOWS the plain value at 0.70, so that one gate
-# applies on every path. That was asked for as a consistency property, and it
-# is not what the measurements recommend -- read the risk below before moving
-# it again.
+# So 0.70 cost 0.019 F1 on the plain path and 0.061 on the fused one, while
+# roughly doubling and tripling false positives respectively. The 355-ear
+# end-to-end sweep below had said the same thing; the crop-space curve was the
+# outlier, and it was the one acted on.
 #
-# The TTA path has never been swept in crop space. What exists is the 355-ear
-# end-to-end sweep (see the README), and in it 0.70 was the WORST of the four
-# TTA points measured: F1 0.5824 against 0.6864 at 0.85, and -0.0389 F1
-# against not running TTA at all, 95% CI [-0.0649, -0.0123]. The mechanism is
-# specific rather than incidental: `max` fusion gives a cluster its best
-# member's score, so the fused distribution sits above the plain one and the
-# same gate admits more of it. Expect more false ear boxes on the browser
-# page, not fewer true ones.
+# "midline FP" is a false positive whose centre is within 0.15 face-box sides
+# of the crop centre -- the nose and brow, since the crop is centred on the
+# face and ears are lateral. That column is why this was caught: at 0.70 the
+# fused path puts a box on the facial midline in one frame in ten against one
+# in forty-three at 0.85, and it flickers because those scores sit on the
+# boundary. Lowering the gate admits midline junk preferentially: 24% of the
+# false positives in 0.70-0.85 are midline against 15% above 0.85.
 #
-# So this value is deliberately kept as its own constant rather than folded
-# into the one above: a crop-space TTA sweep can move it back independently
-# without re-plumbing anything. `test_tta.py` no longer requires it to exceed
-# the plain gate, only to be at least equal -- that assertion encoded the
-# finding above, and relaxing it is the cost of the single-default property.
+# What remains true from the crop-space sweep is narrower: between two stage-2
+# checkpoints, 0.65-0.80 does not separate them on F1. A deployment that wants
+# recall over precision can still re-pick here -- but it should re-pick
+# against the end-to-end table above, and should expect midline false
+# positives as the first thing to degrade.
 #
 # Two separate findings from the original end-to-end sweep. The plain pipeline
 # peaked at 0.80 there rather than 0.70. And TTA
@@ -142,8 +135,8 @@ DEFAULT_SAVE_EVERY = 10
 # are fitted on 355 ears; the direction is bootstrap-confirmed, the second
 # decimal is not. The table is here so a deployment that wants precision over
 # recall can re-pick deliberately rather than by inheritance.
-DETECTION_SCORE_THRESHOLD = 0.70
-TTA_SCORE_THRESHOLD = 0.70
+DETECTION_SCORE_THRESHOLD = 0.80
+TTA_SCORE_THRESHOLD = 0.85
 NMS_IOU_THRESHOLD = 0.3
 MAX_DETECTIONS = 100
 

@@ -25,13 +25,13 @@ const ort = (typeof window !== 'undefined' && window.ort) ||
             (typeof globalThis !== 'undefined' && globalThis.ort) ||
             (typeof require !== 'undefined' ? require('onnxruntime-web') : null);
 // Deployed score thresholds, mirroring utils/config.DETECTION_SCORE_THRESHOLD
-// and TTA_SCORE_THRESHOLD; see that file for the measured sweep. Both are 0.70
-// so that one gate applies on every path, which was asked for as a
-// consistency property. Note what it costs: fusion takes a cluster's best
-// member score, so the fused distribution sits above the plain one, and in
-// the 355-ear end-to-end sweep 0.70 was the worst TTA point measured (F1
-// 0.5824 against 0.6864 at 0.85). This page defaults to 4 views, so it is the
-// TTA value that governs here. Expect more false boxes, not fewer true ones.
+// and TTA_SCORE_THRESHOLD; see that file for the measured sweep. Fusion takes
+// a cluster's best member score, so it shifts the whole distribution up and
+// the fused path needs its own, higher threshold. This page defaults to 4
+// views, so TTA_SCORE_THRESHOLD is the one that governs here. Both were
+// briefly set to a shared 0.70; end to end that cost 0.061 F1 on the fused
+// path and put a false box on the facial midline in one frame in ten, which
+// is what a flickering nose-bridge detection looks like.
 // Model input edges, mirroring utils/config.DEFAULT_INPUT_SIZE and
 // FACE_INPUT_SIZE. The two graphs no longer agree: the face graph is
 // MediaPipe's 128 px front model, the ear graph runs at 256. Preprocessing
@@ -42,8 +42,8 @@ const EAR_INPUT_SIZE = 256;
 const FACE_INPUT_SIZE = 128;
 const INTERMEDIATE_SIZE = 256;
 
-const SCORE_THRESHOLD = 0.70;
-const TTA_SCORE_THRESHOLD = 0.70;
+const SCORE_THRESHOLD = 0.80;
+const TTA_SCORE_THRESHOLD = 0.85;
 
 /**
  * BlazeEar Ear Detection Pipeline
@@ -62,7 +62,7 @@ class BlazeEarInference {
      *
      * Create a BlazeEar detector instance
      * @param {Object} options - Configuration options
-     * @param {number} options.confidenceThreshold - Minimum confidence for detections (default: SCORE_THRESHOLD, 0.70)
+     * @param {number} options.confidenceThreshold - Minimum confidence for detections (default: SCORE_THRESHOLD, 0.80)
      * @param {number} options.iouThreshold - IoU threshold for NMS (default: 0.3)
      * @param {number} options.inputSize - Model input edge (default: 256,
      *     the ear graph; the face graph is 128)
