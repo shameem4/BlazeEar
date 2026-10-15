@@ -1657,11 +1657,36 @@ already selects the highest-scoring negatives, which is exactly what a nose
 bridge scoring 0.8 is. Mining the midline "specifically" would reweight
 negatives the loss already picks.
 
-What the turned-head case does do is strengthen the *keypoint* veto over the
-crop-centre one. Under yaw the nose and eye keypoints move off centre while
-the ear moves toward it, so keypoints separate precisely the case where
-crop-centre geometry fails. That remains the one untested idea on this axis,
-and the pass-through it needs already exists.
+**The keypoint veto is the fourth casualty of a lesson already recorded in
+this file, and it was proposed here against it.** The argument offered was
+that under yaw the nose and eye keypoints move off centre while the ear moves
+toward it, so keypoints would separate the case crop-centre geometry fails
+on. That is backwards, and the escaping-ears section above says so: *face
+keypoints cannot rescue a face-box crop, because they fail together with it.*
+Two specifics make it concrete. MediaPipe's BlazeFace regresses all six
+keypoints unconditionally with no per-keypoint confidence, so under yaw the
+nose is never *absent* -- it is silently extrapolated to a plausible wrong
+place, which for a veto is worse than missing, because nothing marks it
+unreliable. And the predicted tragion sits a median 0.31 ear-sizes from the
+ear it belongs to on ears the crop reaches, against 6.61 on ears that escape,
+with 0.0% inside half an ear-size; the eye-nose direction rule scores 76.4%
+on delivered ears and 57.6% on escaping ones, losing to a constant.
+
+In fairness to the idea the regime is milder: those measurements are about
+ears *outside* the crop and keypoints used to predict a *position*, while a
+midline veto would act on ears inside the crop where the keypoints do carry
+real signal. But the route back is short. Midline true ears are not
+concentrated in profile images, which left face-box displacement as the
+likely cause -- and keypoints derived from a displaced box are displaced
+with it. They fail together by a second path.
+
+So every inference-time geometric fix on this axis is now ruled out: the
+crop-centre veto by measurement, positional negatives by the ear population
+they would destroy and by adding nothing mining does not already do, and the
+keypoint veto by the correlated-failure property. What remains is not
+geometry. It is the tracker, which uses time rather than position, and the
+per-view spread measurement that would tell us how much the tracker actually
+buys.
 
 **What the symptom actually indicates is a missing component, not a wrong
 constant.** `docs/index.html` drives a `requestAnimationFrame` webcam loop
