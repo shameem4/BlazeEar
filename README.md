@@ -1085,6 +1085,32 @@ the second is still open:
 Several plausible directions were tested and did not pay, which is worth
 recording so they are not retried blind:
 
+- **Tragion-centred crops, for the 8.7% that escape the window.** The face
+  stage carries MediaPipe's six trained keypoints -- two of which are the ear
+  tragions -- and `BlazeEarInference.decode_boxes` reads `raw_boxes[..., 0:4]`
+  and drops coords 4:16, so nothing downstream sees them. Placing a second crop
+  on the predicted tragion is the obvious use for them, and it fails on exactly
+  the ears it would need to serve. Distance from the nearer predicted tragion
+  to the ear centre, in multiples of that ear's own size, over the 355 ears of
+  `common_heldout` (`python measure_tragion_coverage.py`, which also prints the
+  reachability split above as a check on itself):
+
+  | | n | median | <=0.5x | <=1.0x |
+  |---|---|---|---|---|
+  | reachable ears | 315 | 0.31x | 68.3% | 86.3% |
+  | ears escaping every window | 31 | **6.61x** | **0.0%** | **9.7%** |
+
+  Not one of the 31 has a tragion within half an ear-size. The failure modes
+  are correlated rather than independent: the geometry that puts an ear beyond
+  `FACE_CROP_EXPAND` x the face box is the geometry that occludes or
+  extrapolates that side's tragion. So the prior is strong where the crop
+  already works and absent where it fails, which rules it out as a union, a
+  confidence gate and a fallback alike -- there is no configuration in which it
+  supplies information about the ears that need it. Note when reading the
+  keypoints at all: `blazeear.py:89` calls them untrained, which is true of the
+  ear model -- the crop training data has no keypoint labels -- but not of the
+  face stage, which is MediaPipe's weights unchanged and loads its keypoint
+  heads with zero missing keys.
 - **More training data.** A learning curve at a fixed 50,800-step budget over
   12.5 / 25 / 50 / 100% of the crops is flat past 25%: 0.6681, 0.7086, 0.7233,
   0.7173 crop-space mAP@0.5. The last doubling -- 6,300 more human-labelled ear
