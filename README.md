@@ -1556,15 +1556,29 @@ cannot resolve. The pick is deliberate on the ground that a missed ear yields
 the next stage nothing while a false ear yields a box a consumer can reject --
 which is a judgement about the consumer, not a result from the table.
 
-**`TTA_SCORE_THRESHOLD` is unchanged at 0.85, and that is what the browser
-still uses.** `BlazeEarInference` defaults to `views: 4`, and its threshold
-default is `this.views > 1 ? TTA_SCORE_THRESHOLD : SCORE_THRESHOLD`, so the
-deployed page gates at 0.85 and this change does not touch it. Fusion shifts
-the score distribution, the sweep above is the plain path only, and there is
-no equivalent TTA sweep on `crops_val` -- so moving 0.85 would be moving an
-unmeasured value. The end-to-end sweep further up this file, which found 0.70
-worse than 0.80 for both paths, is the 355-ear measurement this 2,193-ear one
-supersedes for the plain path; its TTA half still stands.
+**`TTA_SCORE_THRESHOLD` now follows at 0.70, so one gate applies on every
+path.** That is a consistency property, asked for deliberately, and it is not
+what the measurements recommend. `BlazeEarInference` defaults to `views: 4`
+and its threshold default is `this.views > 1 ? TTA_SCORE_THRESHOLD :
+SCORE_THRESHOLD`, so the fused value is the one that governs the browser page.
+
+The risk is specific and worth stating plainly. The TTA path has never been
+swept in crop space; the only TTA evidence is the 355-ear end-to-end sweep
+above, and in it **0.70 was the worst of the four TTA points measured** -- F1
+0.5824 against 0.6864 at 0.85, and -0.0389 F1 against not running TTA at all
+(95% CI [-0.0649, -0.0123]). The mechanism is not incidental: `max` fusion
+gives a cluster its best member's score, so the fused distribution sits above
+the plain one and the same gate admits more of it. The expected regression is
+therefore extra false boxes, not missing true ones -- which is what to look
+for on the demo page.
+
+Two things keep this cheap to undo. The fused value stays its own constant
+rather than being folded into the plain one, so a crop-space TTA sweep can
+move it back without re-plumbing. And `test_tta.py`'s
+`test_fused_threshold_is_above_the_plain_one` was relaxed to
+`..._is_not_below_...` (`>` to `>=`) rather than deleted, so the finding it
+encoded is still recorded and a value *below* the plain gate is still a
+failure. **The crop-space TTA sweep is the outstanding measurement here.**
 
 **Does the lower gate revive either reverted lever?** No, and it changes the
 reason for one of them. Re-reading the three arms' pre-gate scores (paired,

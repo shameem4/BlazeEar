@@ -128,8 +128,19 @@ class TestViewsMatchJs(unittest.TestCase):
         self.assertEqual(self._js_const('TTA_SCORE_THRESHOLD'),
                          TTA_SCORE_THRESHOLD)
 
-    def test_fused_threshold_is_above_the_plain_one(self):
-        self.assertGreater(TTA_SCORE_THRESHOLD, DETECTION_SCORE_THRESHOLD)
+    def test_fused_threshold_is_not_below_the_plain_one(self):
+        """Relaxed from `>` to `>=` when both paths were set to 0.70.
+
+        The strict form encoded a measured finding: fusion shifts the score
+        distribution up, so the fused path wanted a higher gate, and running
+        TTA at the plain threshold was worse on F1 than no TTA at all. That
+        finding still stands and is recorded in `utils/config.py`; what
+        changed is that a single deployed default was wanted across all paths.
+        Equal is therefore allowed, but below the plain gate is still a bug --
+        it could only ever admit more of a distribution that already sits
+        higher.
+        """
+        self.assertGreaterEqual(TTA_SCORE_THRESHOLD, DETECTION_SCORE_THRESHOLD)
 
     def test_js_uses_the_same_input_sizes(self):
         """The two stages run at different input edges now.

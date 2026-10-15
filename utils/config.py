@@ -107,9 +107,25 @@ DEFAULT_SAVE_EVERY = 10
 # positives, 0.30 reaches 85.6% recall at 2.3 FP/image -- so 0.60 is the floor
 # of the defensible range, not a further option.
 #
-# TTA_SCORE_THRESHOLD is unchanged at 0.85 and was NOT re-swept: the curve
-# above is the plain path only, fusion shifts the score distribution up, and
-# the browser defaults to 4 views, so the deployed page still gates at 0.85.
+# TTA_SCORE_THRESHOLD now FOLLOWS the plain value at 0.70, so that one gate
+# applies on every path. That was asked for as a consistency property, and it
+# is not what the measurements recommend -- read the risk below before moving
+# it again.
+#
+# The TTA path has never been swept in crop space. What exists is the 355-ear
+# end-to-end sweep (see the README), and in it 0.70 was the WORST of the four
+# TTA points measured: F1 0.5824 against 0.6864 at 0.85, and -0.0389 F1
+# against not running TTA at all, 95% CI [-0.0649, -0.0123]. The mechanism is
+# specific rather than incidental: `max` fusion gives a cluster its best
+# member's score, so the fused distribution sits above the plain one and the
+# same gate admits more of it. Expect more false ear boxes on the browser
+# page, not fewer true ones.
+#
+# So this value is deliberately kept as its own constant rather than folded
+# into the one above: a crop-space TTA sweep can move it back independently
+# without re-plumbing anything. `test_tta.py` no longer requires it to exceed
+# the plain gate, only to be at least equal -- that assertion encoded the
+# finding above, and relaxing it is the cost of the single-default property.
 #
 # Two separate findings from the original end-to-end sweep. The plain pipeline
 # peaked at 0.80 there rather than 0.70. And TTA
@@ -127,7 +143,7 @@ DEFAULT_SAVE_EVERY = 10
 # decimal is not. The table is here so a deployment that wants precision over
 # recall can re-pick deliberately rather than by inheritance.
 DETECTION_SCORE_THRESHOLD = 0.70
-TTA_SCORE_THRESHOLD = 0.85
+TTA_SCORE_THRESHOLD = 0.70
 NMS_IOU_THRESHOLD = 0.3
 MAX_DETECTIONS = 100
 

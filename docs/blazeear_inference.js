@@ -25,11 +25,13 @@ const ort = (typeof window !== 'undefined' && window.ort) ||
             (typeof globalThis !== 'undefined' && globalThis.ort) ||
             (typeof require !== 'undefined' ? require('onnxruntime-web') : null);
 // Deployed score thresholds, mirroring utils/config.DETECTION_SCORE_THRESHOLD
-// and TTA_SCORE_THRESHOLD; see that file for the measured sweep. Fusion takes
-// a cluster's best member score, so it shifts the whole distribution up and
-// the fused path needs its own, higher threshold. Running TTA at the plain
-// threshold was a measured regression on F1 against no TTA at all, which is
-// what this page shipped.
+// and TTA_SCORE_THRESHOLD; see that file for the measured sweep. Both are 0.70
+// so that one gate applies on every path, which was asked for as a
+// consistency property. Note what it costs: fusion takes a cluster's best
+// member score, so the fused distribution sits above the plain one, and in
+// the 355-ear end-to-end sweep 0.70 was the worst TTA point measured (F1
+// 0.5824 against 0.6864 at 0.85). This page defaults to 4 views, so it is the
+// TTA value that governs here. Expect more false boxes, not fewer true ones.
 // Model input edges, mirroring utils/config.DEFAULT_INPUT_SIZE and
 // FACE_INPUT_SIZE. The two graphs no longer agree: the face graph is
 // MediaPipe's 128 px front model, the ear graph runs at 256. Preprocessing
@@ -41,7 +43,7 @@ const FACE_INPUT_SIZE = 128;
 const INTERMEDIATE_SIZE = 256;
 
 const SCORE_THRESHOLD = 0.70;
-const TTA_SCORE_THRESHOLD = 0.85;
+const TTA_SCORE_THRESHOLD = 0.70;
 
 /**
  * BlazeEar Ear Detection Pipeline
