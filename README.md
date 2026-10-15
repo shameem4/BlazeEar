@@ -1374,9 +1374,20 @@ priced into these numbers. What remains there is only retuning `--focal-gamma`
 away from its 1.5 default, which is a weaker and less specific change than
 either lever above.
 
-A run costs **1-3 GPU-hours** on an RTX 5060 Ti 16 GB (92 epochs, 47,244
-steps, inferred from checkpoint timestamps), so both levers are cheap to
-test and neither has been tested.
+**Cost, measured rather than inferred.** On an RTX 5060 Ti 16 GB at batch 32
+with AMP and 4 workers: 29.9 ms/step and 508 steps/epoch is 15.2 s/epoch of
+training, plus 11.4 s/epoch of validation with val mAP on (2.7 s with
+`--no-val-map`). At the 100-epoch default that is **0.74 GPU-hours per arm**,
+1.48 for two and 2.22 for three. An earlier version of this line said 1-3
+GPU-hours *per arm* from checkpoint timestamps, which was wrong by 2-4x --
+mtime gaps include whatever else the machine was doing. Timing 60 real steps
+costs a minute and is not an estimate.
+
+The ceiling's own compute cost is **negligible**: `_mine_negatives` goes from
+21 to 141 microseconds, because eight sliced `topk` calls replace one sort,
+but that is 0.9% of a 22 ms training step -- about 10 seconds over a
+100-epoch run. At inference it costs exactly nothing, since the loss does not
+run there.
 
 ### How the measurements here were checked
 

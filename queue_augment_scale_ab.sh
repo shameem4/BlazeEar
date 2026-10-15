@@ -16,10 +16,22 @@
 # the comparison below is paired per image rather than a difference of
 # headline numbers.
 #
-# COST. About 1-3 GPU-hours per arm on the RTX 5060 Ti 16 GB (92 epochs,
-# 47,244 steps, inferred from the shipped checkpoint's timestamps), so budget
-# 2-6 hours for both. They are run SEQUENTIALLY: the card does not have room
-# for two of these at once, and sharing it would make the timings useless.
+# COST, measured rather than inferred. On this RTX 5060 Ti 16 GB at batch 32
+# with AMP and 4 workers: 29.9 ms/step, 508 steps/epoch = 15.2 s/epoch of
+# training, plus 11.4 s/epoch of validation with val mAP on (2.7 s with
+# --no-val-map). So 26.6 s/epoch, and at the 100-epoch default:
+#
+#     0.74 GPU-hours per arm
+#     1.48 GPU-hours for two arms   (89 minutes)
+#     2.22 GPU-hours for three      (133 minutes)
+#
+# An earlier version of this comment said 1-3 GPU-hours PER ARM, inferred
+# from the shipped checkpoint's file timestamps. That was wrong by roughly
+# 2-4x: mtime gaps include whatever else the machine was doing between
+# epochs. Timing 60 real steps costs a minute and is not an estimate.
+#
+# Arms run SEQUENTIALLY: the card has no room for two, and sharing it would
+# make the timings useless.
 #
 # WHAT WOULD COUNT AS A RESULT. The treatment should lift recall in the
 # 0-32 px and 32-48 px bands -- currently 18.2% and 58.0% against 95.7% at
@@ -70,7 +82,7 @@ sha256sum utils/config.py dataloader.py utils/augmentation.py \
 echo "as-run snapshot in $SCRATCH"
 
 run_arm () {
-    local name="$1" low="$2" high="$3"
+    local name="$1" low="$2" high="$3" cap="$4"
     local ckpt="runs/checkpoints_${name}" log="runs/logs_${name}"
 
     if [ -e "$ckpt" ]; then
@@ -81,12 +93,12 @@ run_arm () {
     # The range is read from config at import, so the arm sets it in the
     # environment and a one-line sitecustomize-free shim applies it. Editing
     # config.py between arms would break the as-run snapshot above.
-    echo "=== arm $name: AUGMENT_SCALE_RANGE=($low, $high) ==="
-    BLAZEEAR_AUGMENT_SCALE_LOW="$low" BLAZEEAR_AUGMENT_SCALE_HIGH="$high" \
+    echo "=== arm $name: scale=($low, $high)  prior cap=$cap ==="
     systemd-run --user --unit="blazeear-$name" --same-dir --wait --collect \
         --setenv=LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
         --setenv=BLAZEEAR_AUGMENT_SCALE_LOW="$low" \
         --setenv=BLAZEEAR_AUGMENT_SCALE_HIGH="$high" \
+        --setenv=BLAZEEAR_HARD_NEGATIVE_PRIOR_CAP="$cap" \
         "$PY" train_blazeear.py \
             --train-data data/splits/crops_train.csv \
             --val-data data/splits/crops_val.csv \
@@ -99,8 +111,25 @@ run_arm () {
     # A plain background job's output dies with the crash that killed it.
 }
 
-run_arm control   0.75 1.25
-run_arm treatment 0.35 1.25
+# Three arms, because there are now two changes in flight and a two-arm
+# design would leave one of them untested.
+#
+# HARD_NEGATIVE_PRIOR_CAP is ON by default (0.25), so a plain control/treatment
+# pair would carry it in BOTH arms: that isolates B1 cleanly and leaves the cap
+# itself never measured. The third arm turns the cap off alongside the old
+# scale range, which makes `baseline` the real pre-change configuration and
+# gives each lever its own contrast against it:
+#
+#     baseline   old scale, no cap     <- the configuration before either change
+#     cap_only   old scale, cap 0.25   <- baseline + lever 2
+#     control    old scale, cap 0.25   == cap_only, so it is not run twice
+#     treatment  new scale, cap 0.25   <- cap_only + B1
+#
+# So: treatment vs cap_only isolates B1, and cap_only vs baseline isolates the
+# cap. An extra 44 minutes to avoid confounding two changes is a good trade.
+run_arm baseline  0.75 1.25 1.0
+run_arm cap_only  0.75 1.25 0.25
+run_arm treatment 0.35 1.25 0.25
 
 echo
 echo "Both arms done. Compare them PAIRED, per image, and report THREE things:"
@@ -120,6 +149,12 @@ echo "  3. Mean positives-per-ear and per-prior positive share, per arm, since"
 echo "     the assignment statistics move BEFORE recall does and will say"
 echo "     whether the rebalance happened at all:"
 echo "       BLAZEEAR_AUGMENT_SCALE_LOW=... $PY measure_anchor_budget.py"
+echo
+echo "  4. FALSE POSITIVES per image at the LARGE bands, for the cap arms."
+echo "     The cap takes the 129.8x178.2 prior from 54.3% of the negative"
+echo "     budget to 25.3%, and that prior's job was suppressing large false"
+echo "     positives. Fewer negatives there is the cap's specific risk, and"
+echo "     recall alone will not show it."
 echo
 echo "There is also an external scoring offer on the table, recorded here so"
 echo "it is not lost: Ear_Landmarker will score both arms on a human"
