@@ -199,3 +199,54 @@ class TestEndToEndParity:
 
         assert torch.equal(raw_a[0], raw_b[0]), 'box outputs diverge'
         assert torch.equal(raw_a[1], raw_b[1]), 'score outputs diverge'
+
+    def test_paths_emit_the_same_detection_layout(self):
+        """
+        The test above compares raw model outputs, which is upstream of where
+        the two paths can actually drift. Each then decodes, discards and
+        concatenates on its own, and whatever comes out of that is what a
+        caller gets: `make_face_crops` and `evaluate_two_stage` read
+        `process`, the browser and the exported graph read the pipeline.
+
+        So pin the shape of what they emit, which nothing else does. A change
+        that widens one path's detections and not the other -- carrying the
+        keypoints through, for instance -- shows up here and nowhere else.
+        Score position is asserted separately from width because reading the
+        score at a fixed column 4 is the thing that silently breaks: with
+        keypoints present the score moves to the last column, and `[:, 4]`
+        then returns a keypoint coordinate that still looks like a plausible
+        confidence.
+        """
+        torch.manual_seed(0)
+        model = BlazeEar()
+        model.generate_anchors(anchor_options)
+        model.eval()
+        model.min_score_thresh = 0.0
+
+        pipeline = BlazeEarInference(confidence_threshold=0.0)
+        pipeline.model.load_state_dict(model.state_dict())
+        pipeline.eval()
+
+        image = (np.random.default_rng(0).random((200, 320, 3)) * 255).astype(np.uint8)
+        with torch.no_grad():
+            from_process = model.process(image)
+        from_pipeline = torch.as_tensor(pipeline.predict(image))
+
+        assert from_process.ndim == from_pipeline.ndim == 2
+        assert from_process.shape[1] == from_pipeline.shape[1], (
+            f'the paths emit different widths: process gives '
+            f'{from_process.shape[1]} columns, the pipeline gives '
+            f'{from_pipeline.shape[1]}')
+
+        # The score is the last column in both, and in [0, 1] because it is a
+        # sigmoid. Box coordinates are in original-image pixels and routinely
+        # leave that range, so this does pin the column rather than pass by
+        # accident -- on this input, column 4 of a widened `process` output is
+        # a keypoint at roughly 10 to 270 px.
+        for name, emitted in (('process', from_process),
+                              ('pipeline', from_pipeline)):
+            scores = emitted[:, -1]
+            assert torch.all((scores >= 0.0) & (scores <= 1.0)), (
+                f'{name} does not carry its score in the last column')
+            assert torch.all(scores[:-1] >= scores[1:] - 1e-6), (
+                f'{name} does not emit detections in descending score order')
