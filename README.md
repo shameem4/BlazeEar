@@ -1323,6 +1323,42 @@ A run costs **1-3 GPU-hours** on an RTX 5060 Ti 16 GB (92 epochs, 47,244
 steps, inferred from checkpoint timestamps), so both levers are cheap to
 test and neither has been tested.
 
+### How the measurements here were checked
+
+Worth recording because the numbers above are only as good as this, and
+because the answer was not what either of us doing the work expected.
+
+Across both sides of this investigation about eight measurements were wrong in
+a way that would have produced a *confident false mechanism* -- not a crash, a
+story. On this side: the wrong box format to `assign_anchor_targets` (a
+starved-supervision story), `anchors_to_corners` read as xyxy (median positive
+IoU 0.000), a hand-rolled letterbox instead of `resize_pad` (tragion figures
+that understated the gap), and two different seeds divided as one measurement
+(a 6.82% face-stage ceiling).
+
+**Not one was caught by reading the code.** Every one was caught by a clash
+with a quantity already known: 54% against a documented 78.6%, a ceiling that
+would not reconcile, exactly 1.000 ears per image across 13,482 files with no
+exceptions. That is the useful asymmetry -- a wrong measurement has no syntax
+error and no failed assertion, but it cannot agree with an independent
+quantity. So the cheap detector is to always have one, and the discipline is
+to *name it before trusting the result* rather than after being contradicted.
+
+Two traps were hit twice each, from different directions, which is what makes
+them structural rather than careless:
+
+- **Slicing a sorted or grouped file and calling it a sample.** A CSV ordered
+  by source gives a "sample" that is one dataset.
+- **Combining figures from runs with different draws.** `train_blazeear.py`
+  has no `--seed`, so two runs are two draws; a ratio across them measures
+  nothing. This is also why `queue_augment_scale_ab.sh` runs a control arm
+  instead of comparing against the shipped checkpoint.
+
+A third, specific to this repository and already warned about elsewhere in
+it: `decode_boxes`, `anchors_to_corners` and `assign_anchor_targets` all speak
+`[ymin, xmin, ymax, xmax]`, and every one of them returns plausible-looking
+numbers when handed xyxy or `[x1, y1, w, h]`.
+
 ### What was measured and ruled out
 
 Several plausible directions were tested and did not pay, which is worth
