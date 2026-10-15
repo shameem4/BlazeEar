@@ -33,7 +33,7 @@ The project started as an experiment to reuse BlazeFace’s anchor layout and tr
 ### Current state
 
 - A unified data preparation pipeline merges multiple annotation sources into a single CSV with provenance.  
-- The BlazeEar model is a BlazeFace‑style front detector (256×256 input) with ear‑specific training, hard negative mining, and optional focal loss. The architecture is MediaPipe's; only the input resolution differs, and the parameter count is identical at either size.  
+- The BlazeEar model is a BlazeFace‑style front detector (256×256 input) with ear‑specific training, hard negative mining, and focal loss (on by default). The architecture is MediaPipe's; only the input resolution differs, and the parameter count is identical at either size.  
 - Debug and visualization scripts help compare BlazeEar to baseline detectors and export sample predictions.
 
 ---
@@ -271,8 +271,15 @@ Useful flags:
   anchors holding an ear. Re-initialized, -4.8.
 - `--freeze-thaw`  
   Staged training: heads only → backbone2 → full model (see script defaults).
-- `--use-focal-loss --focal-alpha 0.25 --focal-gamma 2.0`  
-  Switch from BCE to focal loss.
+- `--no-focal-loss`  
+  Fall back to BCE. **Focal loss is the default**, not an opt-in:
+  `train_blazeear.py` calls `parser.set_defaults(use_focal_loss=True)`, so
+  every run in this repository's history trained with it unless this flag was
+  passed. The CLI defaults are `--focal-alpha 0.35 --focal-gamma 1.5`; the
+  `0.25 / 2.0` pair is `BlazeEarDetectionLoss`'s own signature default, which
+  the trainer overrides and which therefore never reaches a training run.
+  An earlier version of this section documented `--use-focal-loss` as the way
+  to switch focal loss on, with the `0.25 / 2.0` figures -- both wrong.
 - `--amp / --no-amp`  
   Mixed precision toggle.
 - `--resume runs/checkpoints/BlazeEar_epochXX.pth`  

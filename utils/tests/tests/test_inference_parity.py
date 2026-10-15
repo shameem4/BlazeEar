@@ -5,7 +5,33 @@ The repository carries several ways to run the same model: `BlazeEar.process`,
 the `BlazeEarInference` pipeline used for ONNX export, and the exported graphs
 themselves. They previously disagreed -- different anchors, different decode
 copies, different post-filters -- so a number measured offline was not the
-number the deployed page produced. These tests pin the agreement.
+number the deployed page produced.
+
+What these tests actually pin, and what they do not:
+
+- preprocessing, bit-identically;
+- one shared anchor tensor across every path;
+- the raw model outputs, `torch.equal` on (1, 3584, 16) boxes and
+  (1, 3584, 1) scores, so the keypoint channels are compared too;
+- decode *geometry* -- but only four columns. Both decode tests drop
+  everything past the box: one passes `num_keypoints=0` and slices
+  `[..., :4]`, the other pads with `torch.zeros(..., 12)` and compares the
+  same four. Not even the score is compared.
+
+Nothing here pins what either path **emits**. `BlazeEarInference.predict`
+returns (100, 5) and `BlazeEar.process` returns (N, 5) on the same image, and
+no test compares those two tensors -- not the column count, not the scores,
+not the contents. That decode-and-discard layer is the one place a path can
+diverge with every test still green, and it is where the earlier defects
+lived. Widening a path's output (keypoints, for instance) belongs behind an
+assertion on the emitted detections after `denormalize_detections`, added
+here first.
+
+The exported graphs are not in this file at all. They are checked at export
+time instead: `export_two_stage_web.py:74` compares the graph against its
+wrapper unconditionally, while `export_onnx.py:59-65` returns success when
+`onnxruntime` is absent. So that check is real but runs on export, not in CI,
+and one of the two degrades to a pass on a missing optional dependency.
 """
 import numpy as np
 import torch
