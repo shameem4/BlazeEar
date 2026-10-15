@@ -1635,6 +1635,44 @@ track after N consecutive misses. That buys back the recall this revert gave
 up without the false positives, because a real ear persists across frames and
 a midline artefact does not. Nothing in this repository implements it yet.
 
+**The tracker now exists**, in `docs/index.html` as `EarTracker`. A new track
+needs the confirm score (the slider, default `TTA_SCORE_THRESHOLD` = 0.85)
+*and* two consecutive frames; a running track then survives on 0.70 and
+coasts through up to three dropped frames before it is dropped. Matching is
+IoU >= 0.3 against the track's own smoothed box, and the box is EMA-smoothed
+at 0.6 for display. The detector is asked for candidates down to the continue
+score, because a track needs something to survive on; the confirm decision
+moves out of the detector and into the tracker.
+
+Five behaviours, checked before it shipped:
+
+| frames in | drawn |
+|---|---|
+| one 0.86 then nothing | never -- `minHits` is 2 |
+| 0.86 then 0.72 x4 | confirms on frame 2, survives all four |
+| 0.72 x5, never confirmed | never |
+| confirmed, then 5 empty frames | coasts 3, then drops |
+| two ears 100 px apart | two tracks, neither absorbs the other |
+
+The second row is the point: **0.72 is drawn when it belongs to a confirmed
+track and discarded when it does not**, which no single threshold can
+express. That is the recall the 0.80/0.85 revert gave up, recovered on
+temporal evidence rather than by moving the gate back down.
+
+The first version of this filtered drawn boxes on `misses === 0` and so
+dropped the box on any single missed frame -- reintroducing the strobe for
+exactly the ears it was meant to stabilise. The gap row above is what caught
+it, which is the argument for writing the table before believing the code.
+
+Scope: deliberately not in `blazeear_inference.js`. That file is mirrored
+against the Python pipeline and pinned by `test_tta.py`; a temporal component
+has no Python counterpart, so putting it there would break that parity. The
+cost is that a consumer wanting hysteresis has to lift it from the demo page.
+`test_tta.py` does pin the arithmetic -- confirm minus `CONTINUE_MARGIN` must
+equal 0.70 and must sit below the single-frame gate -- so a later edit to
+either constant cannot silently move the continue score somewhere unmeasured.
+The still-image path is untouched: one frame carries no temporal evidence.
+
 One trap worth recording, since it nearly produced a confident wrong answer:
 `export_onnx.py` defaults `--checkpoint` to `runs/checkpoints/BlazeEar_best.pth`,
 which is a December single-stage relic, not the shipped crop model. Pointed at

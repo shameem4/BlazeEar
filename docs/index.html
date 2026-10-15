@@ -229,12 +229,10 @@
         // Update confidence threshold display
         confSlider.addEventListener('input', () => {
             confValue.textContent = confSlider.value;
-            if (detector) {
-                // On the two-stage pipeline this is the EAR threshold; the
-                // face stage keeps its own, lower one.
-                const target = detector.ear ?? detector;
-                target.confidenceThreshold = parseFloat(confSlider.value);
-            }
+            // On the two-stage pipeline this is the EAR threshold; the
+            // face stage keeps its own, lower one. It sets the score a new
+            // track needs, and the tracker's continue score follows it.
+            applyThresholds(parseFloat(confSlider.value));
         });
 
         // Load model
@@ -246,6 +244,7 @@
                 detector = new BlazeEarTwoStage({
                     confidenceThreshold: parseFloat(confSlider.value)
                 });
+                applyThresholds(parseFloat(confSlider.value));
                 await detector.load(faceModelPathInput.value, modelPathInput.value);
                 statusEl.textContent = '✅ Loaded: face → crop → ear';
                 statusEl.style.background = '#155724';
@@ -293,11 +292,162 @@
             if (video.srcObject) {
                 video.srcObject.getTracks().forEach(track => track.stop());
             }
+            tracker.reset();
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             startBtn.disabled = false;
             stopBtn.disabled = true;
             statsEl.textContent = '';
         });
+
+        /**
+         * Frame-to-frame hysteresis for the webcam loop.
+         *
+         * The detector decides each frame from scratch, so a candidate whose
+         * score sits near the gate re-decides at the frame rate and the box
+         * strobes. No single threshold fixes that: raising it only makes
+         * borderline candidates rarer. This is the standard answer --
+         * detect, then track, with two thresholds instead of one.
+         *
+         * A track needs `confirmScore` and `minHits` consecutive frames to
+         * appear, then survives on `continueScore` and tolerates `maxMisses`
+         * dropped frames. A real ear persists and so is kept at the lower
+         * score; a one-frame artefact never reaches minHits. That is why this
+         * buys back recall the gate gave up rather than trading it: the
+         * evidence is temporal, which the per-frame score does not contain.
+         *
+         * Deliberately NOT in blazeear_inference.js. That file is mirrored
+         * against the Python pipeline and pinned by test_tta.py; a temporal
+         * component has no Python counterpart, so putting it there would
+         * break the parity the tests enforce. A consumer that wants this has
+         * to lift it, which is the cost of keeping that invariant.
+         */
+        class EarTracker {
+            constructor(options = {}) {
+                this.confirmScore = options.confirmScore ?? 0.85;
+                this.continueScore = options.continueScore ?? 0.70;
+                this.matchIou = options.matchIou ?? 0.3;
+                this.maxMisses = options.maxMisses ?? 3;
+                this.minHits = options.minHits ?? 2;
+                this.smoothing = options.smoothing ?? 0.6;
+                this.tracks = [];
+                this.nextId = 1;
+            }
+
+            reset() {
+                this.tracks = [];
+                this.nextId = 1;
+            }
+
+            static iou(a, b) {
+                const x0 = Math.max(a.xmin, b.xmin);
+                const y0 = Math.max(a.ymin, b.ymin);
+                const x1 = Math.min(a.xmin + a.width, b.xmin + b.width);
+                const y1 = Math.min(a.ymin + a.height, b.ymin + b.height);
+                const inter = Math.max(0, x1 - x0) * Math.max(0, y1 - y0);
+                const union = a.width * a.height + b.width * b.height - inter;
+                return union > 0 ? inter / union : 0;
+            }
+
+            /**
+             * One frame in, the boxes to draw out.
+             * @param {Array} detections - every candidate at or above
+             *     `continueScore`; the confirm decision is made here, not by
+             *     the detector's own threshold.
+             */
+            update(detections) {
+                const candidates = detections
+                    .filter(d => d.confidence >= this.continueScore)
+                    .sort((a, b) => b.confidence - a.confidence);
+                const claimed = new Set();
+
+                // Existing tracks get first claim, highest-scoring candidate
+                // first, so two tracks cannot absorb the same detection.
+                for (const track of this.tracks) {
+                    let best = -1;
+                    let bestIou = this.matchIou;
+                    for (let i = 0; i < candidates.length; i++) {
+                        if (claimed.has(i)) continue;
+                        const iou = EarTracker.iou(track.box, candidates[i]);
+                        if (iou >= bestIou) {
+                            bestIou = iou;
+                            best = i;
+                        }
+                    }
+                    if (best < 0) {
+                        track.misses++;
+                        continue;
+                    }
+                    claimed.add(best);
+                    const det = candidates[best];
+                    const k = this.smoothing;
+                    // Smoothed for display only; matching uses the same box,
+                    // which is what keeps a jittering detection on one track.
+                    track.box = {
+                        xmin: k * track.box.xmin + (1 - k) * det.xmin,
+                        ymin: k * track.box.ymin + (1 - k) * det.ymin,
+                        width: k * track.box.width + (1 - k) * det.width,
+                        height: k * track.box.height + (1 - k) * det.height,
+                    };
+                    track.confidence = det.confidence;
+                    track.hits++;
+                    track.misses = 0;
+                }
+
+                // An unclaimed candidate starts a track only at the high score.
+                for (let i = 0; i < candidates.length; i++) {
+                    if (claimed.has(i)) continue;
+                    const det = candidates[i];
+                    if (det.confidence < this.confirmScore) continue;
+                    this.tracks.push({
+                        id: this.nextId++,
+                        box: {
+                            xmin: det.xmin, ymin: det.ymin,
+                            width: det.width, height: det.height,
+                        },
+                        confidence: det.confidence,
+                        hits: 1,
+                        misses: 0,
+                    });
+                }
+
+                this.tracks = this.tracks.filter(
+                    tr => tr.misses <= this.maxMisses);
+                // Drawn through a short gap, not only on frames that
+                // matched. Dropping the box on the first miss would put the
+                // strobe back for any ear the detector loses for one frame,
+                // which is the thing this exists to stop; `maxMisses` bounds
+                // how long a vanished ear can coast.
+                return this.tracks
+                    .filter(tr => tr.hits >= this.minHits)
+                    .map(tr => ({
+                        xmin: tr.box.xmin, ymin: tr.box.ymin,
+                        width: tr.box.width, height: tr.box.height,
+                        xmax: tr.box.xmin + tr.box.width,
+                        ymax: tr.box.ymin + tr.box.height,
+                        confidence: tr.confidence,
+                    }));
+            }
+        }
+
+        // The slider sets the score a NEW track needs; a track already
+        // running continues on CONTINUE_MARGIN less. The default pair is
+        // 0.85 / 0.70, which is where the end-to-end sweep in the README puts
+        // the fused argmax and the plain one respectively.
+        const CONTINUE_MARGIN = 0.15;
+        const tracker = new EarTracker();
+
+        function applyThresholds(confirm) {
+            const keep = Math.max(0.5, confirm - CONTINUE_MARGIN);
+            tracker.confirmScore = confirm;
+            tracker.continueScore = keep;
+            if (detector) {
+                // The detector has to emit down to the continue score or a
+                // track has nothing to survive on; the tracker applies the
+                // confirm score itself.
+                const target = detector.ear ?? detector;
+                target.confidenceThreshold = keep;
+            }
+        }
 
         // Webcam detection loop
         let frameCount = 0;
@@ -309,8 +459,9 @@
             const startTime = performance.now();
             
             try {
-                const detections = await detector.detect(video);
-                
+                const raw = await detector.detect(video);
+                const detections = tracker.update(raw);
+
                 // Clear and draw detections
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
                 detector.drawDetections(ctx, detections, {
@@ -325,7 +476,7 @@
                 if (now - lastTime >= 1000) {
                     const fps = frameCount;
                     const inferenceTime = (now - startTime).toFixed(1);
-                    statsEl.textContent = `FPS: ${fps} | Inference: ${inferenceTime}ms | Detections: ${detections.length}`;
+                    statsEl.textContent = `FPS: ${fps} | Inference: ${inferenceTime}ms | Tracked: ${detections.length} | Candidates: ${raw.length}`;
                     frameCount = 0;
                     lastTime = now;
                 }
