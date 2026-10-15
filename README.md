@@ -1121,6 +1121,106 @@ the second is still open:
   ears on one 279-image set. The direction is not in doubt -- the 31 ears were
   counted directly -- but the magnitude deserves the larger split. Still open.
 
+### The score head discards ears it has already localised
+
+The second stage finds an ear and then fails to be confident about it. The
+symptom was measured externally (Ear_Landmarker, 2026-10-15) on rendered
+cohorts at fixed photo identity, varying only how much of the frame the ear
+fills, so size is the only thing moving. "Localised" is an ear with a
+candidate at IoU >= 0.3 anywhere in the output; "passes gate" is that
+candidate surviving `DETECTION_SCORE_THRESHOLD = 0.80`:
+
+| ear / frame | px in a 256 crop | localised | passes gate | gap | median score |
+|---|---|---|---|---|---|
+| *above the mode, n=160* | | | | | |
+| 0.774 | 198 | 61.9% | 25.0% | **36.9pp** | 0.580 |
+| 0.60 | 154 | 68.1% | 38.1% | 30.0pp | 0.659 |
+| 0.45 | 115 | 80.0% | 61.3% | 18.7pp | 0.809 |
+| 0.33 | 84 | 86.2% | 70.0% | 16.2pp | 0.860 |
+| 0.24 | 61 | 86.2% | 75.0% | 11.2pp | 0.850 |
+| *below the mode, n=60* | | | | | |
+| 0.33 | 84 | 71.7% | 50.0% | 21.7pp | 0.711 |
+| 0.24 | 61 | 75.0% | 55.0% | 20.0pp | 0.753 |
+| 0.17 | 44 | 73.3% | 53.3% | 20.0pp | 0.745 |
+| 0.12 | 31 | 58.3% | 38.3% | 20.0pp | 0.656 |
+
+**The loss is real and it is not mainly a small-ear problem.** Read down the
+gap column: below the mode it is a flat ~20pp at every size, and above the
+mode it *grows* to 36.9pp at 198 px -- the worst scoring discard in the table
+belongs to the largest ears, not the smallest. (The two cohorts are different
+photo sets and share only the 0.33 framing, so compare within a block, not
+across.) The framing this started from, "under-scores small ears", is half
+right: small ears lose a constant fifth of what the model found, large ones
+lose more than a third.
+
+Raising or shaping the threshold does not recover it. A size-dependent gate
+was swept and has no headroom: every per-band gate is dominated by simply
+moving the global one, because ranking inside a band is already good (AUC
+0.926-0.978 at every band) while the *base rate* is not -- false positives
+outnumber true ones about 2700:1 at 0-32 px against 1.2:1 at the mode. A
+threshold cannot separate what a ranking already separates; the problem is
+upstream, in training.
+
+**Ruled out: positive-supervision starvation.** The intuitive cause is that
+small ears get fewer matched anchors. They do not. `ANCHOR_TOP_K = 3` makes
+every box claim its three best anchors regardless of prior fit, so over the
+12,595 human training ears the mean is exactly 3.00 positives per ear in
+every size band from 0-32 px to 120+. That is the design working.
+
+**Found: the anchor budget is spent where the ears are not.** What varies by
+size is not how many anchors an ear gets but how much *negative* pressure
+sits on the prior serving it. `HARD_NEGATIVE_RATIO = 50.0` mines globally
+across all 3584 anchors, so a prior's negative exposure scales with its
+anchor count while its positive exposure scales with how often ears land on
+it:
+
+| prior (px) | anchors | positives | pos per anchor | share of positives |
+|---|---|---|---|---|
+| 6.9 x 11.3 | 1024 | 299 | **0.29** | 0.8% |
+| 12.5 x 24.3 | 1024 | 2,596 | 2.54 | 6.9% |
+| 17.7 x 41.2 | 256 | 2,955 | 11.54 | 7.8% |
+| 34.8 x 39.9 | 256 | 7,088 | 27.69 | 18.8% |
+| 29.2 x 62.7 | 256 | 17,589 | **68.71** | 46.6% |
+| 58.4 x 101.1 | 256 | 6,760 | 26.41 | 17.9% |
+| 129.8 x 178.2 | 256 | 405 | 1.58 | 1.1% |
+| 191.5 x 260.4 | 256 | 93 | 0.36 | 0.2% |
+
+**2048 of 3584 slots -- 57% of the whole budget -- receive 7.7% of all
+positives**, a 27x gap in positives per slot against the prior that carries
+the mode. Those two starved priors are the 32x32 grid, and they are exactly
+the ones a small ear must land on: the 0-32 px band draws 67% of its
+positives from the 12.5 x 24.3 prior. Each small ear still gets its three
+anchors, but it gets them on a level whose other thousand slots spend the run
+being mined as background. Two secondary gradients run the same way:
+positive match quality, median IoU 0.425 at 0-32 px against 0.535 at the
+mode and 0.648 at 120+; and ignore-band protection, 0.94 anchors parked in
+the ignore band per small ear against 8.84 at the mode and 67.63 at 120+, so
+a near-miss next to a small ear is scored as background where the same
+near-miss next to a large one is excused.
+
+Two levers follow, and the cheap one is not the one that looks cheap:
+
+- **Widen `augment_scale`'s low end.** `dataloader.py:197` augments with
+  `scale_range=(0.75, 1.25)`. The median training ear is 64.9 px in a 256
+  crop, so 0.75x is 48.7 px -- the augmentation *cannot manufacture a 0-32 px
+  ear*, and the band the model is worst at is the band it was never shown at
+  volume (5.9% of boxes). Taking the low end to about 0.35 is a one-line
+  change that moves mass onto the starved priors without touching the loss.
+  It makes the easy bands slightly harder, which is the point.
+- **Cap hard-negative mining per level.** The misallocation above is a
+  property of global mining, and a per-level cap is the direct fix. It is
+  more invasive, so it comes second.
+
+Focal loss is **not** a third lever -- it has been on by default for every run
+in this repository's history (see the training flags above), so it is already
+priced into these numbers. What remains there is only retuning `--focal-gamma`
+away from its 1.5 default, which is a weaker and less specific change than
+either lever above.
+
+A run costs **1-3 GPU-hours** on an RTX 5060 Ti 16 GB (92 epochs, 47,244
+steps, inferred from checkpoint timestamps), so both levers are cheap to
+test and neither has been tested.
+
 ### What was measured and ruled out
 
 Several plausible directions were tested and did not pay, which is worth
