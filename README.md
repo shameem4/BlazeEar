@@ -1190,14 +1190,28 @@ candidate surviving `DETECTION_SCORE_THRESHOLD = 0.80`:
 | 0.17 | 44 | 73.3% | 53.3% | 20.0pp | 0.745 |
 | 0.12 | 31 | 58.3% | 38.3% | 20.0pp | 0.656 |
 
-**The loss is real and it is not mainly a small-ear problem.** Read down the
-gap column: below the mode it is a flat ~20pp at every size, and above the
-mode it *grows* to 36.9pp at 198 px -- the worst scoring discard in the table
-belongs to the largest ears, not the smallest. (The two cohorts are different
-photo sets and share only the 0.33 framing, so compare within a block, not
-across.) The framing this started from, "under-scores small ears", is half
-right: small ears lose a constant fifth of what the model found, large ones
-lose more than a third.
+**The scoring gap is scale-dependent in both directions, and the recoverable
+mass is small.** Two statistics say different things here and both are true.
+Read down the gap column above: below the mode it is a flat ~20pp at every
+size, and above the mode it *grows* to 36.9pp at 198 px, so the worst
+discard *rate* is at the large end. (The two cohorts are different photo sets
+and share only the 0.33 framing, so compare within a block, not across.)
+But the ears are not at the large end. Counting where recall is actually
+lost, on the held-out bands rather than rendered cohorts:
+
+| band | ears | recall | localised but gated |
+|---|---|---|---|
+| 0-32 px | 203 | 18.2% | 148 |
+| 32-48 px | 426 | 58.0% | -- |
+| the mode | | 95.7% | -- |
+| 120-160 px | 34 | | 3 |
+
+So the large bands hold 17 to 34 ears against 203 and 426, and the high
+discard rate there is a rate over almost nothing. The original framing,
+"under-scores small ears", is right about where the recoverable ears are and
+wrong about where the score head behaves worst. For targeting a fix the
+recall column is the operative one. (Band recalls and counts measured
+externally, Ear_Landmarker, 2026-10-15.)
 
 Raising or shaping the threshold does not recover it. A size-dependent gate
 was swept and has no headroom: every per-band gate is dominated by simply
