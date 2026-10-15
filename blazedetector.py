@@ -41,6 +41,23 @@ class BlazeDetector(BlazeBase):
     # two paths cannot disagree on how many boxes survive.
     max_detections: int = MAX_DETECTIONS
 
+    # Emit the decoded keypoints alongside each box, as [box, kp..., score]
+    # instead of [box, score].
+    #
+    # Off by default, and deliberately per instance rather than global. The
+    # ear model's keypoint heads have no labels to learn from, so for it these
+    # columns are noise -- and `BlazeEarInference` and the exported graphs
+    # decode four columns, so widening the default would put the browser and
+    # `process` on different layouts for no gain. The face stage is the case
+    # that wants them: it runs MediaPipe's weights unchanged, so its six
+    # keypoints (two eyes, nose, mouth, two ear tragions) are trained, and
+    # this line was the only place they were being discarded.
+    #
+    # Consumers must read the box as [:, :4] and the score as [:, -1], never
+    # [:, 4]. With keypoints on, column 4 is a keypoint coordinate that still
+    # looks like a plausible confidence.
+    emit_keypoints: bool = False
+
 
     def _preprocess(self, x):
         """Converts the image pixels to the range [-1, 1] (MediaPipe convention)."""
@@ -220,16 +237,21 @@ class BlazeDetector(BlazeBase):
 
         Returns:
             A list containing a tensor of detections for each image in
-            the batch. If no detections are found for an image, returns a tensor
-            of shape (0, 5).
+            the batch. If no detections are found for an image, returns an
+            empty tensor of the same width.
 
-        Each detection is a PyTorch tensor consisting of 5 numbers:
-            - ymin, xmin, ymax, xmax
-            - confidence score
+        Each detection is [ymin, xmin, ymax, xmax, confidence] by default.
+        With `emit_keypoints` set it is [ymin, xmin, ymax, xmax, kp0_x, kp0_y,
+        ... kp5_y, confidence] -- the score stays LAST, so read it as [:, -1]
+        and never [:, 4].
 
-        Keypoint columns are not returned. The regressor still predicts them,
-        but nothing supervises them, so emitting 12 untrained coordinates made
-        this path's output shape differ from every other one for no benefit.
+        Keypoints are off by default because emitting 12 columns no other
+        path emits would put this one on a different layout for no gain. The
+        reason given here used to be that "nothing supervises them", which is
+        true of the ear model and false of the face stage: the same class runs
+        MediaPipe's front detector with its keypoint heads loaded and frozen,
+        so for that instance the keypoints are trained and `emit_keypoints`
+        is how to get at them.
         """
         if isinstance(x, np.ndarray):
             x = torch.from_numpy(x).permute((0, 3, 1, 2))
@@ -250,16 +272,21 @@ class BlazeDetector(BlazeBase):
         detections = self._tensors_to_detections(out[0], out[1], self.anchors)
 
         # 4. Non-maximum suppression to remove overlapping detections:
+        #
+        # Detections are [box, keypoints..., score] with the score LAST, so
+        # the score column is -1 rather than 4. `denormalize_detections`
+        # already reads it that way.
+        width = (4 + 2 * self.num_keypoints + 1) if self.emit_keypoints else 5
         filtered_detections = []
         for image_detections in detections:
             if image_detections.shape[0] == 0:
                 filtered_detections.append(
-                    torch.zeros((0, 5), device=image_detections.device))
+                    torch.zeros((0, width), device=image_detections.device))
                 continue
             keep = nms_indices(
-                image_detections[:, :4], image_detections[:, 4],
+                image_detections[:, :4], image_detections[:, -1],
                 self.min_suppression_threshold, self.max_detections)
-            filtered_detections.append(image_detections[keep][:, :5])
+            filtered_detections.append(image_detections[keep])
 
         return filtered_detections
 
@@ -322,9 +349,12 @@ class BlazeDetector(BlazeBase):
 
         # Because each image from the batch can have a different number of
         # detections, process them one at a time using a loop.
+        # Keypoints ride along when `emit_keypoints` is set; see the flag.
+        # The score goes last either way, so consumers read it as [:, -1].
+        box_columns = detection_boxes.shape[-1] if self.emit_keypoints else 4
         output_detections = []
         for i in range(raw_box_tensor.shape[0]):
-            boxes = detection_boxes[i, mask[i]][:, :4]
+            boxes = detection_boxes[i, mask[i]][:, :box_columns]
             scores = detection_scores[i, mask[i]].unsqueeze(dim=-1)
             output_detections.append(torch.cat((boxes, scores), dim=-1))
 

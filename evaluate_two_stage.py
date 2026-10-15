@@ -71,7 +71,7 @@ def detect_single_stage(model, image):
         det = model.process(cv2.cvtColor(image, cv2.COLOR_BGR2RGB)).cpu()
     if not len(det):
         return torch.zeros((0, 4)), torch.zeros((0,))
-    return det[:, :4].float(), det[:, 4].float()
+    return det[:, :4].float(), det[:, -1].float()
 
 
 def detect_two_stage(face_detector, ear_model, image, expand, max_faces,
