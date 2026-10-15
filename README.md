@@ -1298,6 +1298,24 @@ recording so they are not retried blind:
   ear model -- the crop training data has no keypoint labels -- but not of the
   face stage, which is MediaPipe's weights unchanged and loads its keypoint
   heads with zero missing keys.
+- **A latent disagreement between `process` and the export path, measured
+  dead on trained weights.** Found while adding the emitted-detections parity
+  test, and recorded because it is the shape of the defect this repository
+  has already been bitten by three times rather than a live bug.
+  `_tensors_to_detections` does three things before NMS that
+  `BlazeEarInference` does not: it sorts each box's corners so an inverted
+  prediction is repaired, drops degenerate boxes below 1e-5 in width or
+  height, and drops non-finite scores. So the two paths can hand NMS
+  different candidate sets on the same weights. On untrained weights they do:
+  2,191 of 3,584 candidates come out corner-inverted and the paths disagree on
+  one of their top 100. On the shipped 256 px model over **1,075,200
+  candidates from 300 real crops there are zero inverted and zero degenerate
+  boxes**, and the emitted detections match to 0.0 across 150 images. So it is
+  latent, not active -- a trained regressor does not predict negative
+  width -- and the fix would have to touch `BlazeEarInference` plus all four
+  exportable wrappers to avoid creating a fifth layout. Not worth doing on
+  these numbers; worth knowing before anyone trusts the two paths to agree on
+  a model that is still training, which is exactly when they would not.
 - **Treating the crop periphery as off-distribution.** The obvious reading of
   the escaping ears is that the model is weak near the window edge, so an
   ear that lands there is doubly penalised. It is the wrong way round: ears
