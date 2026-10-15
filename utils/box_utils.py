@@ -198,3 +198,49 @@ def clip_boxes(boxes: torch.Tensor, min_val: float = 0.0, max_val: float = 1.0) 
         Clipped boxes tensor
     """
     return torch.clamp(boxes, min=min_val, max=max_val)
+
+
+# Below this, in normalized units, a decoded box has no area worth suppressing
+# against and no area worth reporting.
+MIN_BOX_SIDE = 1e-5
+
+
+def sort_corners(boxes: torch.Tensor) -> torch.Tensor:
+    """`[..., ymin, xmin, ymax, xmax]` with each pair ordered.
+
+    A regressor is free to predict a negative width or height, which decodes
+    to a box whose corners are the wrong way round. IoU against such a box is
+    zero regardless of where it sits, so it neither suppresses nor is
+    suppressed, and it survives NMS to be reported as a detection.
+    """
+    return torch.stack([
+        torch.minimum(boxes[..., 0], boxes[..., 2]),
+        torch.minimum(boxes[..., 1], boxes[..., 3]),
+        torch.maximum(boxes[..., 0], boxes[..., 2]),
+        torch.maximum(boxes[..., 1], boxes[..., 3]),
+    ], dim=-1)
+
+
+def usable_box_mask(
+    boxes: torch.Tensor,
+    scores: torch.Tensor | None = None,
+    min_side: float = MIN_BOX_SIDE,
+) -> torch.Tensor:
+    """Which candidates are worth handing to NMS: `[..., N]` of bool.
+
+    Expects corner-sorted `[..., ymin, xmin, ymax, xmax]`. Rejects boxes with
+    no area, and, when `scores` is given, non-finite scores.
+
+    This exists in one place because it did not: `BlazeDetector` applied it and
+    `BlazeEarInference` did not, so the two paths could hand NMS different
+    candidate sets on identical weights, and a different candidate set means a
+    different suppression outcome. It is latent on a trained model -- a trained
+    regressor does not predict negative width -- and live on an untrained one,
+    which is exactly when someone compares the paths to check a run.
+    """
+    heights = boxes[..., 2] - boxes[..., 0]
+    widths = boxes[..., 3] - boxes[..., 1]
+    usable = (widths > min_side) & (heights > min_side)
+    if scores is not None:
+        usable = usable & torch.isfinite(scores)
+    return usable

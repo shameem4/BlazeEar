@@ -6,7 +6,8 @@ from utils.nms import nms_indices
 
 from blazebase import BlazeBase
 from utils.iou import intersect_torch, jaccard_torch, overlap_similarity_torch
-from utils.box_utils import decode_boxes_with_keypoints
+from utils.box_utils import (decode_boxes_with_keypoints, sort_corners,
+                             usable_box_mask)
 from utils.preprocess import resize_pad as preprocess_resize_pad
 
 class BlazeDetector(BlazeBase):
@@ -322,30 +323,18 @@ class BlazeDetector(BlazeBase):
         detection_boxes = self._decode_boxes(raw_box_tensor, anchors)
 
         # Ensure coordinates are ordered (allow values outside [0, 1] for padding offsets)
-        ymin = torch.minimum(detection_boxes[..., 0], detection_boxes[..., 2])
-        ymax = torch.maximum(detection_boxes[..., 0], detection_boxes[..., 2])
-        xmin = torch.minimum(detection_boxes[..., 1], detection_boxes[..., 3])
-        xmax = torch.maximum(detection_boxes[..., 1], detection_boxes[..., 3])
-
         detection_boxes = detection_boxes.clone()
-        detection_boxes[..., 0] = ymin
-        detection_boxes[..., 1] = xmin
-        detection_boxes[..., 2] = ymax
-        detection_boxes[..., 3] = xmax
-
-        widths = xmax - xmin
-        heights = ymax - ymin
-        valid_box_mask = (widths > 1e-5) & (heights > 1e-5)
+        detection_boxes[..., :4] = sort_corners(detection_boxes[..., :4])
 
         thresh = self.score_clipping_thresh
         raw_score_tensor = raw_score_tensor.clamp(-thresh, thresh)
         detection_scores = raw_score_tensor.sigmoid().squeeze(dim=-1)
-        finite_mask = torch.isfinite(detection_scores)
 
         # Note: we stripped off the last dimension from the scores tensor
         # because there is only has one class. Now we can simply use a mask
         # to filter out the boxes with too low confidence.
-        mask = (detection_scores >= self.min_score_thresh) & valid_box_mask & finite_mask
+        mask = ((detection_scores >= self.min_score_thresh)
+                & usable_box_mask(detection_boxes[..., :4], detection_scores))
 
         # Because each image from the batch can have a different number of
         # detections, process them one at a time using a loop.

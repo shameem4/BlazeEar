@@ -200,6 +200,42 @@ class TestEndToEndParity:
         assert torch.equal(raw_a[0], raw_b[0]), 'box outputs diverge'
         assert torch.equal(raw_a[1], raw_b[1]), 'score outputs diverge'
 
+    def test_paths_agree_on_untrained_weights(self):
+        """
+        The paths used to differ in their candidate filter: `process` dropped
+        boxes with no area, `BlazeEarInference` did not, and a different
+        candidate set is a different NMS outcome. On the shipped model that
+        was invisible -- a trained regressor predicts no negative widths, so
+        0 of 1,075,200 candidates were degenerate -- and on untrained weights
+        2,191 of 3,584 were, which is why this test uses untrained weights.
+        That is also the case someone actually hits: comparing the paths to
+        check a model part-way through a run.
+        """
+        for seed in range(3):
+            torch.manual_seed(seed)
+            model = BlazeEar()
+            model.generate_anchors(anchor_options)
+            model.eval()
+            model.min_score_thresh = 0.0
+            model.min_suppression_threshold = 0.3
+
+            pipeline = BlazeEarInference(confidence_threshold=0.0,
+                                         iou_threshold=0.3)
+            pipeline.model.load_state_dict(model.state_dict())
+            pipeline.eval()
+
+            image = (np.random.default_rng(seed).random((200, 320, 3)) * 255
+                     ).astype(np.uint8)
+            with torch.no_grad():
+                from_process = model.process(image)
+            from_pipeline = torch.as_tensor(pipeline.predict(image))
+
+            assert from_process.shape == from_pipeline.shape, (
+                f'seed {seed}: process emitted {tuple(from_process.shape)}, '
+                f'the pipeline {tuple(from_pipeline.shape)}')
+            assert torch.allclose(from_process, from_pipeline, atol=1e-4), (
+                f'seed {seed}: the paths emit different detections')
+
     def test_paths_emit_the_same_detection_layout(self):
         """
         The test above compares raw model outputs, which is upstream of where

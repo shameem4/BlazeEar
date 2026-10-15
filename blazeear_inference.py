@@ -64,6 +64,7 @@ import numpy as np
 import torch
 from utils.config import (DEFAULT_INPUT_SIZE, MAX_DETECTIONS,
                           NMS_IOU_THRESHOLD)
+from utils.box_utils import sort_corners, usable_box_mask
 from utils.nms import suppress_overlapping
 import torch.nn as nn
 import torchvision.ops
@@ -270,16 +271,8 @@ class BlazeEarInference(nn.Module):
         x_max = x_center + w / 2.0
         
         boxes = torch.stack([y_min, x_min, y_max, x_max], dim=-1)
-        
-        # Ensure proper ordering
-        boxes_ordered = torch.stack([
-            torch.minimum(boxes[..., 0], boxes[..., 2]),  # ymin
-            torch.minimum(boxes[..., 1], boxes[..., 3]),  # xmin
-            torch.maximum(boxes[..., 0], boxes[..., 2]),  # ymax
-            torch.maximum(boxes[..., 1], boxes[..., 3]),  # xmax
-        ], dim=-1)
-        
-        return boxes_ordered
+
+        return sort_corners(boxes)
     
     def nms(
         self,
@@ -371,7 +364,11 @@ class BlazeEarInference(nn.Module):
         boxes_b = boxes[0]
         scores_b = scores[0]
         
-        mask = scores_b >= self.confidence_threshold
+        # The same candidate filter `BlazeDetector._tensors_to_detections`
+        # applies. Without it this path handed NMS boxes with no area, and a
+        # different candidate set is a different suppression outcome.
+        mask = ((scores_b >= self.confidence_threshold)
+                & usable_box_mask(boxes_b, scores_b))
         filtered_boxes = boxes_b[mask]
         filtered_scores = scores_b[mask]
         
@@ -661,17 +658,15 @@ class BlazeEarInferenceExportable(nn.Module):
         
         boxes = torch.stack([y_min, x_min, y_max, x_max], dim=-1)
         
-        # Ensure proper ordering
-        boxes = torch.stack([
-            torch.minimum(boxes[..., 0], boxes[..., 2]),
-            torch.minimum(boxes[..., 1], boxes[..., 3]),
-            torch.maximum(boxes[..., 0], boxes[..., 2]),
-            torch.maximum(boxes[..., 1], boxes[..., 3]),
-        ], dim=-1)
-        
+        boxes = sort_corners(boxes)
+
         # Scores
         scores = raw_scores.clamp(-self.score_clipping_thresh, self.score_clipping_thresh)
         scores = scores.sigmoid().squeeze(-1)
+        # Drop unusable candidates the way the eager paths do, but by zeroing
+        # the score rather than masking rows, so the exported graph keeps its
+        # fixed shapes and a topk below cannot select them.
+        scores = scores * usable_box_mask(boxes, scores).to(scores.dtype)
         
         # Process batch index 0 (export assumes batch=1)
         boxes = boxes[0]
@@ -802,17 +797,15 @@ class BlazeEarWebExportable(nn.Module):
         
         boxes = torch.stack([y_min, x_min, y_max, x_max], dim=-1)
         
-        # Ensure proper ordering [min, min, max, max]
-        boxes = torch.stack([
-            torch.minimum(boxes[..., 0], boxes[..., 2]),
-            torch.minimum(boxes[..., 1], boxes[..., 3]),
-            torch.maximum(boxes[..., 0], boxes[..., 2]),
-            torch.maximum(boxes[..., 1], boxes[..., 3]),
-        ], dim=-1)
-        
+        boxes = sort_corners(boxes)
+
         # Scores
         scores = raw_scores.clamp(-self.score_clipping_thresh, self.score_clipping_thresh)
         scores = scores.sigmoid().squeeze(-1)
+        # Drop unusable candidates the way the eager paths do, but by zeroing
+        # the score rather than masking rows, so the exported graph keeps its
+        # fixed shapes and a topk below cannot select them.
+        scores = scores * usable_box_mask(boxes, scores).to(scores.dtype)
         
         # Extract batch 0
         boxes = boxes[0]  # (896, 4)
@@ -918,17 +911,15 @@ class BlazeEarEndToEndExportable(nn.Module):
         
         boxes = torch.stack([y_min, x_min, y_max, x_max], dim=-1)
         
-        # Ensure proper ordering
-        boxes = torch.stack([
-            torch.minimum(boxes[..., 0], boxes[..., 2]),
-            torch.minimum(boxes[..., 1], boxes[..., 3]),
-            torch.maximum(boxes[..., 0], boxes[..., 2]),
-            torch.maximum(boxes[..., 1], boxes[..., 3]),
-        ], dim=-1)
-        
+        boxes = sort_corners(boxes)
+
         # Scores
         scores = raw_scores.clamp(-self.score_clipping_thresh, self.score_clipping_thresh)
         scores = scores.sigmoid().squeeze(-1)
+        # Drop unusable candidates the way the eager paths do, but by zeroing
+        # the score rather than masking rows, so the exported graph keeps its
+        # fixed shapes and a topk below cannot select them.
+        scores = scores * usable_box_mask(boxes, scores).to(scores.dtype)
         
         # Process batch index 0
         boxes = boxes[0]
