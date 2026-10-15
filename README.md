@@ -1623,6 +1623,46 @@ and eyes directly rather than assuming the crop is centred, and which the
 pipeline already carries (see the keypoint pass-through). That remains
 untested, with a mildly negative prior now that the proxy has failed.
 
+**Positional midline negatives are a dead end too, and for a reason that
+generalises.** The natural next thought is to mine the midline as an explicit
+negative during training rather than veto it at inference. The objection is
+the turned head: a profile face puts its one visible ear near the crop
+centre, so a positional negative would train against exactly that case.
+Measured on `val_v2`'s 2,385 human ears that have a face, using annotated
+ears per image as a yaw proxy:
+
+| group | n | median \|u\| | p10 | within 0.15 |
+|---|---|---|---|---|
+| 1 ear (profile / heavy yaw) | 1628 | 0.339 | 0.131 | 11.6% |
+| 2 ears (roughly frontal) | 696 | 0.317 | 0.150 | 10.1% |
+| 3+ ears (crowd) | 61 | 0.304 | 0.086 | 23.0% |
+| all | 2385 | 0.333 | 0.133 | **11.4%** |
+
+So the concern is right about the magnitude and wrong about the mechanism.
+**11.4% of true ears -- 273 of them -- sit inside |u| < 0.15**, which a
+positional negative would train against. But yaw is not what puts them
+there: 11.6% against 10.1% is not a difference, and 69% of midline ears come
+from 1-ear images only because 1-ear images are 68% of the sample. The more
+likely cause is face-box noise, the crop not being centred where the method
+assumes. The 23% for crowds is probably an artefact of this measurement
+rather than a finding: each ear is assigned to its *nearest* crop window,
+which is unreliable when faces overlap.
+
+The verdict survives either explanation -- training against 11% of real ears
+to suppress a population already measured at 1.4 false positives per ear
+lost is a bad trade. But the stronger objection is that **there is no new
+information to add.** Those locations are already labelled background in
+every training image without an ear there, and top-k hard-negative mining
+already selects the highest-scoring negatives, which is exactly what a nose
+bridge scoring 0.8 is. Mining the midline "specifically" would reweight
+negatives the loss already picks.
+
+What the turned-head case does do is strengthen the *keypoint* veto over the
+crop-centre one. Under yaw the nose and eye keypoints move off centre while
+the ear moves toward it, so keypoints separate precisely the case where
+crop-centre geometry fails. That remains the one untested idea on this axis,
+and the pass-through it needs already exists.
+
 **What the symptom actually indicates is a missing component, not a wrong
 constant.** `docs/index.html` drives a `requestAnimationFrame` webcam loop
 with no temporal state: every frame is detected independently, so a candidate
