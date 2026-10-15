@@ -87,6 +87,14 @@ In short: `trainable_blazeface` made BlazeFace trainable; BlazeEar uses that fou
   CSV dataset with resize‑pad to square, strong augmentations, and encoding into BlazeFace anchors via `utils/anchor_utils.py`.
 - `loss_functions.py`  
   `BlazeEarDetectionLoss`: hard negative mining + BCE or focal classification + SmoothL1 regression.
+- `queue_augment_scale_ab.sh`  
+  The queued A/B for the augmentation lever, not started. Two sequential
+  arms, control at the old scale range and treatment at the new one, under
+  one checked-out tree via `BLAZEEAR_AUGMENT_SCALE_{LOW,HIGH}` -- because
+  `train_blazeear.py` has no `--seed`, so a single run cannot be compared
+  against the shipped checkpoint. Writes an as-run snapshot and checksums
+  before launching anything, and runs under `systemd-run --user` so the
+  output lands in the journal and survives a reboot.
 - `measure_tragion_coverage.py`, `measure_crop_shift.py`,
   `measure_anchor_budget.py`  
   Standalone measurements behind claims in this README, kept runnable so the
@@ -262,11 +270,15 @@ Key behaviors:
 The primary path is CSV training that mirrors the MediaPipe front detector setup:
 
 ```bash
-python train_blazeear.py --csv-format \
+python train_blazeear.py \
   --train-data data/splits/train.csv \
   --val-data data/splits/val.csv \
   --data-root data/raw
 ```
+
+There is no `--csv-format` flag, though this block documented one until it was
+run: the format is inferred from the extension. Nor is there an
+`--input-size` -- that comes from `DEFAULT_INPUT_SIZE`.
 
 Useful flags:
 

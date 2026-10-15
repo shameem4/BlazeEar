@@ -1,6 +1,7 @@
 """
 Configuration constants for BlazeEar detection.
 """
+import os
 
 # Model input size.
 #
@@ -299,7 +300,15 @@ HARD_NEGATIVE_RATIO = 50.0
 # the run would move two variables and explain neither. If the low end pays,
 # the padding is the next thing to vary; if it does not, the padding is the
 # first suspect.
-AUGMENT_SCALE_RANGE = (0.35, 1.25)
+#
+# Overridable from the environment so an A/B can run both arms against one
+# checked-out tree. Editing this file between arms would invalidate the as-run
+# snapshot the arms are compared under, which is the thing that makes a
+# finished run interpretable later.
+AUGMENT_SCALE_RANGE = (
+    float(os.environ.get('BLAZEEAR_AUGMENT_SCALE_LOW', 0.35)),
+    float(os.environ.get('BLAZEEAR_AUGMENT_SCALE_HIGH', 1.25)),
+)
 
 # Anchor assignment
 ANCHOR_TOP_K = 3          # positives per ground-truth box

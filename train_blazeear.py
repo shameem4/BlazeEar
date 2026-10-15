@@ -12,15 +12,24 @@ Usage (NPY format):
     python train_blazeear.py --train-data data/preprocessed/train_detector.npy --val-data data/preprocessed/val_detector.npy
     python train_blazeear.py --train-data data/preprocessed/train_detector.npy --epochs 500 --lr 1e-4
 
-Usage (CSV format):
-    # Default: MediaPipe weight initialization with auto-resume
-    python train_blazeear.py --csv-format --train-data data/splits/train.csv --val-data data/splits/val.csv --data-root data/raw/blazeear
+Usage (CSV format), which is the path everything in the repository uses:
+    # MediaPipe backbone initialization, the default
+    python train_blazeear.py --train-data data/splits/train.csv --val-data data/splits/val.csv --data-root data/raw
 
     # Train from scratch (random initialization)
-    python train_blazeear.py --csv-format --train-data data/splits/train.csv --val-data data/splits/val.csv --data-root data/raw/blazeear --init-weights scratch
+    python train_blazeear.py --train-data data/splits/train.csv --val-data data/splits/val.csv --data-root data/raw --init-weights scratch
 
-    # Start fresh (disable auto-resume, but use MediaPipe weights)
-    python train_blazeear.py --csv-format --train-data data/splits/train.csv --val-data data/splits/val.csv --data-root data/raw/blazeear --no-auto-resume
+    # Resume from a specific checkpoint
+    python train_blazeear.py --train-data data/splits/train.csv --val-data data/splits/val.csv --data-root data/raw --resume runs/checkpoints/BlazeEar_epoch40.pth
+
+These examples used to pass --csv-format and --no-auto-resume. Neither flag
+exists: the format is inferred from the file extension, and there is no
+auto-resume -- a run starts from --init-weights unless --resume names a
+checkpoint. Both spellings failed at argument parsing.
+
+The input size is not a flag either. It comes from utils.config's
+DEFAULT_INPUT_SIZE, and a checkpoint does not record the size it was trained
+at, so changing that constant between a train and an evaluate is silent.
 """
 
 import argparse
