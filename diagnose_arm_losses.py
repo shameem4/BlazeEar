@@ -9,7 +9,7 @@ import cv2, numpy as np, torch
 os.chdir(pathlib.Path(__file__).resolve().parent)
 from blazeear import BlazeEar
 from utils.anchor_utils import anchor_options
-from utils.config import (DEFAULT_INPUT_SIZE as S, DETECTION_SCORE_THRESHOLD as GATE,
+from utils.config import (DEFAULT_INPUT_SIZE as S,
                           NMS_IOU_THRESHOLD as NMS, HUMAN_ANNOTATION_SOURCES)
 ARMS = ['baseline', 'cap_only', 'treatment']
 
