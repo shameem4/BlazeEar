@@ -1595,6 +1595,46 @@ genuinely wants recall over precision can still re-pick, against the
 end-to-end table here, expecting midline false positives to be the first
 thing that degrades.
 
+**A geometric veto was the obvious alternative, and it is measurably worse
+than the gate.** If the crop is centred on the face then |u| ~ 0 is the nose
+and brow, an ear is lateral by construction, and rejecting the midline should
+buy precision on a *different* axis from the score -- which is the only way
+out of a pure recall/precision trade. `sweep_tta_gate.py --tta 4` prints the
+cost. It does not work:
+
+| | p1 | p5 | p10 | p25 | median |
+|---|---|---|---|---|---|
+| true ears, \|u\| | 0.016 | 0.080 | **0.157** | 0.265 | 0.335 |
+| false positives, \|u\| | 0.010 | 0.029 | 0.053 | 0.150 | 0.268 |
+
+**10% of real ears sit within 0.157 of the crop centre**, against the 3.0%
+within 0.15 radially that the training-set geometry suggested. At gate 0.70 a
+veto on |u| < 0.15 loses 145 true ears to remove 210 false ones -- 1.4 false
+positives per ear sacrificed -- while raising the gate from 0.70 to 0.85
+loses 154 ears and removes 679, a rate of 4.4. The gate is three times the
+better instrument. At 0.85 the veto is simply harmful: 117 ears for 47 false
+positives.
+
+The reason is that the crop centre is a poor proxy for the facial midline.
+The face box is noisy, and under head rotation or a profile pose a genuine
+ear lands centrally. So this rules out the cheap geometric form; it does not
+rule out a veto defined against the face *keypoints*, which locate the nose
+and eyes directly rather than assuming the crop is centred, and which the
+pipeline already carries (see the keypoint pass-through). That remains
+untested, with a mildly negative prior now that the proxy has failed.
+
+**What the symptom actually indicates is a missing component, not a wrong
+constant.** `docs/index.html` drives a `requestAnimationFrame` webcam loop
+with no temporal state: every frame is detected independently, so a candidate
+sitting near the gate re-decides thirty times a second and the box strobes.
+Per-frame thresholding cannot fix that at any value -- 0.85 only makes the
+strobing rarer by making borderline candidates rarer. Detection-then-tracking
+with hysteresis is the standard answer and is orthogonal to the gate: require
+a high score to *start* a track and a lower one to *continue* it, and drop a
+track after N consecutive misses. That buys back the recall this revert gave
+up without the false positives, because a real ear persists across frames and
+a midline artefact does not. Nothing in this repository implements it yet.
+
 One trap worth recording, since it nearly produced a confident wrong answer:
 `export_onnx.py` defaults `--checkpoint` to `runs/checkpoints/BlazeEar_best.pth`,
 which is a December single-stage relic, not the shipped crop model. Pointed at

@@ -178,6 +178,42 @@ def report(det, n_gt, n_images, n_noface, label):
                 print(f'  {r.score:.3f}  u={r.u:+.3f} v={r.v:+.3f}  {r.image}')
 
 
+def midline_analysis(det, n_gt, n_images, gates=(0.70, 0.85)):
+    """What a geometric midline veto would cost, against what it buys.
+
+    The score gate trades recall for precision along one curve. Position is a
+    different axis: the crop is centred on the face, so |u| ~ 0 is the nose
+    and brow, and an ear is lateral by construction. If true ears are scarce
+    near the midline and false positives are not, a veto there buys precision
+    at a far better rate than raising the gate -- and if they are equally
+    scarce, this idea is dead and the table below says so.
+    """
+    pred = det[~((det.gt_idx < 0) & det.ignore_hit)].dropna(subset=['u'])
+    tp_all, fp_all = pred[pred.gt_idx >= 0], pred[pred.gt_idx < 0]
+    print('\n|u| distribution, true positives vs false (all scores >= '
+          f'{det.score.min():.2f})')
+    for lab, g in (('true ears', tp_all), ('false positives', fp_all)):
+        q = g.u.abs().quantile([0.01, 0.05, 0.10, 0.25, 0.50]).round(3)
+        print(f'  {lab:<16} n={len(g):5d}  p1 {q[0.01]}  p5 {q[0.05]}  '
+              f'p10 {q[0.10]}  p25 {q[0.25]}  median {q[0.50]}')
+
+    for gate in gates:
+        keep = pred[pred.score >= gate]
+        tp0 = int((keep.gt_idx >= 0).sum())
+        fp0 = int((keep.gt_idx < 0).sum())
+        print(f'\na midline veto at gate {gate:.2f}  '
+              f'(baseline {tp0} TP, {fp0} FP, {fp0 / n_images:.3f} FP/image)')
+        print('  veto |u| <   TP lost   FP removed   recall     FP/image')
+        print('  ' + '-' * 54)
+        for band in (0.05, 0.10, 0.15, 0.20, 0.25):
+            veto = keep.u.abs() < band
+            tp_lost = int(((keep.gt_idx >= 0) & veto).sum())
+            fp_cut = int(((keep.gt_idx < 0) & veto).sum())
+            rec = (tp0 - tp_lost) / n_gt if n_gt else 0.0
+            print(f'  {band:.2f}        {tp_lost:5d}      {fp_cut:5d}'
+                  f'       {rec:.3f}    {(fp0 - fp_cut) / n_images:6.3f}')
+
+
 def build_parser():
     p = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     p.add_argument('--csv', default='data/splits/val_v2.csv')
@@ -202,7 +238,9 @@ def main():
         args.device = 'cpu'
     os.chdir(pathlib.Path(__file__).resolve().parent)
     label = f'TTA {args.tta} views' if args.tta else 'plain, 1 view'
-    report(*collect(args), label=label)
+    det, n_gt, n_images, n_noface = collect(args)
+    report(det, n_gt, n_images, n_noface, label=label)
+    midline_analysis(det, n_gt, n_images)
 
 
 if __name__ == '__main__':
