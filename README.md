@@ -669,8 +669,13 @@ only the first had been asked. Recalibrating TTA to its own threshold is worth
 +0.1054 F1 (95% CI [+0.0715, +0.1404]) -- the largest confirmed gain here, and
 it is a constant, not a model.
 
-`DETECTION_SCORE_THRESHOLD` is now 0.80 and `TTA_SCORE_THRESHOLD` 0.85, mirrored
-in the browser pipeline and pinned by `test_tta.py`. TTA takes 0.85 rather than
+`DETECTION_SCORE_THRESHOLD` was set to 0.80 here and `TTA_SCORE_THRESHOLD` to
+0.85, mirrored
+in the browser pipeline and pinned by `test_tta.py`. **The plain value is now
+0.70**, re-picked on a 2,193-ear crop-space sweep -- see "Why the gate was
+0.80" below; the 0.70 row in the table above is the superseded 355-ear
+end-to-end measurement, and the TTA value is unchanged.
+TTA takes 0.85 rather than
 its argmax 0.90 because F1 is flat over 0.85-0.90 and then falls off a cliff
 (0.666 at 0.91); the plateau centre is the safer place to sit. With both paths
 at their own best, TTA's F1 edge is +0.0234 [-0.0028, +0.0496] -- not
@@ -1216,7 +1221,7 @@ symptom was measured externally (Ear_Landmarker, 2026-10-15) on rendered
 cohorts at fixed photo identity, varying only how much of the frame the ear
 fills, so size is the only thing moving. "Localised" is an ear with a
 candidate at IoU >= 0.3 anywhere in the output; "passes gate" is that
-candidate surviving `DETECTION_SCORE_THRESHOLD = 0.80`:
+candidate surviving `DETECTION_SCORE_THRESHOLD`, 0.80 when this was measured:
 
 | ear / frame | px in a 256 crop | localised | passes gate | gap | median score |
 |---|---|---|---|---|---|
@@ -1392,7 +1397,9 @@ run there.
 ### The three-arm A/B: both levers are null, and one costs the mode
 
 Run 2026-10-15, 100 epochs per arm on `crops_train`, scored on `crops_val`
-(2,193 human ears in 2,033 crops) at the deployed 0.80 gate, hit = IoU >= 0.5.
+(2,193 human ears in 2,033 crops) at the then-deployed 0.80 gate, hit =
+IoU >= 0.5. The gate is now 0.70; see the gate section below for this same
+comparison re-read there.
 `python score_arm_bands.py`. Arms differ only in the two constants:
 
 | band | n | baseline | cap_only | treatment | cap - base | B1 |
@@ -1482,7 +1489,7 @@ Sweeping that boundary separates capability from calibration:
 | 0.00 (no gate) | 87.9% | 87.5% | 87.3% | -0.59 | 0.341 |
 | 0.50 | 81.8% | 81.7% | 82.3% | +0.46 | 0.440 |
 | 0.60 | 80.3% | 79.3% | 80.4% | +0.05 | 1.000 |
-| **0.80 (deployed)** | **73.1%** | **72.4%** | **71.9%** | **-1.23** | **0.050** |
+| **0.80 (deployed then)** | **73.1%** | **72.4%** | **71.9%** | **-1.23** | **0.050** |
 | 0.85 | 68.0% | 66.9% | 65.8% | -2.14 | 0.0005 |
 | 0.90 | 58.3% | 56.4% | 55.1% | -3.24 | <0.0001 |
 
@@ -1497,13 +1504,13 @@ effect dominates.
 
 **So "both changes made the model worse at finding ears" was the wrong
 reading, and it was mine.** All three arms find the same ears. The revert
-still stands, for a narrower reason: 0.80 is the threshold that ships, no arm
+still stands, for a narrower reason: 0.80 was the threshold that shipped, no arm
 gains at any gate, and each arm's own best achievable recall still orders
 baseline first (87.87 / 87.46 / 87.28%).
 
-### Why the gate is 0.80, and what it costs
+### Why the gate was 0.80, what it cost, and why it is now 0.70
 
-`DETECTION_SCORE_THRESHOLD = 0.80` was fitted, but on a different measurement
+`DETECTION_SCORE_THRESHOLD` was 0.80, fitted on a different measurement
 from the one above: **F1**, end to end, on `common_heldout` (355 ears), where
 F1 peaks at 0.80 (0.665) against 0.646 at 0.75 and 0.658 at 0.85. Two things
 follow from that provenance, and neither says the value is wrong.
@@ -1522,9 +1529,9 @@ model, IoU 0.5, 203,300 candidates over 2,033 images:
 | 0.50 | 0.660 | 0.824 | 0.733 | 0.459 |
 | 0.60 | 0.760 | 0.803 | 0.781 | 0.273 |
 | 0.65 | 0.789 | 0.789 | 0.789 | 0.228 |
-| 0.70 | 0.813 | 0.775 | 0.794 | 0.192 |
+| **0.70 (now shipped)** | 0.813 | **0.775** | 0.794 | 0.192 |
 | **0.75** | 0.839 | 0.755 | **0.795** | 0.156 |
-| **0.80 (shipped)** | **0.869** | **0.724** | 0.790 | **0.118** |
+| 0.80 (was shipped) | 0.869 | 0.724 | 0.790 | 0.118 |
 | 0.85 | 0.901 | 0.665 | 0.765 | 0.079 |
 | 0.90 | 0.934 | 0.550 | 0.692 | 0.042 |
 
@@ -1540,6 +1547,52 @@ The config comment anticipated this, keeping its sweep so that "a deployment
 that wants precision over recall can re-pick deliberately rather than by
 inheritance". What was missing was a crop-space curve at full sample size to
 re-pick against.
+
+**The gate is now 0.70**, in `utils/config.py` and mirrored in
+`docs/blazeear_inference.js`. That is the recall side of a flat optimum rather
+than its argmax: against 0.80 it buys 5.1pp of recall (112 ears) for 0.074
+more false positives per image, at an F1 difference of 0.004 this sample
+cannot resolve. The pick is deliberate on the ground that a missed ear yields
+the next stage nothing while a false ear yields a box a consumer can reject --
+which is a judgement about the consumer, not a result from the table.
+
+**`TTA_SCORE_THRESHOLD` is unchanged at 0.85, and that is what the browser
+still uses.** `BlazeEarInference` defaults to `views: 4`, and its threshold
+default is `this.views > 1 ? TTA_SCORE_THRESHOLD : SCORE_THRESHOLD`, so the
+deployed page gates at 0.85 and this change does not touch it. Fusion shifts
+the score distribution, the sweep above is the plain path only, and there is
+no equivalent TTA sweep on `crops_val` -- so moving 0.85 would be moving an
+unmeasured value. The end-to-end sweep further up this file, which found 0.70
+worse than 0.80 for both paths, is the 355-ear measurement this 2,193-ear one
+supersedes for the plain path; its TTA half still stands.
+
+**Does the lower gate revive either reverted lever?** No, and it changes the
+reason for one of them. Re-reading the three arms' pre-gate scores (paired,
+2,193 ears, no re-run needed):
+
+| gate | baseline | cap_only | treatment | cap - base | p | treat - base | p |
+|---|---|---|---|---|---|---|---|
+| 0.60 | 80.3% | 79.3% | 80.4% | -1.09 | 0.045 | +0.05 | 1.000 |
+| 0.65 | 79.4% | 78.7% | 79.2% | -0.78 | 0.171 | -0.23 | 0.740 |
+| **0.70** | **78.2%** | **77.2%** | **77.8%** | **-1.09** | **0.058** | **-0.46** | **0.474** |
+| 0.75 | 76.4% | 75.2% | 75.2% | -1.19 | 0.045 | -1.14 | 0.052 |
+| 0.80 | 73.1% | 72.4% | 71.9% | -0.78 | 0.234 | -1.23 | 0.050 |
+
+Two different shapes, and the earlier calibration reading covered only one of
+them. The **treatment** arm's deficit does grow with the gate and is gone at
+0.70 (-0.46pp, p=0.47) -- so the measured harm that the revert was argued on
+is specific to the 0.80 operating point. But nothing replaces it with a gain:
+no band moves beyond noise, and B1's small-ear bet is 6 ears of 123 becoming
+10. The revert stands on *no benefit* rather than on harm. The **cap**, by
+contrast, is down about a point at every gate from 0.60 to 0.80 and does not
+recover as the gate falls, which is not a calibration signature; lowering the
+gate makes its case slightly worse, not better. Both stay reverted.
+
+Read those p-values as a sweep, not as five independent tests: they are
+uncorrected over the gate grid, and a 1.09pp difference is 24 ears. The
+precision side is not in this re-read -- the cached dump holds only each GT
+ear's best pre-gate candidate, so FP/image at 0.70 per arm would need a
+re-run, and no decision here turns on it.
 
 What this leaves established: the budget concentration is real but is not the
 binding constraint on recall; the prior it lands on is not stable across runs;

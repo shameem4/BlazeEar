@@ -79,7 +79,40 @@ DEFAULT_SAVE_EVERY = 10
 #      0.85     0.838  0.541  0.658   0.769  0.620  0.686
 #      0.90     0.894  0.428  0.579   0.878  0.566  0.688
 #
-# Two separate findings. The plain pipeline peaks at 0.80, not 0.70. And TTA
+# SUPERSEDED FOR THE PLAIN PATH, which is now 0.70. The sweep above is end to
+# end on 355 ears and optimises F1. Re-swept in crop space on `crops_val`'s
+# 2,193 ears (203,300 candidates, 2,033 images, the shipped 256 px model),
+# which is 6x the sample and the operating context stage 2 actually runs in:
+#
+#   gate   precision  recall     F1   FP/image
+#   0.60     0.760     0.803   0.781    0.273
+#   0.65     0.789     0.789   0.789    0.228
+#   0.70     0.813     0.775   0.794    0.192     <- now deployed
+#   0.75     0.839     0.755   0.795    0.156     <- F1 argmax
+#   0.80     0.869     0.724   0.790    0.118     <- was deployed
+#   0.85     0.901     0.665   0.765    0.079
+#
+# F1 is flat from 0.65 to 0.80 (0.789, 0.794, 0.795, 0.790 -- a spread of
+# 0.006) while recall over the same span runs 0.789 down to 0.724. So 0.80 was
+# paying 5.1pp of recall against 0.70 for 0.074 fewer false positives per
+# image, at an F1 difference of 0.004 that the sample cannot resolve. 0.70 is
+# the deliberate pick on the recall side of a flat optimum, chosen because a
+# missed ear yields nothing downstream while a false ear is a box a consumer
+# can reject.
+#
+# Note what F1 assumes and this repository cannot settle: that a missed ear
+# and a false ear cost the same. They do not obviously, and the right value
+# depends on the consumer rather than on this table. Below 0.60 the trade
+# stops being graceful -- 0.50 buys 2pp more recall for double the false
+# positives, 0.30 reaches 85.6% recall at 2.3 FP/image -- so 0.60 is the floor
+# of the defensible range, not a further option.
+#
+# TTA_SCORE_THRESHOLD is unchanged at 0.85 and was NOT re-swept: the curve
+# above is the plain path only, fusion shifts the score distribution up, and
+# the browser defaults to 4 views, so the deployed page still gates at 0.85.
+#
+# Two separate findings from the original end-to-end sweep. The plain pipeline
+# peaked at 0.80 there rather than 0.70. And TTA
 # shifts the optimum UP, because `max` fusion gives a cluster its best member's
 # score -- so at 0.70 the shipped TTA was a measured REGRESSION on F1 against
 # no TTA at all (-0.0389, 95% CI [-0.0649, -0.0123], paired bootstrap over
@@ -93,7 +126,7 @@ DEFAULT_SAVE_EVERY = 10
 # are fitted on 355 ears; the direction is bootstrap-confirmed, the second
 # decimal is not. The table is here so a deployment that wants precision over
 # recall can re-pick deliberately rather than by inheritance.
-DETECTION_SCORE_THRESHOLD = 0.80
+DETECTION_SCORE_THRESHOLD = 0.70
 TTA_SCORE_THRESHOLD = 0.85
 NMS_IOU_THRESHOLD = 0.3
 MAX_DETECTIONS = 100

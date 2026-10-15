@@ -40,7 +40,7 @@ const EAR_INPUT_SIZE = 256;
 const FACE_INPUT_SIZE = 128;
 const INTERMEDIATE_SIZE = 256;
 
-const SCORE_THRESHOLD = 0.80;
+const SCORE_THRESHOLD = 0.70;
 const TTA_SCORE_THRESHOLD = 0.85;
 
 /**
@@ -60,7 +60,7 @@ class BlazeEarInference {
      *
      * Create a BlazeEar detector instance
      * @param {Object} options - Configuration options
-     * @param {number} options.confidenceThreshold - Minimum confidence for detections (default: 0.80)
+     * @param {number} options.confidenceThreshold - Minimum confidence for detections (default: SCORE_THRESHOLD, 0.70)
      * @param {number} options.iouThreshold - IoU threshold for NMS (default: 0.3)
      * @param {number} options.inputSize - Model input edge (default: 256,
      *     the ear graph; the face graph is 128)

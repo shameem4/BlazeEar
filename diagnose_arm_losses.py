@@ -2,7 +2,7 @@
 candidate BEFORE the score gate, so a loss can be attributed:
 
   localisation loss -- no candidate reaches IoU 0.5 any more
-  scoring loss      -- the candidate is still there, below the 0.80 gate
+  scoring loss      -- the candidate is still there, below the score gate
 """
 import csv, os, pathlib, collections
 import cv2, numpy as np, torch
