@@ -17,7 +17,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from utils.config import DEFAULT_INPUT_SIZE, HARD_NEGATIVE_RATIO
+from utils.config import (DEFAULT_INPUT_SIZE, HARD_NEGATIVE_PRIOR_CAP,
+                          HARD_NEGATIVE_RATIO)
 
 from utils.metrics import compute_mean_iou_torch, compute_map_torch
 from utils.box_utils import decode_boxes as _decode_boxes_util
@@ -41,6 +42,7 @@ class BlazeEarDetectionLoss(nn.Module):
     def __init__(
         self,
         hard_negative_ratio: float = HARD_NEGATIVE_RATIO,
+        hard_negative_prior_cap: float = HARD_NEGATIVE_PRIOR_CAP,
         detection_weight: float = 150.0,
         classification_weight: float = 35.0,
         scale: int = DEFAULT_INPUT_SIZE,
@@ -78,6 +80,11 @@ class BlazeEarDetectionLoss(nn.Module):
         """
         super().__init__()
         self.hard_negative_ratio = hard_negative_ratio
+        self.hard_negative_prior_cap = float(hard_negative_prior_cap)
+        # Anchor index -> prior group, derived lazily from the anchor tensor
+        # the caller passes and cached, since it never changes within a run.
+        self._prior_groups: Optional[list[torch.Tensor]] = None
+        self._prior_groups_key: Optional[tuple] = None
         self.detection_weight = detection_weight
         self.classification_weight = classification_weight
         self.positive_classification_weight = \
@@ -175,6 +182,76 @@ class BlazeEarDetectionLoss(nn.Module):
         """
         return _decode_boxes_util(anchor_predictions, reference_anchors, scale=self.scale)
     
+    def _groups_for(self, reference_anchors: torch.Tensor) -> list[torch.Tensor]:
+        """Anchor indices grouped by (w, h) prior, cached per anchor tensor.
+
+        `reference_anchors` is [N, 4] as [x, y, w, h]; a [N, 2] tensor carries
+        no prior and yields a single group, which disables the cap.
+        """
+        key = (int(reference_anchors.shape[0]), int(reference_anchors.shape[1]),
+               str(reference_anchors.device))
+        if self._prior_groups is not None and self._prior_groups_key == key:
+            return self._prior_groups
+
+        if reference_anchors.shape[1] < 4:
+            groups = [torch.arange(reference_anchors.shape[0],
+                                   device=reference_anchors.device)]
+        else:
+            wh = reference_anchors[:, 2:4]
+            unique = torch.unique(wh, dim=0)
+            groups = [torch.nonzero((wh == row).all(dim=1), as_tuple=True)[0]
+                      for row in unique]
+        self._prior_groups = groups
+        self._prior_groups_key = key
+        return groups
+
+    def _mine_negatives(
+        self,
+        scores: torch.Tensor,
+        budget: int,
+        reference_anchors: torch.Tensor,
+    ) -> torch.Tensor:
+        """The `budget` hardest background scores per image, [B, budget].
+
+        With `hard_negative_prior_cap >= 1.0` this is a plain global top-k,
+        which is what it was. Below 1.0, each prior first offers only its own
+        hardest `ceil(cap * budget)` candidates and the global top-k is taken
+        from that pool, so no prior can exceed the ceiling.
+
+        The ceiling is one-sided on purpose: a prior whose logits are not
+        competitive still contributes nothing, so this removes a concentration
+        without manufacturing background pressure anywhere. The total stays
+        `budget`, so the loss scale does not move.
+        """
+        if budget <= 0:
+            return scores[:, :0]
+
+        groups = self._groups_for(reference_anchors)
+        if self.hard_negative_prior_cap >= 1.0 or len(groups) < 2:
+            return torch.topk(scores, k=budget, dim=-1).values
+
+        # Enough per group that the pool can always fill the budget, even if
+        # the cap alone would leave it short.
+        per_group = max(
+            int(-(-budget * self.hard_negative_prior_cap // 1)),
+            int(-(-budget // len(groups))),
+            1,
+        )
+
+        floor_value = torch.finfo(scores.dtype).min
+        offers = []
+        for index in groups:
+            take = min(per_group, int(index.numel()))
+            group_top = torch.topk(scores.index_select(1, index), k=take,
+                                   dim=-1).values
+            if take < per_group:
+                group_top = F.pad(group_top, (0, per_group - take),
+                                  value=floor_value)
+            offers.append(group_top)
+
+        pool = torch.cat(offers, dim=-1)
+        return torch.topk(pool, k=min(budget, pool.shape[-1]), dim=-1).values
+
     def forward(
         self,
         class_logits: torch.Tensor,
@@ -244,9 +321,10 @@ class BlazeEarDetectionLoss(nn.Module):
         available_negatives = int((~exclude_from_negatives).sum(dim=1).min().item())
         background_num = min(background_num, max(available_negatives, 0))
         
-        # Sort and select top-k background predictions (hard negatives)
-        sorted_scores, _ = torch.sort(predicted_classes_scores, dim=-1, descending=True)
-        background_class_predictions = sorted_scores[:, :background_num]  # [B, background_num]
+        # Select the top-k background predictions (hard negatives), subject to
+        # a per-prior ceiling so no single prior can take the whole budget.
+        background_class_predictions = self._mine_negatives(
+            predicted_classes_scores, background_num, reference_anchors)
         
         # Get positive predictions
         positive_class_predictions = class_pred_squeezed[faces_mask_bool]  # [num_positives]

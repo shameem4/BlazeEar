@@ -310,6 +310,33 @@ AUGMENT_SCALE_RANGE = (
     float(os.environ.get('BLAZEEAR_AUGMENT_SCALE_HIGH', 1.25)),
 )
 
+# Ceiling on the share of the mined negative budget any ONE anchor prior may
+# take, as a fraction. 1.0 disables the cap and restores a plain global top-k.
+#
+# Hard-negative mining takes a global top-k of background logits, so the
+# budget follows how confusing a prior is rather than how many slots it owns.
+# Measured on the shipped weights over 1,280 augmented training images, that
+# concentrates pathologically: the 129.8 x 178.2 prior holds 7.1% of the
+# anchors and receives 1.0% of the positives, and takes 53.5% of the whole
+# negative budget -- about 52:1 against. Meanwhile the three priors carrying
+# 62.5% of positives take 0.6% between them. A prior trained almost purely as
+# background suppresses the ears that land on it, which is why the score
+# head's worst discard is at the LARGEST ears (36.9pp at 198 px), not the
+# smallest.
+#
+# This is a CEILING and deliberately not a quota. A uniform per-prior quota
+# would hand each of the eight priors an eighth of the budget, giving the mode
+# priors -- currently 0.1 to 0.3% -- around a hundred times more background
+# pressure than they have now, on the priors that carry most positives and
+# reach 95.7% recall. That is how a rebalance becomes a regression. A ceiling
+# removes the concentration and adds pressure nowhere: a prior that was
+# contributing little keeps contributing little.
+#
+# The total number of mined negatives is unchanged, so the loss scale does
+# not move -- only which anchors fill the budget.
+HARD_NEGATIVE_PRIOR_CAP = float(
+    os.environ.get('BLAZEEAR_HARD_NEGATIVE_PRIOR_CAP', 0.25))
+
 # Anchor assignment
 ANCHOR_TOP_K = 3          # positives per ground-truth box
 ANCHOR_IGNORE_IOU = 0.35  # non-positive anchors above this are neither pos nor neg
