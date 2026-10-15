@@ -1631,9 +1631,7 @@ Per-frame thresholding cannot fix that at any value -- 0.85 only makes the
 strobing rarer by making borderline candidates rarer. Detection-then-tracking
 with hysteresis is the standard answer and is orthogonal to the gate: require
 a high score to *start* a track and a lower one to *continue* it, and drop a
-track after N consecutive misses. That buys back the recall this revert gave
-up without the false positives, because a real ear persists across frames and
-a midline artefact does not. Nothing in this repository implements it yet.
+track after N consecutive misses.
 
 **The tracker now exists**, in `docs/index.html` as `EarTracker`. A new track
 needs the confirm score (the slider, default `TTA_SCORE_THRESHOLD` = 0.85)
@@ -1656,8 +1654,35 @@ Five behaviours, checked before it shipped:
 
 The second row is the point: **0.72 is drawn when it belongs to a confirmed
 track and discarded when it does not**, which no single threshold can
-express. That is the recall the 0.80/0.85 revert gave up, recovered on
-temporal evidence rather than by moving the gate back down.
+express.
+
+**What this does NOT license is a lower confirm score, and an earlier version
+of this section said otherwise.** It claimed the hysteresis works "because a
+real ear persists across frames and a midline artefact does not". That is
+false for this artefact. The nose bridge is a *stationary* structure: a
+midline candidate sitting at 0.72 matches itself frame after frame, reaches
+`minHits`, confirms, and then coasts -- the tracker would make it steadier,
+not rarer. Hysteresis filters *transient* false positives; against a
+persistent one its only defence is the bar at entry, which is exactly why
+confirm stays at the measured argmax rather than following the continue score
+down.
+
+So the two mechanisms are not interchangeable. The gate decides what may
+enter, and is picked on the end-to-end sweep. The tracker decides what may
+*stay*, and buys two things the gate cannot: a box that has earned its place
+stops strobing, and an ear that crosses 0.85 intermittently is held at 0.72
+between crossings.
+
+**The size of that second gain is unmeasured, and the tracker's constants are
+unmeasured with it.** `minHits`, `maxMisses` and `CONTINUE_MARGIN` were
+picked from principle, because every split in this repository is still
+images: each figure above is a per-frame rate, while the gain depends on how
+an ear's score fluctuates *between* frames. A proxy exists and is cheap. The
+four TTA views are perturbations of one ear and fusion takes the max, so the
+spread of a single ear's score across views approximates its frame-to-frame
+jitter -- and the fraction of ears whose spread straddles 0.85 is the whole
+size of the claim. It needs per-view scores, which `merge_views` computes and
+discards.
 
 The first version of this filtered drawn boxes on `misses === 0` and so
 dropped the box on any single missed frame -- reintroducing the strobe for
