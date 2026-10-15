@@ -19,6 +19,7 @@ from utils.config import (
     DEFAULT_INPUT_SIZE,
     ANCHOR_IGNORE_IOU,
     ANCHOR_TOP_K,
+    AUGMENT_SCALE_RANGE,
     IGNORE_ANNOTATION_SOURCE,
     NEGATIVE_ANNOTATION_SOURCE,
 )
@@ -73,7 +74,8 @@ class CSVDetectorDataset(Dataset):
         max_samples: Optional[int] = None,
         augment_max_side: int = 256,
         anchor_top_k: int = ANCHOR_TOP_K,
-        anchor_ignore_iou: float = ANCHOR_IGNORE_IOU
+        anchor_ignore_iou: float = ANCHOR_IGNORE_IOU,
+        augment_scale_range: Tuple[float, float] = AUGMENT_SCALE_RANGE
     ):
         # Avoid oversubscribing CPU threads in DataLoader workers.
         try:
@@ -92,6 +94,8 @@ class CSVDetectorDataset(Dataset):
         self.anchors = generate_anchors_from_priors().numpy()
         self.anchor_top_k = int(anchor_top_k)
         self.anchor_ignore_iou = float(anchor_ignore_iou)
+        self.augment_scale_range = (float(augment_scale_range[0]),
+                                    float(augment_scale_range[1]))
 
         df = pd.read_csv(self.csv_path)
         required_cols = {"image_path", "x1", "y1", "w", "h"}
@@ -194,7 +198,8 @@ class CSVDetectorDataset(Dataset):
         if np.random.random() > 0.5 and len(bboxes) > 0:
             image, bboxes = augmentation.augment_horizontal_flip(image, bboxes)
         if np.random.random() > 0.5 and len(bboxes) > 0:
-            image, bboxes = augmentation.augment_scale(image, bboxes, scale_range=(0.75, 1.25))
+            image, bboxes = augmentation.augment_scale(
+                image, bboxes, scale_range=self.augment_scale_range)
         if np.random.random() > 0.5 and len(bboxes) > 0:
             image, bboxes = augmentation.augment_rotation(image, bboxes, angle_range=(-20, 20))
         

@@ -281,6 +281,26 @@ EAR_ANCHOR_PRIORS_BIG = (
 # bug with a workaround, so it is now the measured value.
 HARD_NEGATIVE_RATIO = 50.0
 
+# Random scale augmentation, as (min, max) multipliers on the crop.
+#
+# This was (0.75, 1.25), and the low end is the lever. The median training ear
+# is 64.9 px in a 256 px crop, so 0.75x is 48.7 px: the augmentation could not
+# manufacture an ear in the 0-32 px band at all, which is the band the model is
+# worst at -- 18.2% recall against 95.7% at the mode, and only 5.9% of the
+# training boxes. It was being asked to generalise to sizes it had never been
+# shown. 0.35 puts the median ear at 22.7 px and the p10 ear at 13.5.
+#
+# Known confound, stated because it is not fixed: `augment_scale`'s shrink
+# branch pads with BLACK to restore the original size, so at 0.35 roughly 65%
+# of the frame is border where at 0.75 it was 25%. A model could learn "small
+# ear implies black surround" rather than "small ear", and that would not
+# transfer. Edge-replicate padding is the obvious remedy, and it is
+# deliberately NOT bundled in here: it would change the 0.75-1.0 range too, so
+# the run would move two variables and explain neither. If the low end pays,
+# the padding is the next thing to vary; if it does not, the padding is the
+# first suspect.
+AUGMENT_SCALE_RANGE = (0.35, 1.25)
+
 # Anchor assignment
 ANCHOR_TOP_K = 3          # positives per ground-truth box
 ANCHOR_IGNORE_IOU = 0.35  # non-positive anchors above this are neither pos nor neg
