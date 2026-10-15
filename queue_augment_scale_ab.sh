@@ -27,6 +27,23 @@
 # loss at the mode is the resolution-coverage trade that killed the
 # FACE_CROP_EXPAND sweep, reappearing on a different axis.
 #
+# WHAT WOULD NOT COUNT, pre-registered here so it is decided before the
+# numbers exist rather than after. A single band improved by a couple of
+# points with the mode flat, on one draw and with no interval, is NOT a
+# result -- it is the same shape as trainable_blazeface's one positive bin
+# (16-32 px, +1.2 against stock) which they themselves downgraded as "exactly
+# the size of thing that does not replicate": one bin, one seed, adjacent to
+# a boundary they had chosen, no interval. The honest read of that shape is
+# "needs a second draw", and the next step is to re-run both arms rather than
+# to write it up.
+#
+# Note on what "another draw" means here: train_blazeear.py has no --seed, so
+# every run is an independent, unreproducible draw. That is adequate for
+# REPLICATION -- run the pair again and see whether the effect survives --
+# and inadequate for exact reproduction, so a result that matters will need a
+# --seed added before it can be pinned. Worth doing if B1 pays; not worth
+# touching the trainer for speculatively.
+#
 # THE KNOWN CONFOUND, which this pair does NOT resolve. augment_scale pads
 # with black when it shrinks, so at 0.35 roughly 65% of the frame is border
 # against 25% at 0.75. A lift could be the model learning "small ear" or it
