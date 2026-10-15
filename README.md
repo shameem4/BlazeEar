@@ -1588,6 +1588,52 @@ contrast, is down about a point at every gate from 0.60 to 0.80 and does not
 recover as the gate falls, which is not a calibration signature; lowering the
 gate makes its case slightly worse, not better. Both stay reverted.
 
+**What the levers actually do, paired.** Per-arm median score on small ears
+reads like a mechanism -- 0.748 baseline, 0.696 cap_only, 0.761 treatment,
+i.e. B1 lifting small-ear confidence and the cap depressing it. That reading
+is wrong, and it is composition: each arm localises a different set of ears,
+so the three medians are over three different samples. Paired on the ears
+localised by *both* arms:
+
+| band | arm | n | median shift | mean | p |
+|---|---|---|---|---|---|
+| small (<48 px) | cap_only | 208 | -0.0004 | +0.0002 | 0.74 |
+| small (<48 px) | treatment | 195 | +0.0004 | +0.0008 | 0.81 |
+| mode (64-80) | cap_only | 718 | -0.0045 | -0.0055 | 5.8e-08 |
+| mode (64-80) | treatment | 718 | -0.0064 | -0.0084 | 3.8e-14 |
+| all | cap_only | 1856 | -0.0038 | -0.0047 | 6.5e-09 |
+| all | treatment | 1841 | -0.0058 | -0.0086 | 1.7e-17 |
+
+So **the mechanism both levers were adopted for is absent on the ears that
+can test it.** B1 does not raise small-ear confidence (+0.0004, p=0.81) and
+the cap does not help the starved small priors' score heads. What they do
+produce is a uniform downward confidence shift on everything, 0.005 to 0.009
+of score, which is the most significant effect in this entire dataset
+(p = 1.7e-17) and is a side effect rather than the goal. A shift that small
+is invisible except where it crosses a decision boundary -- which is exactly
+the ~1pp of gated recall measured above, and exactly why the deficit tracks
+the gate.
+
+That also settles what adoption would be buying. Against it: the browser path
+still gates at 0.85, where the treatment is -2.14pp (p=0.0005); the cap alone
+is negative at every gate from 0.60 to 0.80; and B1 was never run as its own
+arm, so every observation of it is confounded with the cap. For it: ranking
+quality is consistently ahead (AUC 0.8784 / 0.8830 / 0.8860), the compute
+cost is nil, the cap removes a real and run-dependent budget asymmetry as
+hygiene, and B1's intended generalisation benefit cannot appear in a
+validation split that shares the training scale distribution. Neither is
+adopted.
+
+**The measurement that should come before any further arm** is two baseline
+seeds, 1.5 GPU-hours. Every figure here, the -1.23pp that drove the revert
+included, is read against a run-to-run noise floor nobody has measured, and
+`train_blazeear.py` still has no `--seed`. Something seed-sensitive is
+already known to be in here: which prior the negative budget concentrates on
+is not reproducible across runs. If baseline-to-baseline spread is +/-1.5pp
+then this A/B establishes nothing and no further arm is worth running; if it
+is +/-0.3pp then the cap's -1.09pp is real and a B1-only arm becomes worth
+its 0.74 GPU-hours.
+
 Read those p-values as a sweep, not as five independent tests: they are
 uncorrected over the gate grid, and a 1.09pp difference is 24 ears. The
 precision side is not in this re-read -- the cached dump holds only each GT
