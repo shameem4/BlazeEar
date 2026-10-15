@@ -1083,6 +1083,40 @@ the second is still open:
   so a bigger concentric square buys periphery in every direction while paying
   resolution everywhere. Anything aimed at those 31 ears needs a different crop
   *placement or shape*, not a larger scalar.
+- **A same-size lateral shift is the one crop change the sweep never tested,
+  and it has a measured ceiling of 5.1pp.** The expand sweep varied one
+  scalar on a *concentric* square, which is why coverage and resolution
+  traded against each other: growing the window to reach one ear shrinks
+  every ear in it. Translating a window of the *same* side pays no resolution
+  at all, and nothing in the sweep covers it. On the 355 ears of
+  `common_heldout`, offsets measured in crop sides (0.5 is the window edge):
+
+  | | n | median max offset | shift <=0.1 | <=0.2 | <=0.3 | <=0.5 |
+  |---|---|---|---|---|---|---|
+  | reachable | 315 | 0.333 | 100% | 100% | 100% | 100% |
+  | escaping | 31 | **0.888** | 32.3% | 41.9% | 48.4% | **58.1%** |
+
+  A shift of half a window recovers 18 of the 31, which is **5.1% of all
+  ears** -- and it is geometrically possible inside the frame for 100% of
+  them, with a median 1.67 sides of room in both axes. It also lands
+  in-distribution rather than off it: the 12,595 human training ears already
+  sit at a median radial offset of 0.361 sides, p90 0.443, so a shifted
+  window puts its ear where the model has always seen ears.
+
+  The open problem is **which way to shift**, and it is a strictly weaker
+  requirement than the tragion crop that died below: that one needed a
+  predicted *position* and had none, whereas a shift needs only a direction
+  and a fixed magnitude. Eye and nose keypoints are the untested candidates
+  -- the face stage carries all six trained keypoints, and the two eyes and
+  the nose give a yaw sign even where the tragions are occluded. Nothing has
+  measured whether that sign agrees with the direction these 31 ears lie in.
+  Until it has, the 5.1pp is a ceiling on a direction oracle, not a result.
+
+  What could *not* be established: whether the 31 split into a geometry group
+  and a detector group. The offsets are a near-continuum (0.89, 0.90, 0.96,
+  1.04, 1.08 ...), the largest gap is a lone 3.41 outlier, and the ordering
+  of any two-group story flips between a cut at 1.0 and one at 1.25. So they
+  are one population as far as this measurement can tell.
 - **Measure per-ear reachability on `crops_val` too.** The 11.3% is from 355
   ears on one 279-image set. The direction is not in doubt -- the 31 ears were
   counted directly -- but the magnitude deserves the larger split. Still open.
@@ -1118,6 +1152,17 @@ recording so they are not retried blind:
   ear model -- the crop training data has no keypoint labels -- but not of the
   face stage, which is MediaPipe's weights unchanged and loads its keypoint
   heads with zero missing keys.
+- **Treating the crop periphery as off-distribution.** The obvious reading of
+  the escaping ears is that the model is weak near the window edge, so an
+  ear that lands there is doubly penalised. It is the wrong way round: ears
+  sit at the periphery *by default*, because the window is centred on the
+  face and ears are lateral to it. Over the 12,595 human training ears, the
+  radial offset from the crop centre is median 0.361 of a side, 89.4% are
+  beyond 0.25, and only 3.0% fall within 0.15. The centre of a face crop is
+  the one place an ear almost never is, so the periphery is the training
+  distribution and there is no edge penalty to recover. Nor are far ears
+  confounded with small ones: corr(offset, size) = -0.164, and median ear
+  size is flat at 58-67 px across every offset band.
 - **More training data.** A learning curve at a fixed 50,800-step budget over
   12.5 / 25 / 50 / 100% of the crops is flat past 25%: 0.6681, 0.7086, 0.7233,
   0.7173 crop-space mAP@0.5. The last doubling -- 6,300 more human-labelled ear
