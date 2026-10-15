@@ -1894,6 +1894,83 @@ not reachable from the loss or the augmentation at all; and at the deployed
 gate the second stage localises 87.9% of ears while reporting 72.4%, of which
 about 6.5pp is available for 0.11 FP/image and the rest is not cheap.
 
+### Where this can go next, and what it is worth
+
+Written at the close of the gate/tracker work, so the next person does not
+re-derive the ranking. One number frames all of it. Of `val_v2`'s 2,385 human
+ears:
+
+| | ears | share |
+|---|---|---|
+| no face detected, so stage 2 never sees it | 29 | 1.2% |
+| no TTA view finds it at all | 302 | 12.7% |
+| found, but no view ever reaches 0.85 | 422 | 17.7% |
+| **beyond any gate, tracker or fusion change** | **724** | **30.4%** |
+
+**Calibration work is essentially exhausted.** Everything in this section of
+the README -- the gate sweep, the arm A/B, the geometric vetoes, the tracker,
+view agreement -- operates on the ~70% of ears the model can already score
+above a useful threshold in at least one look. The remaining 30% is a
+capability problem: the model does not produce a confident candidate for
+those ears under any decision rule. No threshold, hysteresis or fusion trick
+reaches them.
+
+In rough order of value per unit of cost:
+
+1. **Two baseline seeds, and a `--seed` flag to make them possible.** ~1.5
+   GPU-hours. `train_blazeear.py` has no seed control, so every training
+   result here is one run against one run, and the effects in play are about
+   a point. This blocks more than it looks: whether the negative-mining cap's
+   -1.09pp is real, whether a B1-only arm is worth running, and whether *any*
+   future training change could be detected at all. Cheapest thing on this
+   list and it unblocks the whole of item 4. Something seed-sensitive is
+   already known to be present -- which prior the negative budget
+   concentrates on does not reproduce across runs.
+
+2. **The >=2-view agreement rule.** Measured at 3.9 false positives removed
+   per ear sacrificed (29 ears against 112 confirmable false positives),
+   which beats the geometric veto's 1.4 and approaches the score gate's 4.4,
+   on an axis independent of both score and time -- so it stacks with the
+   tracker. `merge_views` already computes each cluster's membership and
+   discards it; the work is returning the distinct view count, dropping
+   single-view clusters, mirroring it in `docs/blazeear_inference.js`, and a
+   test. Verify the ratio in deployed units first: the 17.2% is per-view
+   clusters at a 0.10 floor, counted before fusion and NMS.
+
+3. **A short labelled video clip.** Thirty to sixty seconds of webcam footage
+   with ears boxed. This is the only data this repository has never had, and
+   three things depend on it. `minHits` and `maxMisses` are about frame
+   *ordering*, which no still-image proxy reaches, so both are still picked
+   from principle. The tracker's 9.2pp is an upper bound that only video can
+   convert into a number. And false-positive temporal persistence -- the
+   property reasoned about wrongly twice in this work -- would be measured
+   directly rather than argued. Semi-automatic labelling with the current
+   detector plus hand correction makes this cheap in wall-clock terms; the
+   cost is attention, not compute.
+
+4. **Capability work on the 30%.** Where the remaining recall actually is,
+   and the only item that can move the headline. The learning curve is flat
+   past 25% of the existing crops, so more of the same data is not it; the
+   candidates are profile and yaw coverage specifically, a larger backbone, or
+   a different second stage. All of them are expensive and none is evaluable
+   until item 1 exists, which is the argument for doing item 1 regardless of
+   whether anything here is ever attempted.
+
+**Stopping is also a defensible option.** The reported symptom is fixed, both
+gates sit on their measured end-to-end argmax, and the tracker delivers more
+recall than the lower gate did without its false positives. The residual
+midline false-positive rate at 0.85 is 0.023 per image before hysteresis,
+and items 2 and 3 are refinements of a pipeline that now behaves.
+
+What should *not* be revisited, with the reasons recorded above so they are
+not relitigated: the crop-centre geometric veto (measured, three times worse
+than the gate), positional midline hard negatives (would train against 11.4%
+of real ears, and add nothing top-k mining does not already do), the keypoint
+veto (keypoints fail together with the face box, the fourth demonstration of
+one property), and a single shared gate across both paths (the fused argmax
+is genuinely higher than the plain one, because `max` fusion shifts the score
+distribution up).
+
 ### How the measurements here were checked
 
 Worth recording because the numbers above are only as good as this, and
