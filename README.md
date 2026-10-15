@@ -1465,10 +1465,88 @@ The cap's implementation and tests stay in place, defaulted off. They are
 correct and cheap, 1.0 restores the exact previous arithmetic, and a future
 run that finds a *reproducible* concentration has the lever ready.
 
+**What the lost ears actually are, which reframes all of the above.**
+`python diagnose_arm_losses.py` records every ear's best candidate *before*
+the score gate, so a loss can be attributed. **About 80% of every loss is a
+scoring loss, not a localisation loss**: the ear is still found at IoU >= 0.5
+and its score has merely fallen below 0.80. For the full stack, 83 of 102 lost
+ears are still localised, their median score is 0.752 against a 0.80 gate,
+half are within 0.05 of it, and the median drop from baseline is 0.125. The
+gained ears are the same phenomenon with the sign flipped, so the net -27 is
+the residue of ~177 ears churning across one decision boundary.
+
+Sweeping that boundary separates capability from calibration:
+
+| gate | baseline | cap_only | treatment | treat - base | p |
+|---|---|---|---|---|---|
+| 0.00 (no gate) | 87.9% | 87.5% | 87.3% | -0.59 | 0.341 |
+| 0.50 | 81.8% | 81.7% | 82.3% | +0.46 | 0.440 |
+| 0.60 | 80.3% | 79.3% | 80.4% | +0.05 | 1.000 |
+| **0.80 (deployed)** | **73.1%** | **72.4%** | **71.9%** | **-1.23** | **0.050** |
+| 0.85 | 68.0% | 66.9% | 65.8% | -2.14 | 0.0005 |
+| 0.90 | 58.3% | 56.4% | 55.1% | -3.24 | <0.0001 |
+
+The gap **grows with the gate and vanishes without one**, which is the
+signature of a calibration shift rather than a capability loss. Two more
+measurements agree: with the score ignored the three arms localise 87.9 /
+87.5 / 87.3% of ears (not distinguishable, p=0.34), and the score's ranking
+quality is if anything *best* in the treatment arm, AUC 0.8860 against the
+baseline's 0.8784. The treatment model orders candidates marginally better and
+trusts the true ones marginally less; at a gate as high as 0.80 the second
+effect dominates.
+
+**So "both changes made the model worse at finding ears" was the wrong
+reading, and it was mine.** All three arms find the same ears. The revert
+still stands, for a narrower reason: 0.80 is the threshold that ships, no arm
+gains at any gate, and each arm's own best achievable recall still orders
+baseline first (87.87 / 87.46 / 87.28%).
+
+### Why the gate is 0.80, and what it costs
+
+`DETECTION_SCORE_THRESHOLD = 0.80` was fitted, but on a different measurement
+from the one above: **F1**, end to end, on `common_heldout` (355 ears), where
+F1 peaks at 0.80 (0.665) against 0.646 at 0.75 and 0.658 at 0.85. Two things
+follow from that provenance, and neither says the value is wrong.
+
+First, **F1 is a choice, not a fact.** It weights a missed ear and a false ear
+equally, and nothing about this pipeline says they are equal: a false ear box
+hands the consumer landmarks for something that is not an ear, a missed ear
+hands it nothing. Which is worse belongs to whatever consumes the detections.
+
+Second, that sweep had 355 ears end to end. The crop-space curve on
+`crops_val` has 2,193 and is the one that governs stage 2. Shipped 256 px
+model, IoU 0.5, 203,300 candidates over 2,033 images:
+
+| gate | precision | recall | F1 | FP/image |
+|---|---|---|---|---|
+| 0.50 | 0.660 | 0.824 | 0.733 | 0.459 |
+| 0.60 | 0.760 | 0.803 | 0.781 | 0.273 |
+| 0.65 | 0.789 | 0.789 | 0.789 | 0.228 |
+| 0.70 | 0.813 | 0.775 | 0.794 | 0.192 |
+| **0.75** | 0.839 | 0.755 | **0.795** | 0.156 |
+| **0.80 (shipped)** | **0.869** | **0.724** | 0.790 | **0.118** |
+| 0.85 | 0.901 | 0.665 | 0.765 | 0.079 |
+| 0.90 | 0.934 | 0.550 | 0.692 | 0.042 |
+
+**The F1 peak is at 0.75 here, and it is nearly flat from 0.65 to 0.80** --
+0.789, 0.794, 0.795, 0.790, a spread of 0.006. Recall over that same span is
+not flat: 0.789 down to 0.724. So **6.5pp of recall, 143 ears, is being
+exchanged for precision at no measurable F1 cost**, and taking it back costs
+0.11 extra false positives per image -- one per nine images. Below 0.60 the
+trade stops being graceful: 0.50 buys 2pp more recall for double the false
+positives, and 0.30 reaches 85.6% recall at 2.3 FP/image.
+
+The config comment anticipated this, keeping its sweep so that "a deployment
+that wants precision over recall can re-pick deliberately rather than by
+inheritance". What was missing was a crop-space curve at full sample size to
+re-pick against.
+
 What this leaves established: the budget concentration is real but is not the
 binding constraint on recall; the prior it lands on is not stable across runs;
-and the 0-32 px band is information-limited rather than exposure-limited, so
-it is not reachable from the loss or the augmentation at all.
+the 0-32 px band is information-limited rather than exposure-limited, so it is
+not reachable from the loss or the augmentation at all; and at the deployed
+gate the second stage localises 87.9% of ears while reporting 72.4%, of which
+about 6.5pp is available for 0.11 FP/image and the rest is not cheap.
 
 ### How the measurements here were checked
 
