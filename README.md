@@ -1738,16 +1738,79 @@ enter, and is picked on the end-to-end sweep. The tracker decides what may
 stops strobing, and an ear that crosses 0.85 intermittently is held at 0.72
 between crossings.
 
-**The size of that second gain is unmeasured, and the tracker's constants are
-unmeasured with it.** `minHits`, `maxMisses` and `CONTINUE_MARGIN` were
-picked from principle, because every split in this repository is still
-images: each figure above is a per-frame rate, while the gain depends on how
-an ear's score fluctuates *between* frames. A proxy exists and is cheap. The
-four TTA views are perturbations of one ear and fusion takes the max, so the
-spread of a single ear's score across views approximates its frame-to-frame
-jitter -- and the fraction of ears whose spread straddles 0.85 is the whole
-size of the claim. It needs per-view scores, which `merge_views` computes and
-discards.
+**Measured** by `measure_view_spread.py`. The four TTA views are four looks
+at one ear -- expands 1.35 / 1.50 / 1.65 plus a flip -- and fusion takes the
+max, so the spread across views stands in for the spread across frames. Each
+ear is queried in every view at its own ground-truth location, so a view that
+finds nothing scores 0 rather than leaving the sample. On `val_v2`, 2,385
+human ears of which 2,083 are found by at least one view:
+
+| | share of found | ears |
+|---|---|---|
+| every view >= 0.85, tracker irrelevant | 56.5% | 1176 |
+| no view reaches 0.85, tracker cannot help | 20.3% | 422 |
+| **straddles 0.85, the tracker's case** | **23.3%** | **485** |
+| of those, worst view still >= 0.70 and so held | 45.4% | **220** |
+
+Median per-ear spread is 0.062, so most ears are stable; the tail is not
+(p90 0.857, and 5.6% of ears are found by only one view). **The 220 held ears
+are 10.6% of found ears and 9.2pp of all of them** -- more recall than the
+6.4pp the fused gate bought going 0.85 to 0.70, and without the tripled false
+positives, because nothing changed at entry. Read it as an upper bound: the
+proxy shows the score distribution straddling 0.85, while in video the
+ordering matters -- the ear has to clear 0.85 on some frame while the track is
+alive. And the proxy itself is partial. Varying the crop expand perturbs the
+face box, a fair analogue of webcam box jitter, but says nothing about
+lighting, motion blur or a genuinely moving head, and the flip is not a
+temporal transformation at all.
+
+`CONTINUE_MARGIN = 0.15` turns out to sit on the knee, which was luck rather
+than foresight -- it was picked from principle before this ran:
+
+| margin | keep score | straddling ears held |
+|---|---|---|
+| 0.05 | 0.80 | 130 |
+| 0.10 | 0.75 | 196 |
+| **0.15** | **0.70** | **220** |
+| 0.20 | 0.65 | 233 |
+| 0.25 | 0.60 | 245 |
+| 0.35 | 0.50 | 250 |
+
+Past 0.15 the curve flattens: widening to 0.35 adds 30 ears while dropping
+the keep score to 0.50, which would hold far more junk for them.
+
+**A >=2-view agreement rule is a good trade, and the prediction here was that
+it would be a bad one.** The guess was roughly one ear lost per false positive
+removed, by analogy with the geometric veto. The cross-tab says otherwise.
+Ears found by a single view whose lone look would confirm: 29, out of 1,661
+confirmable. Confirmable false-positive locations seen by a single view: 112,
+out of 652. That is **3.9 false positives per ear sacrificed**, against the
+score gate's 4.4 and the geometric veto's 1.4 -- so it removes 17.2% of
+confirmable false positives for 1.7% of confirmable ears, on an axis
+independent of both score and time.
+
+Units caveat before anyone acts on the 17.2%: these are per-view clusters at
+a 0.10 floor, counted before fusion and NMS, so they are not the same objects
+as the 0.152 FP/image in the gate table. The ratio should carry; the absolute
+rate will not.
+
+The structural finding underneath is the one that explains the rest of this
+section. **The false positives that matter agree across views**: 1.6% of
+4-view locations reach the confirm score against 0.0% of 1-view ones, and 540
+of the 652 confirmable ones are seen by two or more views. They are
+consistent artefacts, not sampling noise. That is why the entry bar has to
+stay at the measured argmax, why temporal persistence cannot filter them --
+a stationary structure persists as well as an ear does -- and why view
+agreement, which catches only the transient 17%, is a supplement rather than
+a replacement.
+
+Implementing it needs `merge_views` to return each cluster's distinct view
+count, which it computes and discards today, and the pipeline to drop
+single-view clusters. Not done. `minHits` and `maxMisses` remain
+picked from principle rather than data: every split here is still images, so
+each figure above is a per-frame rate, and those two constants are about
+frame *ordering*, which no still-image proxy reaches. `CONTINUE_MARGIN` is
+now measured, below.
 
 The first version of this filtered drawn boxes on `misses === 0` and so
 dropped the box on any single missed frame -- reintroducing the strobe for
