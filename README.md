@@ -1559,6 +1559,42 @@ correction for the three comparisons. Either way nothing here is a gain, so
 the values go back: `AUGMENT_SCALE_RANGE = (0.75, 1.25)` and
 `HARD_NEGATIVE_PRIOR_CAP = 1.0`.
 
+**The overall p=0.049 in that table is now retracted, and the mode-band
+p=0.0096 is demoted.** Running the identical test between the two
+noise-floor seeds -- same recipe, same data, differing only in `--seed` --
+gives this:
+
+| band | n | discordant | s1 only | s2 only | delta | p |
+|---|---|---|---|---|---|---|
+| 0-32 | 123 | 2 | 0 | 2 | -1.63pp | 0.50 |
+| 32-48 | 250 | 30 | 16 | 14 | +0.80pp | 0.86 |
+| 48-64 | 698 | 50 | 19 | 31 | -1.72pp | 0.12 |
+| 64-80 (mode) | 758 | 36 | 20 | 16 | +0.53pp | 0.62 |
+| **80-96** | 230 | 20 | 5 | 15 | -4.35pp | **0.041** |
+| 96-120 | 88 | 10 | 4 | 6 | -2.27pp | 0.75 |
+| 120+ | 46 | 5 | 1 | 4 | -6.52pp | 0.38 |
+| **all** | **2193** | **153** | **65** | **88** | **-1.05pp** | **0.075** |
+
+Two runs of one recipe produce an overall p of **0.075** against the A/B's
+0.049, and a **significant band result at p=0.041** on 80-96 px where
+nothing whatsoever was done. So "neither lever reaches significance alone and
+together they do" is a statement about seed choice as much as about the
+levers: the significance the A/B reported overall is the significance two
+identical configurations reach. That claim is withdrawn.
+
+The mode-band result survives better and is not withdrawn, because its split
+is more lopsided than the seed pair's on the same band -- 31 against 13
+versus 20 against 16, on comparable discordance of 44 and 36. But it is one
+of seven band comparisons in a family whose demonstrated per-band false
+positive rate at 0.05 is **1 in 7 from seed alone**, which is exactly what
+chance predicts and exactly why it cannot be read as "the solid one". Read it
+as suggestive and uncorrected.
+
+Nothing about the disposition changes -- the levers were reverted because
+nothing here was a gain, and that still holds. What changes is that this
+table no longer supports a *harm* claim at any level, which is the same
+conclusion the noise-floor section reaches by a different route.
+
 The cap's implementation and tests stay in place, defaulted off. They are
 correct and cheap, 1.0 restores the exact previous arithmetic, and a future
 run that finds a *reproducible* concentration has the lever ready.
@@ -2313,11 +2349,37 @@ configurations will differ by, and on this evidence a fairly tight one. The
 One caveat on that formula, since it is the kind of thing that gets reused.
 Both arms score the *same* images, so the correct null for a paired
 difference is narrower than the unpaired binomial -- only the ears that flip
-between arms contribute. That the observed differences land near the
-*unpaired* bound suggests the two seeds flip nearly independent sets of ears,
-which is to say pairing buys little here. That is an inference from one pair,
-not a measured property, and it is the part of this that would change with
-more seeds.
+between arms contribute. **I inferred from the observed differences landing
+near the unpaired bound that the two seeds flip nearly independent sets of
+ears, so pairing buys little. That was wrong, and it was refuted on the
+better data rather than left standing.** `trainable_blazeface` recorded
+hit/miss per box under three seeds and all three pairings (`59747e6`): the
+paired SE is 0.30-0.36 of the unpaired one everywhere, a factor of three,
+because the seeds agree on which boxes they hit far more than independence
+predicts -- 105 discordant where independence gives 976, a 9.3x
+concentration, 7.5-11x across bands. The same concentration holds here: 153
+discordant ears of 2,193 between the two seeds.
+
+So the unpaired binomial above is a *loose* upper bound, not a tight one, and
+its apparent tightness was a coincidence of this one pair. It stays useful
+for its intended purpose -- deciding which bands are too small to trust
+before spending a seed -- and should not be read as the right null for a
+paired test.
+
+**And the tight paired null is a liability rather than an asset, which is the
+part I had backwards.** A narrower null detects smaller things, including
+things that should not be detectable. Their first pairing -- same recipe,
+differing only in seed -- reaches **4.8 sigma** on the 8-16 px band. The same
+check on this repo's two seeds is in the cap/B1 section above: overall
+p=0.075 against the A/B's 0.049, and a significant p=0.041 on the 80-96 band
+where nothing was changed at all. **A McNemar between two single-seed arms
+answers "do these two checkpoints differ", and they reliably do even when
+they are the same recipe. It does not answer "does this change help",
+because that requires the seed spread inside the null and pairing explicitly
+removes it.** The clean form, which is theirs: paired for comparing two
+artefacts, wider for evaluating an intervention; and the cheap approximation
+is to measure the seed spread separately and require the effect to clear it,
+ignoring the p-value.
 
 Two notes on how this was arrived at, both from the same exchange. Their
 README had already flagged a retired result -- a `min16` configuration at
@@ -2332,7 +2394,13 @@ the detection gate fitted in crop space and deployed end to end, and
 `expand` 1.5 fitted on stock's boxes and carried toward a detector whose
 boxes are 10% larger. It is the only error class in this project that has
 recurred, and it recurred in three unrelated places, which is worth more
-attention than any single one of them got.
+attention than any single one of them got. Their framing of the defence is
+mechanical and is the only one either of us could think of that does not rely
+on remembering: **put the denominator in the variable name or the column
+header, so the unit travels with the number instead of with the person who
+computed it.** 1.5 does not say "stock box widths"; -0.9pp does not say "band
+recall at the deployed gate on crops_val"; 0.78 does not say "crop-space,
+deployed path".
 
 
 **n=2, which is a difference and not a variance estimate.** One draw from
