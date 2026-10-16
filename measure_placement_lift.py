@@ -126,8 +126,8 @@ def report(rows, args):
     def table(title, key, bands, fmt):
         print(f'\n{title}')
         print('  band          images   ears   real cover   null cover   '
-              'lift   power')
-        print('  ' + '-' * 72)
+              'lift   ceil     gap   kept')
+        print('  ' + '-' * 86)
         for lo, hi in bands:
             g = [r for r in rows if lo <= r[key] < hi]
             if not g:
@@ -136,12 +136,21 @@ def report(rows, args):
             real = sum(r['real'] for r in g) / ears
             null = sum(r['null'] for r in g) / ears
             lift = real / null if null else float('inf')
-            # The largest lift a band could possibly report is 1/null.
+            # A lift is bounded above by 1/null, so lifts from bands with
+            # different nulls are not comparable: a saturated band's lift
+            # collapses because its CEILING collapsed, not because placement
+            # got worse there. `gap` is real minus null in points, which has
+            # no such bound and is the fairer headline. `kept` is the share
+            # of the available headroom captured, and it is reported because
+            # it is the one cut that does not flatter the conclusion --
+            # it runs mildly the other way, as "sparse scenes are harder"
+            # predicts, and dividing the null out is dividing composition out.
             ceiling = 1 / null if null else float('inf')
-            power = 'none' if null > 0.5 else f'<={ceiling:.1f}x'
+            gap = 100 * (real - null)
+            kept = (real - null) / (1 - null) if null < 1 else float('nan')
             print(f'  {fmt(lo, hi):<12} {len(g):7d} {ears:6d}   '
                   f'{100*real:9.1f}%   {100*null:9.1f}%   {lift:5.2f}x  '
-                  f'{power:>6}')
+                  f'{ceiling:5.2f}x  {gap:+6.1f}  {100*kept:5.1f}%')
 
     table('banded by LARGEST FACE / frame height', 'face_frac', BANDS,
           lambda lo, hi: f'{lo:.2f}-{hi:.2f}' if hi < 10 else f'{lo:.2f}+')
@@ -156,12 +165,14 @@ def report(rows, args):
           f'{100*null:9.1f}%   {real/null:5.2f}x')
     print(f'\n  mean windows per image: '
           f'{np.mean([r["n_win"] for r in rows]):.2f}')
-    print('\nReading: a band whose null is above ~50% cannot show a large '
-          'lift even if\none is present -- the `power` column gives each '
-          'band\'s ceiling, 1/null.\nOnly the sparse bands carry evidence. '
-          'Composition predicts the lift sits at\n1.0 once occupancy is '
-          'controlled; head-ness predicts it survives in the\nsparse bands, '
-          'where a random window lands on background.')
+    print('\nReading: compare GAP across bands, not lift. A lift cannot '
+          'exceed 1/null\n(the `ceil` column), so a saturated band\'s small '
+          'lift may be its ceiling\ncollapsing rather than placement '
+          'failing. Head-ness predicts the gap widens\nas scenes get '
+          'sparser; composition predicts it vanishes once occupancy is\n'
+          'controlled. `kept` is reported against the conclusion: it runs '
+          'the other\nway, which is what "sparse scenes are harder" '
+          'predicts.')
 
 
 def build_parser():

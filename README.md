@@ -2128,12 +2128,14 @@ reported per face-size band.
 | all | 1187 | 1496 | 91.4% | 53.9% | 1.69x |
 
 **The objection is correct as method and the conclusion survives it.** In
-head-filling frames the lift is 1.10x against an 89.6% null -- composition
-explains almost all of it, exactly as warned. In small-head frames the lift
-is 5.15x against a 15.9% null, where a random window lands on background
-five times out of six. The lift therefore survives, and strengthens, in
+head-filling frames the lift is 1.10x against an 89.6% null; in small-head
+frames it is 5.15x against a 15.9% null, where a random window lands on
+background five times out of six. The effect therefore strengthens in
 precisely the regime where the two explanations come apart, which is
-head-ness's prediction and not composition's.
+head-ness's prediction and not composition's. (Read the lift column with the
+correction below: it exaggerates how band-dependent this is, because a lift
+is bounded by 1/null. The absolute gap is the fairer statistic and tells the
+same story less dramatically.)
 
 The methodological half matters independently: the aggregate 1.69x is a
 mixture dominated by head-filling frames, so any placement ablation reported
@@ -2149,17 +2151,36 @@ instead of one large one. Size is a proxy that fails on crowds; occupancy is
 the thing. Re-banded on it, with each band's power ceiling (1/null) printed
 so a reader can see which rows could have shown an effect at all:
 
-| window occupancy | images | ears | real | null | lift | ceiling |
-|---|---|---|---|---|---|---|
-| 0.00-0.10 | 66 | 78 | 78.2% | 9.6% | **8.13x** | 10.4x |
-| 0.10-0.25 | 272 | 350 | 86.6% | 25.8% | 3.36x | 3.9x |
-| 0.25-0.50 | 427 | 541 | 90.9% | 50.7% | 1.79x | none |
-| 0.50+ | 422 | 527 | 97.0% | 82.5% | 1.17x | none |
+| window occupancy | images | ears | real | null | lift | ceiling | **gap** | headroom kept |
+|---|---|---|---|---|---|---|---|---|
+| 0.00-0.10 | 66 | 78 | 78.2% | 9.6% | 8.13x | 10.4x | **+68.6** | 75.9% |
+| 0.10-0.25 | 272 | 350 | 86.6% | 25.8% | 3.36x | 3.9x | +60.8 | 81.9% |
+| 0.25-0.50 | 427 | 541 | 90.9% | 50.7% | 1.79x | 2.0x | +40.2 | 81.5% |
+| 0.50+ | 422 | 527 | 97.0% | 82.5% | 1.18x | 1.2x | +14.5 | 82.9% |
 
-The lift sits near its ceiling in the only bands with power -- 8.13x against
-a possible 10.4x. Any band whose null exceeds ~50% has no power regardless of
-what its faces look like, so the null belongs in every row of any report of
-this kind.
+**Compare the gap, not the lift -- and this corrects a claim made above.**
+A lift cannot exceed 1/null, so lifts from bands with different nulls are not
+comparable: the 0.50+ band reads 1.18x against a *ceiling* of 1.21x, which is
+placement capturing nearly all the room it had, not placement failing. In
+points it is **+14.5 on 527 ears**, which is not "almost nothing". So the
+earlier statement that in head-filling frames composition explains almost all
+of it is **too strong**: placement carries real information in every band,
+and the lift metric exaggerates the band dependence because its ceiling
+collapses with the null. What survives, and is what head-ness actually
+predicts, is that the gap widens monotonically as scenes get sparser --
++14.5 to +68.6 points.
+
+Ear_Landmarker reached the same correction independently on their own band
+table (+6.4 points on head-filling frames against +47.8 on small-head ones,
+with per-row ceilings of 2.42 / 1.75 / 1.38 / 1.07) after being handed the
+ceiling argument, and added the statistic that does *not* flatter the
+conclusion: headroom captured runs mildly the **other** way, 75.9% in the
+sparsest band here against 82.9% in the densest. That is what "sparse scenes
+are harder to detect in" predicts and it is not evidence for composition,
+since the null being divided out *is* composition. They also discarded a
+"share of ceiling achieved" column on finding it algebraically identical to
+coverage -- a tautology dressed as an analysis, and worth recording as a
+near-miss.
 
 **And the tail specifically is only weakly head-seeking.** The population the
 ablation used is the low-score tail, not the ordinary crop, and that gap was
