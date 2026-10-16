@@ -2002,9 +2002,12 @@ Prompted by a handoff from `trainable_blazeface` (via Ear_Landmarker,
 `handoff/t4_stage1/` at commit 3d17c65), which measured a fine-tuned stage 1
 end to end on this corpus: ears no crop covers fall 1,301 -> 530 of 15,359,
 and converting that into delivered ears at matched precision yields roughly
-nothing, because the extra crops carry extra non-ear scene. Their own
+nothing, because the extra crops carry extra non-ear scene. The handoff's
 conclusion is that the cheapest stage-1 win is `FACE_CROP_THRESHOLD` rather
-than a new model. That is right, and it goes further than they put it.
+than a new model. That framing is Ear_Landmarker's rather than
+`trainable_blazeface`'s -- worth stating, because three sessions passing one
+package made attribution drift in both directions -- and when measured it
+turns out to be wrong.
 
 Their nine configurations swept the face threshold only on their own
 checkpoint, holding stock at its fitted 0.2. On stock MediaPipe, 900 `val_v2`
@@ -2026,6 +2029,46 @@ threshold finds faces the shipped constant discards" are not separated by
 anything in that handoff. The missing arm is stock at 0.10 and 0.05 through
 the same paired harness; their `--ckpt` and `--face-thresh-*` flags already
 support it.
+
+**And it does not convert, so the constant is not a win either.** Run end to
+end on `val_v2`'s 2,414 ears, plain path, stock at face threshold 0.20
+against 0.10, with 0.10 interpolated onto 0.20's own precision points:
+
+| gate | matched precision | recall @ 0.20 | @ 0.10 | delta |
+|---|---|---|---|---|
+| 0.60 | 0.623 | 0.717 | 0.721 | +0.45 pp |
+| 0.65 | 0.681 | 0.708 | 0.707 | -0.06 pp |
+| 0.70 | 0.723 | 0.694 | 0.697 | +0.27 pp |
+| 0.75 | 0.770 | 0.682 | 0.675 | -0.74 pp |
+| **0.80 (deployed)** | 0.821 | 0.653 | 0.639 | **-1.40 pp** |
+| 0.85 | 0.874 | 0.604 | 0.580 | **-2.40 pp** |
+
+Coverage improves about as far as it can -- ears in images where the face
+stage found nothing go **29 to 1** -- and raw recall rises 0.653 to 0.669 at
+the deployed gate. At matched precision that is a wash at loose operating
+points and a 1.4 to 2.4pp *loss* at the ones this pipeline actually ships.
+Lowering `FACE_CROP_THRESHOLD` buys crops, and the crops cost more precision
+than the ears inside them are worth. **So the "cheapest stage-1 win is a
+constant" framing is wrong in the same way, and for the same reason, as the
+fine-tuned detector it was contrasted with.** `FACE_CROP_THRESHOLD` stays at
+0.2.
+
+One side effect worth connecting to the flicker section above: at the
+deployed gate, midline false positives per image go 0.022 to 0.056, two and a
+half times, because more crops means more nose and brow passing under the ear
+model. A lower face threshold makes the nose-bridge artefact worse.
+
+`trainable_blazeface` then measured the half of this I could not. Stock's
+*face* recall is saturated and is already there at its shipped 0.20 -- 0.4860
+at 0.20, 0.4884 at 0.10, 0.4870 at 0.05 on 4,848 GT faces -- and its 8-16 px
+face recall never leaves 0.085-0.116 against their 0.474-0.578. No threshold
+closes a 4-5x gap. So the coverage this constant buys is **not** face recall:
+of 39,822 of their detections between 0.10 and 0.20 that miss face ground
+truth, an independent third detector confirms 19 as faces, 0.0%. The gain is
+non-face crops that happen to contain ears, which is why coverage moves while
+face recall does not -- and why it does not survive a precision match. Their
+face-detection component is a separate thing that a constant cannot reach,
+and nothing measured here bears on it.
 
 This is coverage, not delivered recall at matched precision, and that
 distinction is the whole lesson of their result: 3.69 crops per image instead
