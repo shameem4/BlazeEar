@@ -129,7 +129,8 @@ In short: `trainable_blazeface` made BlazeFace trainable; BlazeEar uses that fou
   The queued A/B for the augmentation lever, not started. Two sequential
   arms, control at the old scale range and treatment at the new one, under
   one checked-out tree via `BLAZEEAR_AUGMENT_SCALE_{LOW,HIGH}` -- because
-  `train_blazeear.py` has no `--seed`, so a single run cannot be compared
+  `train_blazeear.py` now has `--seed`, defaulting to None so prior runs are
+  described correctly as unseeded. A single unseeded run cannot be compared
   against the shipped checkpoint. Writes an as-run snapshot and checksums
   before launching anything, and runs under `systemd-run --user` so the
   output lands in the journal and survives a reboot.
@@ -2207,6 +2208,69 @@ warning stands and is why neither model's own metrics could have settled
 this: a face detector's precision metric and this pipeline's objective
 disagree by construction, because a profile or partial face that face GT
 scores as a false positive is exactly the crop that contains an ear.
+
+### The 0-32 px limit survives an independent representation
+
+`trainable_blazeface` flagged the confusion that cost them most of a day, and
+it is the same shape as this repo's load-bearing claim. They concluded their
+data was the limit -- 39% of faces under 8 px, below the anchor stride, six
+configurations failing to beat stock -- when in fact every ground-truth box
+was being assigned to *both* anchor grids, so most positive targets demanded
+a detection at a scale the model could not answer. The faces were resolvable;
+the **targets** were not. Identical symptoms, opposite fixes, and inspection
+cannot separate them. What separated them was scoring a model they trusted
+against their own objective and watching a known-good detector "fail" it.
+
+The parallel here is sharp, because this repo's own anchor measurements point
+the same way. In the 0-32 px band the median best-anchor IoU is **0.425**,
+below the 0.5 matching threshold, and **57.2% of 0-24 px ears cannot reach
+IoU 0.5 against any prior** -- against 56.9% of oracle-crop rescued ears that
+produced no box at all. Two numbers that close together invite exactly the
+wrong conclusion in either direction.
+
+So `check_resolvability.py` hands the *same* crops to the fine-tuned YOLOv11
+ear detector, which shares this repo's human GT labels but none of its
+anchors, target assignment or training recipe. 2,193 human-labelled ears in
+2,033 `crops_val` images, localised meaning IoU >= 0.5 against the GT box:
+
+| band (px in a 256 crop) | n | stage 2 | referee | ref only | mine only | McNemar |
+|---|---|---|---|---|---|---|
+| 0-24 | 59 | 28.8% | 37.3% | 22.0% | 13.6% | p=0.38 |
+| 24-32 | 64 | 46.9% | 45.3% | 14.1% | 15.6% | p=1.00 |
+| 32-48 | 250 | 77.6% | 74.8% | 13.2% | 16.0% | p=0.48 |
+| 48-64 | 698 | 91.3% | 92.1% | 5.6% | 4.7% | |
+| 64-88 | 909 | 96.4% | 94.8% | 2.1% | 3.6% | |
+| 88+ | 213 | 87.3% | 85.0% | 5.6% | 8.0% | |
+| **all** | **2193** | **88.5%** | **87.7%** | 5.7% | 6.4% | p=0.39 |
+
+**No significant difference in any band, and the referee fails the small
+bands too.** It localises 37.3% of the 0-24 px band and misses 62.7% of it.
+The prediction recorded in the script -- that the referee should localise
+materially more of 0-32 px if the anchor numbers mean what they look like --
+did not happen.
+
+The referee's failure is the stronger half of this, because it was
+*advantaged*. Ultralytics runs at 640 by default, so it saw each crop at 640
+where stage 2 sees 256: an ear measured at 0-24 px in this table was 0-60 px
+in the referee's frame, two and a half times the linear resolution, on an
+architecture with its own anchor-free head. It still could not find two
+thirds of them. An information limit is the reading that survives.
+
+**One process note, because it nearly went the other way.** A 400-crop
+subsample run first showed the 0-24 px band at 27.3% stage 2 against 9.1%
+referee -- the opposite direction, and it would have read as "the referee
+cannot see small ears either, decisively". The full set reversed the sign.
+n=11 in that band was noise, and had the subsample pointed the convenient way
+it is the number that would have been quoted.
+
+**What this does and does not settle.** It does not vindicate the anchor
+geometry: best-anchor IoU 0.425 in that band is a real representational
+weakness and the per-prior mining cap that addresses it measured -0.87 to
+-1.09pp at p=0.178, which is unresolved pending the noise floor. What it
+settles is narrower and was the question asked: the 0-32 px band is not
+merely mis-targeted, because a different representation at higher effective
+resolution fails on the same ears. `score_rescued_ears.py`'s result is not
+an artefact of this repo's anchors.
 
 ### Crop placement carries ear information, and it is not just composition
 

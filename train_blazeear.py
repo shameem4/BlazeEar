@@ -34,11 +34,13 @@ at, so changing that constant between a train and an evaluate is silent.
 
 import argparse
 import os
+import random
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 import time
 from pathlib import Path
 from collections.abc import Sized
 from typing import Callable, Dict, List, Optional, TypedDict, cast
+import numpy as np
 
 import torch
 import torch.nn as nn
@@ -984,6 +986,16 @@ def main():
     parser.set_defaults(use_focal_loss=True)
     
     # System arguments
+    parser.add_argument('--seed', type=int, default=None,
+                        help='Seed Python, NumPy and torch RNGs, and the '
+                             'DataLoader shuffle. Default None keeps the '
+                             'historical unseeded behaviour, so runs before '
+                             'this flag existed are not reproducible. NOTE: '
+                             'this seeds the main process and the shuffle, '
+                             'not each worker\'s augmentation RNG, so two '
+                             'runs at the same seed are close but not '
+                             'bit-identical. It is enough to measure the '
+                             'seed-to-seed spread, which is what it is for.')
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device (cuda or cpu)')
     parser.add_argument('--num-workers', type=int, default=DEFAULT_NUM_WORKERS,
@@ -1025,6 +1037,15 @@ def main():
 
     args = parser.parse_args()
     val_compute_map = not args.no_val_map
+
+    if args.seed is not None:
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+        torch.manual_seed(args.seed)
+        torch.cuda.manual_seed_all(args.seed)
+        print(f'Seeded RNGs with {args.seed} '
+              '(main process and shuffle; worker augmentation RNG is not '
+              'seeded, see --seed help)')
     
     # Check device
     if args.device == 'cuda' and not torch.cuda.is_available():
