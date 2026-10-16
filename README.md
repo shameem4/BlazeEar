@@ -2136,15 +2136,60 @@ mixture dominated by head-filling frames, so any placement ablation reported
 in aggregate on this corpus is mostly measuring composition. The small-face
 band is where the answer lives, and that is where it should be reported.
 
-Scope, because it is easy to overclaim this. What is measured here is the
-ordinary face-stage crop -- stock at `FACE_CROP_THRESHOLD` 0.2, 1.97 windows
-per image -- against a random null. It is **not** the fine-tuned detector's
-0.10-0.20 low-score tail, which is the population their ablation used and a
-different one. So this establishes that face-box placement on this corpus
-carries real ear information beyond composition, strongest where heads are
-small; it does not by itself establish that the tail does. It does establish
-that the confound is band-dependent, which is what their ablation needs to be
-re-reported against.
+**Band on occupancy, not face size.** `trainable_blazeface` refined this
+after seeing the table above, and the refinement is right. What saturates the
+null is the fraction of frame the windows cover, which is size TIMES count --
+their own corpus is all small heads, my 0.00-0.20 band by construction, and
+its null still sits at 52.5% because crowd frames carry many small heads
+instead of one large one. Size is a proxy that fails on crowds; occupancy is
+the thing. Re-banded on it, with each band's power ceiling (1/null) printed
+so a reader can see which rows could have shown an effect at all:
+
+| window occupancy | images | ears | real | null | lift | ceiling |
+|---|---|---|---|---|---|---|
+| 0.00-0.10 | 66 | 78 | 78.2% | 9.6% | **8.13x** | 10.4x |
+| 0.10-0.25 | 272 | 350 | 86.6% | 25.8% | 3.36x | 3.9x |
+| 0.25-0.50 | 427 | 541 | 90.9% | 50.7% | 1.79x | none |
+| 0.50+ | 422 | 527 | 97.0% | 82.5% | 1.17x | none |
+
+The lift sits near its ceiling in the only bands with power -- 8.13x against
+a possible 10.4x. Any band whose null exceeds ~50% has no power regardless of
+what its faces look like, so the null belongs in every row of any report of
+this kind.
+
+**And the tail specifically is only weakly head-seeking.** The population the
+ablation used is the low-score tail, not the ordinary crop, and that gap was
+the one real hole in the argument. Measured on stock's own 0.10-0.20 tail --
+the boxes `FACE_CROP_THRESHOLD` admits when lowered, so the population that
+governs the decision above:
+
+| window occupancy | images | ears | real | null | lift | ceiling |
+|---|---|---|---|---|---|---|
+| 0.00-0.10 | 71 | 85 | 22.4% | 9.9% | **2.26x** | 10.1x |
+| 0.10-0.25 | 247 | 311 | 32.2% | 25.8% | 1.24x | 3.9x |
+| 0.25-0.50 | 279 | 366 | 50.5% | 39.6% | 1.28x | 2.5x |
+| 0.50+ | 247 | 311 | 80.4% | 69.0% | 1.17x | none |
+
+Compared at equal power -- both sparsest bands have a ceiling near 10x --
+the tail reaches 2.26x where ordinary crops reach 8.13x, and covers 22.4% of
+ears where they cover 78.2%. So the tail is **not** a shotgun: 2.26x is well
+above chance and the lift is above unity in every band. But it is roughly a
+quarter as well-placed as a confident face box. That sits between the two
+prior results: above `trainable_blazeface`'s 0.69-0.98x, which their own
+analysis shows was underpowered at a 52.5% null, and far below the aggregate
+ninefold, which this section's mixture finding says to distrust.
+
+**This is also the mechanism behind the matched-precision loss above**, which
+had been a bare result. A lower face threshold admits boxes that are about
+four times worse at finding ears per box. More crops, each much less likely
+to contain an ear, is exactly a precision cost exceeding the recall gain --
+the -1.40pp and the 2.26x-against-8.13x are the same fact measured twice.
+
+Two scope limits. This is **stock's** tail, not the fine-tuned detector's; a
+model trained to find more faces may well have a better-placed tail, so the
+head-ness question stays open for their checkpoint and should be settled by
+training the objective rather than by mining anyone's tail. And the sparse
+band is 85 ears, so 2.26x is suggestive rather than tight.
 
 ### Where this can go next, and what it is worth
 

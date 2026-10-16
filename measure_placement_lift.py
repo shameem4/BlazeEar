@@ -45,6 +45,15 @@ from utils.config import (FACE_CROP_EXPAND, FACE_CROP_MAX_FACES,
 
 BANDS = ((0.00, 0.20), (0.20, 0.30), (0.30, 0.45), (0.45, 10.0))
 
+# Occupancy bands, in fraction of frame area the windows cover. This is the
+# axis that actually governs the null, and it is NOT face size:
+# `trainable_blazeface` found a small-head crowd corpus whose null still sat
+# at 52.5%, because many small heads occupy as much frame as one large one.
+# Size times count is the thing; size alone is a proxy that fails on crowds.
+# A band whose null exceeds ~0.5 has no power to show a lift regardless of
+# what its faces look like, so the null is printed in every row.
+OCCUPANCY = ((0.00, 0.10), (0.10, 0.25), (0.25, 0.50), (0.50, 10.0))
+
 
 def human_ears(path):
     out = collections.defaultdict(list)
@@ -88,14 +97,23 @@ def measure(args):
                 cv2.cvtColor(image, cv2.COLOR_BGR2RGB)).cpu().numpy()
         if not len(faces):
             continue
+        # Optionally restrict to a score band -- the low-score TAIL is a
+        # different population from the confident detections, and the
+        # head-ness argument is about the tail specifically.
+        keep = [f for f in faces
+                if args.score_min <= float(f[-1]) < args.score_max]
+        if not keep:
+            continue
         windows = [crop_window(f, FACE_CROP_EXPAND, image.shape)
-                   for f in faces[:args.max_faces]]
-        # How much of the frame the head occupies: the confound's axis.
-        face_frac = max(f[2] - f[0] for f in faces[:args.max_faces]) \
+                   for f in keep[:args.max_faces]]
+        face_frac = max(f[2] - f[0] for f in keep[:args.max_faces]) \
             / image.shape[0]
+        area = float(image.shape[0]) * image.shape[1]
+        occupancy = min(1.0, sum(s * s for _, _, s in windows) / area)
         null = np.mean([covered(random_windows(windows, image.shape, rng),
                                 ears) for _ in range(args.draws)])
-        rows.append({'face_frac': face_frac, 'n_ears': len(ears),
+        rows.append({'face_frac': face_frac, 'occupancy': occupancy,
+                     'n_ears': len(ears),
                      'real': covered(windows, ears), 'null': null,
                      'n_win': len(windows)})
     return rows
@@ -105,32 +123,45 @@ def report(rows, args):
     print(f'\n{len(rows)} images with a face, '
           f'{sum(r["n_ears"] for r in rows)} ears, '
           f'{args.draws} random draws per image, expand {FACE_CROP_EXPAND}')
-    print('\nband is the largest face box side as a fraction of frame height')
-    print('  face/frame     images   ears   real cover   null cover   lift')
-    print('  ' + '-' * 62)
-    for lo, hi in BANDS:
-        g = [r for r in rows if lo <= r['face_frac'] < hi]
-        if not g:
-            continue
-        ears = sum(r['n_ears'] for r in g)
-        real = sum(r['real'] for r in g) / ears
-        null = sum(r['null'] for r in g) / ears
-        lab = f'{lo:.2f}-{hi:.2f}' if hi < 10 else f'{lo:.2f}+'
-        print(f'  {lab:<12} {len(g):7d} {ears:6d}   {100*real:9.1f}%   '
-              f'{100*null:9.1f}%   {real/null if null else float("inf"):5.2f}x')
+    def table(title, key, bands, fmt):
+        print(f'\n{title}')
+        print('  band          images   ears   real cover   null cover   '
+              'lift   power')
+        print('  ' + '-' * 72)
+        for lo, hi in bands:
+            g = [r for r in rows if lo <= r[key] < hi]
+            if not g:
+                continue
+            ears = sum(r['n_ears'] for r in g)
+            real = sum(r['real'] for r in g) / ears
+            null = sum(r['null'] for r in g) / ears
+            lift = real / null if null else float('inf')
+            # The largest lift a band could possibly report is 1/null.
+            ceiling = 1 / null if null else float('inf')
+            power = 'none' if null > 0.5 else f'<={ceiling:.1f}x'
+            print(f'  {fmt(lo, hi):<12} {len(g):7d} {ears:6d}   '
+                  f'{100*real:9.1f}%   {100*null:9.1f}%   {lift:5.2f}x  '
+                  f'{power:>6}')
+
+    table('banded by LARGEST FACE / frame height', 'face_frac', BANDS,
+          lambda lo, hi: f'{lo:.2f}-{hi:.2f}' if hi < 10 else f'{lo:.2f}+')
+    table('banded by WINDOW OCCUPANCY (fraction of frame area covered) -- '
+          'the axis\n  that actually governs the null, and the one to report '
+          'against', 'occupancy', OCCUPANCY,
+          lambda lo, hi: f'{lo:.2f}-{hi:.2f}' if hi < 10 else f'{lo:.2f}+')
     ears = sum(r['n_ears'] for r in rows)
     real = sum(r['real'] for r in rows) / ears
     null = sum(r['null'] for r in rows) / ears
-    print('  ' + '-' * 62)
-    print(f'  {"all":<12} {len(rows):7d} {ears:6d}   {100*real:9.1f}%   '
+    print(f'\n  {"ALL":<12} {len(rows):7d} {ears:6d}   {100*real:9.1f}%   '
           f'{100*null:9.1f}%   {real/null:5.2f}x')
     print(f'\n  mean windows per image: '
           f'{np.mean([r["n_win"] for r in rows]):.2f}')
-    print('\nReading: composition predicts the lift collapses toward 1.0 in '
-          'the\nhead-filling bands and is carried by small faces being easy '
-          'to miss at\nrandom. Head-ness predicts a lift well above 1.0 that '
-          'survives where\nheads are small and a random window lands on '
-          'background.')
+    print('\nReading: a band whose null is above ~50% cannot show a large '
+          'lift even if\none is present -- the `power` column gives each '
+          'band\'s ceiling, 1/null.\nOnly the sparse bands carry evidence. '
+          'Composition predicts the lift sits at\n1.0 once occupancy is '
+          'controlled; head-ness predicts it survives in the\nsparse bands, '
+          'where a random window lands on background.')
 
 
 def build_parser():
@@ -142,6 +173,10 @@ def build_parser():
     p.add_argument('--draws', type=int, default=20)
     p.add_argument('--limit', type=int, default=1200)
     p.add_argument('--seed', type=int, default=0)
+    p.add_argument('--score-min', type=float, default=0.0,
+                   help='keep only face detections at or above this score')
+    p.add_argument('--score-max', type=float, default=1.01,
+                   help='...and below this one; 0.10-0.20 is the tail')
     p.add_argument('--device', default='cuda')
     return p
 
