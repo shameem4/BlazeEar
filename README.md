@@ -10,7 +10,10 @@ your browser, on your device. No image leaves the page.
 > An ear detector on MediaPipe BlazeFace, two stages: find a face, crop around
 > it, find ears in the crop. It works -- 0.78 crop-space mAP@0.5, 72% recall
 > end to end -- and most of what is written below is the record of finding out
-> *why* it does not work better.
+> *why* it does not work better. Read every figure here as carrying about a
+> point of run-to-run noise: two trainings identical but for their random
+> seed differ by 1.05pp on crop-space recall, which was the last thing
+> measured and should have been the first.
 >
 > The short version of that record: **the second stage localises about 88% of
 > ears and reports 72% of them.** The gap is almost all scoring, not finding.
@@ -50,6 +53,15 @@ your browser, on your device. No image leaves the page.
 > 62.7% of the same 0-24 px ears**, with no significant difference between the
 > two in any size band. The band is information-limited *and* the anchors are
 > weak there; the two being separable is what makes the first claim stand.
+>
+> The last measurement taken was the one that should have come first: the
+> run-to-run noise floor. Two trainings identical but for their seed differ by
+> about a point, which is larger than most of the training-side effects
+> argued over above, and it retired the evidence behind two levers that had
+> already been reverted on it. Nothing here was invalidated by that -- the
+> findings that carried the project are 10 to 60 points, not one -- but the
+> ordering is the lesson: a noise floor costs 1.5 GPU-hours and decides
+> whether any of the cheap experiments mean anything.
 >
 > The habit worth stealing is in the commit log rather than the code. Claims
 > here carry the measurement that produced them, retractions stay in the text
@@ -980,9 +992,11 @@ Areas that naturally follow from the current pipeline:
 - Cap hard-negative mining per feature level. 57% of the anchor budget takes
   global mining pressure while receiving 7.7% of the positives. **Built and
   measured since this list was written, and it did not pay** -- -0.87 to
-  -1.09pp at p=0.178, implementation kept and defaulted off. Whether that is
-  a real loss or noise is the first thing the seed runs decide, so this is
-  not closed, it is blocked. Same section.
+  -1.09pp at p=0.178, implementation kept and defaulted off. The seed runs
+  have since decided it: **the effect is smaller than the gap between two
+  runs that differ only in their seed**, so it is noise as measured, and
+  resolving it properly would cost multiple seeds per arm. Closed on cost
+  rather than on a result. Same section.
 - Export to TFLite for edge deployment. ONNX is done: `export_onnx.py`,
   and `docs/` carries the two graphs the browser demo runs.
 - Price 320 px. 256 paid, the grid argument keeps scaling, and the
@@ -1961,8 +1975,12 @@ hygiene, and B1's intended generalisation benefit cannot appear in a
 validation split that shares the training scale distribution. Neither is
 adopted.
 
-**The measurement that should come before any further arm** is two baseline
-seeds, 1.5 GPU-hours. Every figure here, the -1.23pp that drove the revert
+**The measurement that should come before any further arm** was two baseline
+seeds, 1.5 GPU-hours. **It has now been run, and the answer is about a
+point** -- larger than every effect in this section, including the -1.23pp
+that drove the revert. See "The noise floor, finally measured" below; the
+rest of this paragraph is kept as it was written, because its conditional
+turned out to pick the unflattering branch. Every figure here, the -1.23pp that drove the revert
 included, is read against a run-to-run noise floor nobody has measured.
 `train_blazeear.py` now takes `--seed`, so the two runs are possible; until
 they land, every figure in this section is still one run against one run.
@@ -2199,6 +2217,76 @@ partial face that the face GT scores as a false positive is exactly the crop
 that contains an ear. Every constant fitted against stock is in stock's
 units, and the optimum for a swapped detector cannot be derived from either
 model's own metrics -- it has to be swept against delivered ears.
+
+### The noise floor, finally measured, and it swallows both reverted levers
+
+Two runs of the shipped crop-model recipe, identical in every respect except
+the seed, 100 epochs each, 1h33m wall clock on one GPU. Scored with the A/B's
+own harness rather than on mAP, because **the A/B's number is band recall at
+the deployed gate on `crops_val`'s 2,193 human ears, and the in-training
+mAP@0.5 the runs print is a different metric on a different path.** Comparing
+the cap's -0.9pp against an mAP spread would have been comparing unlike
+things, and the in-training spread (0.7369 against 0.7431, 0.62pp) is both a
+different unit and a max over 100 epochs, so it understates a single epoch's
+variation.
+
+| band (px in a 256 crop) | n | seed 1 | seed 2 | shipped | seed 1 - seed 2 |
+|---|---|---|---|---|---|
+| 0-32 | 123 | 2.4% | 4.1% | 3.3% | -1.6 |
+| 32-48 | 250 | 34.4% | 33.6% | 33.2% | +0.8 |
+| 48-64 | 698 | 75.1% | 76.8% | 76.1% | -1.7 |
+| **64-80 (mode)** | 758 | 88.7% | 88.1% | 89.8% | +0.5 |
+| 80-96 | 230 | 81.3% | 85.7% | 84.3% | -4.3 |
+| 96-120 | 88 | 70.5% | 72.7% | 70.5% | -2.3 |
+| 120+ | 46 | 60.9% | 67.4% | 71.7% | -6.5 |
+| **all** | **2193** | **71.2%** | **72.3%** | **72.4%** | **-1.0** |
+
+FP per image 0.11 / 0.11 / 0.12. Overall recall differs by **-1.05pp**, 95%
+CI over images [-2.14, 0.00].
+
+**Both reverted levers are smaller than this.** The negative-mining cap
+measured -0.9pp overall and -1.2pp on the mode band; B1 measured -0.4pp
+overall and -1.2pp on the mode band; the end-to-end read of the cap was -1.09pp.
+Every one of those sits inside the gap between two runs that differ only in
+their random seed. **So the three-arm A/B did not establish that the cap
+hurts. It established nothing, in either direction**, which is the outcome
+this README wrote down in advance as the thing the missing measurement would
+decide, and it is the unflattering branch of that prediction. The decision to
+revert was taken on evidence that cannot carry it. The levers stay reverted --
+not because they were shown to hurt, but because nothing was shown either
+way and the simpler configuration wins a tie.
+
+**And the per-band figures are worse than the headline.** The 80-96 band
+moves 4.3pp between seeds and 120+ moves 6.5pp on 46 ears. Any claim in this
+README that rests on a single band moving a few points, in any section,
+should be read against those numbers rather than against its own p-value.
+
+**What this costs going forward.** A single-run A/B cannot detect anything
+under about 2pp here, which is larger than every training-side effect this
+project has attempted. Either an arm gets multiple seeds -- 1.5 GPU-hours per
+seed, so a two-seed three-arm comparison is 9 GPU-hours rather than 2.2 -- or
+training changes stop being evaluated this way. The honest version of the
+second option is that most of these levers are not worth 9 GPU-hours to
+resolve.
+
+**One thing it says about the shipped number.** The shipped checkpoint sits
+at the top of the three draws on this metric: 72.4% against 71.2% and 72.3%.
+The "stage 2 reports 72%" half of the localise-88%-report-72% framing is this
+same crop-space measurement, so it is one draw from a distribution whose
+spread is about a point, and the central estimate is nearer 72.0% than 72.4%.
+The end-to-end 72% quoted at the top is a different measurement on a
+different split and is not what these seeds measured; it should be assumed to
+carry noise of the same order, but that has not been checked. That
+does not change any conclusion here -- the localise-88%-report-72% gap is
+far larger than a point -- but the figure should be read as 72% plus or minus
+a point rather than as 72.4%.
+
+**n=2, which is a difference and not a variance estimate.** One draw from
+the seed-difference distribution, with no way to bound how much wider it
+gets. `trainable_blazeface`'s warning against quoting a sigma off n=3 applies
+more strongly here: the usable statement is the order of magnitude, which is
+"about a point", and that is already enough to retire both levers' evidence.
+A third and fourth seed would sharpen it and would not change the decision.
 
 ### One box tracker, in both languages, and One Euro beats the EMA on measurement
 
@@ -2822,7 +2910,13 @@ reaches them.
 
 In rough order of value per unit of cost:
 
-1. **Two baseline seeds.** ~1.5 GPU-hours. The `--seed` flag this needed
+1. ~~**Two baseline seeds.**~~ **Done, and it closes items it was blocking
+   rather than unblocking them.** Two runs differing only in seed differ by
+   1.05pp on the A/B's own metric, 95% CI [-2.14, 0.00], which is larger than
+   the cap's -0.9pp and B1's -0.4pp. Neither A/B established anything in
+   either direction. A single-run comparison cannot detect anything under
+   about 2pp here, so an arm now costs multiple seeds or does not get run.
+   Original note follows. ~1.5 GPU-hours. The `--seed` flag this needed
    now exists, defaulting to None so every run predating it is still
    correctly described as unseeded; it seeds the main process and the
    DataLoader shuffle but not each worker's augmentation RNG, which is enough
