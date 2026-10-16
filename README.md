@@ -63,6 +63,14 @@ your browser, on your device. No image leaves the page.
 > ordering is the lesson: a noise floor costs 1.5 GPU-hours and decides
 > whether any of the cheap experiments mean anything.
 >
+> One structural note about how that happened. Three write-ups in this
+> project's last day were overturned by someone *running* them rather than
+> reading them, and in a parallel session three more were overturned the same
+> way -- and in all six cases the person who ran it was not the person who
+> wrote it. **Neither session overturned its own confident write-up.** Code
+> review caught none of them; execution by a second party caught all of them.
+> That is a stronger claim about process than anything about ears in here.
+>
 > The habit worth stealing is in the commit log rather than the code. Claims
 > here carry the measurement that produced them, retractions stay in the text
 > next to what they retract, and the count of mechanisms that sounded right
@@ -1582,13 +1590,44 @@ together they do" is a statement about seed choice as much as about the
 levers: the significance the A/B reported overall is the significance two
 identical configurations reach. That claim is withdrawn.
 
-The mode-band result survives better and is not withdrawn, because its split
+The mode-band result looked like it survived, on the argument that its split
 is more lopsided than the seed pair's on the same band -- 31 against 13
-versus 20 against 16, on comparable discordance of 44 and 36. But it is one
-of seven band comparisons in a family whose demonstrated per-band false
-positive rate at 0.05 is **1 in 7 from seed alone**, which is exactly what
-chance predicts and exactly why it cannot be read as "the solid one". Read it
-as suggestive and uncorrected.
+versus 20 against 16, on comparable discordance of 44 and 36. **That argument
+does not hold, and the flaw in it is visible in the table above.** Expressing
+each split as standard deviations from even, so that different discordance
+counts are comparable:
+
+| comparison | split | discordant | SD from even | p |
+|---|---|---|---|---|
+| **arm**, mode band 64-80 | 31/13 | 44 | **2.71** | 0.0096 |
+| seed, mode band 64-80 | 20/16 | 36 | 0.67 | 0.618 |
+| **seed, 80-96 (nothing was done)** | 5/15 | 20 | **2.24** | 0.041 |
+| seed, overall | 65/88 | 153 | 1.86 | 0.075 |
+
+The argument was row 1 against row 2 -- 2.71 SD against 0.67 SD on the same
+band. But **row 2 is one draw from the seed distribution on that band, not
+its width**, and with a single seed pair there is no way to separate "seeds
+barely move this band" from "these two seeds happened to land close on this
+band". Row 3 answers it: the same seed pair produced a **2.24 SD** excursion
+on 80-96 px, where nothing was done to the model at all. The survivor is 2.71
+SD. **The gap between a thing these seeds demonstrably did and the thing
+worth keeping is 0.47 SD**, and both figures are the most extreme of seven
+band comparisons, which is the right way to compare them and leaves them a
+coin's width apart.
+
+So the honest status is **unresolved**: the only evidence is the most extreme
+of seven comparisons, at an excursion this repo's own seeds reached on a
+different band. Not "the solid one", not a survivor, not suggestive -- a
+thing to re-test. `trainable_blazeface` made this argument from the numbers
+above after being asked to check whether the lopsidedness case was weaker
+than it had been given credit for; it was, and the asking is what made row 3
+legible, because it had been sitting in the table unused.
+
+**The decisive test is one training run.** What is needed is the seed
+distribution on the mode band rather than one draw from it: a third seed
+gives three within-arm pairs on 64-80. If within-arm excursions there stay
+under about 1 SD across those pairs, the arm's 2.71 means something. If any
+reaches 2, it does not.
 
 Nothing about the disposition changes -- the levers were reverted because
 nothing here was a gain, and that still holds. What changes is that this
