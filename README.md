@@ -5,6 +5,44 @@
 **[Live demo](https://shameem4.github.io/BlazeEar/)** &mdash; runs entirely in
 your browser, on your device. No image leaves the page.
 
+> ### Where this ended up, and how it got there
+>
+> An ear detector on MediaPipe BlazeFace, two stages: find a face, crop around
+> it, find ears in the crop. It works -- 0.78 crop-space mAP@0.5, 72% recall
+> end to end -- and most of what is written below is the record of finding out
+> *why* it does not work better.
+>
+> The short version of that record: **the second stage localises about 88% of
+> ears and reports 72% of them.** The gap is almost all scoring, not finding.
+> Chasing it produced a long run of plausible mechanisms that measurement
+> refuted -- a score-head fix, wider scale augmentation, a per-prior mining
+> ceiling, three separate geometric vetoes, a better upstream face detector
+> from a sibling project. Every one was reasonable. Every one came back null
+> or negative, and the nulls are the useful part, because each replaced a story
+> with a number.
+>
+> What actually moved the needle was never a model change. It was calibration
+> (giving the fused and single-frame paths their own measured thresholds,
+> +0.11 F1), resolution (256 px input over 128), and -- most recently --
+> **using time**: the browser now tracks ears across frames with hysteresis
+> instead of re-deciding every frame, which recovers detections a lower
+> threshold could not buy without tripling false positives.
+>
+> Three things turned out to be structural rather than fixable. The 0-32 px
+> band is information-limited: the median ear is 24 real pixels, and handed
+> 767 ears that a better face stage rescued, in the best crop that stage could
+> possibly produce, **1 of 332 in that band scored above the gate** -- and 57%
+> of them produced no box at all. Stage-1 coverage is not the bottleneck;
+> neither is stage-2 calibration, for those ears. And every cue derived from
+> the face box -- crop geometry, face keypoints, a lower face threshold --
+> fails in exactly the conditions that create the problem, because it fails
+> together with the box it came from.
+>
+> The habit worth stealing is in the commit log rather than the code. Claims
+> here carry the measurement that produced them, retractions stay in the text
+> next to what they retract, and the count of mechanisms that sounded right
+> and were wrong is kept deliberately. It is about two in three.
+
 **Write-ups:**
 [Measuring the whole head, privately, in the browser](https://www.linkedin.com/m/pulse/measuring-whole-head-privately-browser-shameem-hameed-ep0mc)
 &middot;
@@ -2302,6 +2340,64 @@ where before the tracker it gated at 0.85. That path now raises the threshold
 to `TTA_SCORE_THRESHOLD` around its one call and restores it afterwards. The
 tracker commit introduced this and the five behaviour cases could not have
 caught it, because they exercise the tracker and this path does not use it.
+
+### The position proxy, checked against two independent detectors
+
+Everything the clips section concludes rests on splitting candidates by
+position and treating midline as mostly-false and lateral as mostly-true. That
+proxy had never been checked against anything that knows what an ear is.
+`check_referees.py` checks it on frames neither referee nor BlazeEar has
+trained on:
+
+* **`yolov11_ear_detector.pt`**, a fine-tuned YOLOv11. It shares human GT
+  labels with the crop model but not pseudo-labels -- `crops_train.csv` is
+  GT / GT+EAR / GT+REVIEW / NEGATIVE / IGNORE, with no POSE and no raw YOLO
+  rows, and GT+REVIEW (YOLO-proposed, human-confirmed) is 0.9% of it. Same
+  corpus, different architecture. An earlier note in this file called this
+  detector too contaminated to use, on the basis that it had proposed 29% of
+  the rows in *a* split; that split was not the shipped crop model's.
+* **COCO-pretrained `yolo11x-pose.pt`**, keypoints 3 and 4. Different
+  objective, different corpus, different annotators, and POSE regions are
+  ignored rather than used as labels here. It returns a point rather than a
+  box, which is enough to ask whether there is an ear about here.
+
+1,734 candidates over sampled frames of the 25 clips:
+
+| | n | ear detector | pose | either |
+|---|---|---|---|---|
+| **all candidates** | | | | |
+| midline | 153 | 10.5% | 13.7% | 14.4% |
+| between | 105 | 9.5% | 20.0% | 21.0% |
+| lateral | 1476 | 46.0% | 69.3% | 69.4% |
+| **score >= 0.80, i.e. would confirm a track** | | | | |
+| midline | 33 | 48.5% | 51.5% | **54.5%** |
+| between | 20 | 45.0% | 50.0% | 55.0% |
+| lateral | 798 | 78.6% | **94.2%** | 94.4% |
+
+**The proxy holds directionally and breaks where it was leaned on hardest.**
+Lateral candidates are 4.4x more likely to be confirmed than midline ones by
+the ear detector and 5.1x by pose, so splitting on position does separate the
+populations. And **94.2% of the lateral tracks that would confirm are
+corroborated**, which is the strongest available evidence that the +25
+confirmations shipped with `TRACK_CONFIRM = 0.80` are real ears rather than
+noise.
+
+But at the confirm threshold **54.5% of midline candidates are corroborated
+too.** So "midline confirmations" was never a clean false-positive count --
+roughly half are real ears, which is consistent with 11.4% of all ears
+falling inside that band and with real ears scoring higher. Raising `minHits`
+to 3 cut midline confirmations 9 to 6, and about half of that cut was
+genuine ears. The cost side of that argument is weaker than the table in the
+clips section makes it look; the gain side is stronger.
+
+Neither referee is ground truth, and they disagree with each other in a
+useful way: pose confirms more than the ear detector almost everywhere, and
+for lateral candidates the ear detector's confirmations are nearly a subset
+of pose's (69.3% against a 69.4% union). That bounds how far either can be
+trusted and points at the right use, which is **triage rather than
+labelling**: auto-propose, have a human check only the disagreements plus a
+random audit sample to estimate the referee's own error rate. The audit
+sample is what stops a referee's bias quietly becoming the ground truth.
 
 ### Where this can go next, and what it is worth
 
