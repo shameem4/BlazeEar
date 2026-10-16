@@ -101,12 +101,27 @@ run_arm () {
     # Documents session as the last unguarded heavy job on the machine.
     #
     # 12G is from a measurement rather than a guess. Three 100-epoch runs of
-    # this exact command tonight peaked at 4.3G, 3.9G and 4.3G
-    # (`systemctl --user show <unit> -p MemoryPeak --value`, or the journal's
-    # own "N memory peak" line), so 12G is about 2.8x the peak -- loose enough
-    # that a legitimate arm never touches it, tight enough that a leak is
-    # killed while the machine is still usable. A 24G cap on a 4.3G job is a
-    # cap in name only.
+    # this exact command tonight peaked at 4.3G, 3.9G and 4.3G, so 12G is
+    # about 2.8x the peak -- loose enough that a legitimate arm never touches
+    # it, tight enough that a leak is killed while the machine is still
+    # usable. A 24G cap on a 4.3G job is a cap in name only.
+    #
+    # HOW TO READ THE PEAK, and the wrong way, which was written here first.
+    # `systemctl --user show <unit> -p MemoryPeak --value` works only WHILE
+    # the job is alive; after it exits it returns "[not set]", verified on
+    # these very units. Use the journal's own summary line instead, which
+    # persists:
+    #
+    #     journalctl --user -u blazeear-<name> | grep 'memory peak'
+    #
+    # AND DISTRUST A PEAK FROM A RUN THAT DID NO WORK. An arm that dies in the
+    # first seconds -- a bad flag, a missing split, a resumable job finding
+    # its work already done -- still prints a peak, and it will be a small
+    # one. Capping a later run from it kills that run instead, and the entry
+    # looks measured, which is what makes it worse than having no measurement.
+    # Discard any peak from a run that lasted under ~10 seconds or that was
+    # itself killed at its cap. The Ear_Landmarker session hit the resumable
+    # case; the trap is general.
     #
     # MemoryMax KILLS; MemoryHigh only throttles, so a runaway would crawl at
     # the ceiling until something else died and the blame would land in the

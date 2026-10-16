@@ -181,7 +181,14 @@ In short: `trainable_blazeface` made BlazeFace trainable; BlazeEar uses that fou
   exact command came in at 4.3G, 3.9G and 4.3G, which is also why it is not
   the 24G suggested, since a 24G cap on a 4.3G job is a cap in name only.
   Note the units trap -- systemd reads a bare `12` as twelve BYTES, and the
-  resulting kill looks exactly like a real memory blowup.
+  resulting kill looks exactly like a real memory blowup. Read the peak from
+  the journal (`journalctl --user -u blazeear-<name> | grep 'memory peak'`),
+  not from `systemctl show -p MemoryPeak`, which returns `[not set]` once the
+  unit has exited -- verified on these units, and the instruction this file
+  carried first was the wrong one. And discard a peak from a run that did no
+  work: an arm dying in its first seconds still prints a small peak, capping a
+  later run from it kills that run, and the entry looks measured, which is
+  what makes it worse than no measurement at all.
 - `measure_tragion_coverage.py`, `measure_crop_shift.py`,
   `measure_anchor_budget.py`  
   Standalone measurements behind claims in this README, kept runnable so the
