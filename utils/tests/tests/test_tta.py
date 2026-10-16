@@ -128,27 +128,51 @@ class TestViewsMatchJs(unittest.TestCase):
         self.assertEqual(self._js_const('TTA_SCORE_THRESHOLD'),
                          TTA_SCORE_THRESHOLD)
 
-    def test_demo_tracker_hysteresis_matches_both_gates(self):
-        """The demo page's tracker must bracket exactly the measured pair.
+    def test_demo_tracker_constants_are_the_measured_ones(self):
+        """The demo's tracker constants, including the slider's HTML default.
 
-        `docs/index.html` confirms a new track at the slider value, which
-        defaults to the fused gate, and continues an existing one at
-        CONTINUE_MARGIN below it. The end-to-end sweep puts the fused argmax
-        at 0.85 and the plain one at 0.80, and the pair the tracker wants is
-        the fused gate to start and something near the plain path's useful
-        floor to continue. Pinning the arithmetic keeps a later edit to either
-        constant from silently moving the continue score somewhere unmeasured.
+        That default is the defect this test exists for. `loadModel()` passes
+        the slider's `value` attribute straight into `applyThresholds`, so the
+        attribute -- not `TRACK_CONFIRM` -- is what governs at page load. It
+        sat at 0.70 while the constants said 0.85, which ran the page at the
+        worst measured configuration for midline false positives (40 against
+        9 on the clips corpus) and was invisible to a test that checked only
+        the constants.
+
+        0.80 / 0.65 / minHits 3 is measured on 7,500 frames of 25
+        conversational clips: +25 lateral confirmations against the previous
+        pair, 95% CI [+6, +50], with midline indistinguishable. The confirm
+        score is deliberately below TTA_SCORE_THRESHOLD, because a track
+        confirming over minHits frames has evidence a single frame does not.
         """
         page = (JS_PATH.parent / 'index.html').read_text(encoding='utf-8')
-        margin = re.search(r'const CONTINUE_MARGIN = ([\d.]+);', page)
-        self.assertIsNotNone(margin, 'CONTINUE_MARGIN not found in the demo')
-        confirm = self._js_const('TTA_SCORE_THRESHOLD')
-        keep = round(confirm - float(margin.group(1)), 10)
-        self.assertEqual(confirm, TTA_SCORE_THRESHOLD)
-        self.assertEqual(keep, 0.70)
-        self.assertLess(keep, DETECTION_SCORE_THRESHOLD,
-                        'a track should continue below the single-frame gate; '
-                        'that margin is the whole point of the hysteresis')
+
+        def const(name):
+            m = re.search(rf'const {name} = ([\d.]+);', page)
+            self.assertIsNotNone(m, f'{name} not found in the demo page')
+            return float(m.group(1))
+
+        slider = re.search(r'id="confSlider"[^>]*value="([\d.]+)"', page)
+        self.assertIsNotNone(slider, 'confSlider default not found')
+        label = re.search(r'id="confValue">([\d.]+)<', page)
+        self.assertIsNotNone(label, 'confValue label not found')
+
+        confirm = const('TRACK_CONFIRM')
+        self.assertEqual(confirm, 0.80)
+        self.assertEqual(const('MIN_HITS'), 3)
+        self.assertEqual(round(confirm - const('CONTINUE_MARGIN'), 10), 0.65)
+        self.assertEqual(float(slider.group(1)), confirm,
+                         "the slider's value attribute is what runs at load; "
+                         'it must equal TRACK_CONFIRM')
+        self.assertEqual(float(label.group(1)), confirm,
+                         'the displayed label must match what the page does')
+        self.assertLess(confirm, TTA_SCORE_THRESHOLD,
+                        'a track confirming over several frames should need '
+                        'less than a single frame does')
+        self.assertLess(confirm - const('CONTINUE_MARGIN'),
+                        DETECTION_SCORE_THRESHOLD,
+                        'a running track should continue below the '
+                        'single-frame gate; that is the hysteresis')
 
     def test_fused_threshold_is_not_below_the_plain_one(self):
         """Relaxed from `>` to `>=` when both paths were set to 0.70.

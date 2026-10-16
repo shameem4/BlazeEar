@@ -2272,8 +2272,36 @@ include false positives that happen to sit laterally, and 11.4% of real ears
 fall inside the midline band, so this is a position proxy rather than a
 precision/recall measurement. Converting it needs labelled frames, which is
 the deliberately deferred Phase 2. The direction is strong enough to justify
-that labelling and not strong enough on its own to be called a recall gain,
-so the shipped constants are unchanged pending it.
+that labelling and not strong enough on its own to be called a recall gain.
+
+**Shipped as `TRACK_CONFIRM = 0.80`, `CONTINUE_MARGIN = 0.15`,
+`MIN_HITS = 3`**, with the proxy caveat standing. The confirm score is
+deliberately *below* `TTA_SCORE_THRESHOLD`: that constant is the single-frame
+argmax, and a track confirming over three frames carries evidence a single
+frame does not, so the two quantities are no longer the same thing and are no
+longer tied together in code.
+
+**Two defects found while shipping it, both mine, both worse than the change
+itself.**
+
+The demo's slider carried `value="0.70"` in its HTML, and `loadModel()` feeds
+that attribute straight into `applyThresholds`. **So the page was confirming
+tracks at 0.70 with a continue score of 0.55** -- not the 0.85 / 0.70 the
+constants said and `test_tta.py` pinned. On the clips corpus that is the
+worst configuration in the table above, 40 midline confirmations against 9.
+The test checked the constants and never checked the value that overrides
+them at load, which is the same defect as a retraction that does not reach
+the claim's most prominent form. `test_tta.py` now pins the slider's `value`
+attribute and its displayed label against `TRACK_CONFIRM`.
+
+And the still-image upload path had no business running at the tracker's
+continue score. `applyThresholds` sets the ear stage's threshold to `keep` so
+a track has something to survive on, but a single uploaded image has no
+tracker to confirm anything, so it was drawing unconfirmed candidates at 0.70
+where before the tracker it gated at 0.85. That path now raises the threshold
+to `TTA_SCORE_THRESHOLD` around its one call and restores it afterwards. The
+tracker commit introduced this and the five behaviour cases could not have
+caught it, because they exercise the tracker and this path does not use it.
 
 ### Where this can go next, and what it is worth
 

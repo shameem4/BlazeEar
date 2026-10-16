@@ -166,8 +166,8 @@
         <div class="panel">
             <h2>⚙️ Settings</h2>
             <div class="slider-container">
-                <label>Confidence Threshold: <span id="confValue">0.70</span></label>
-                <input type="range" id="confSlider" min="0.1" max="0.99" step="0.01" value="0.70">
+                <label>Confidence Threshold: <span id="confValue">0.80</span></label>
+                <input type="range" id="confSlider" min="0.1" max="0.99" step="0.01" value="0.80">
             </div>
             <div class="slider-container">
                 <label>Face Model:</label>
@@ -327,7 +327,7 @@
                 this.continueScore = options.continueScore ?? 0.70;
                 this.matchIou = options.matchIou ?? 0.3;
                 this.maxMisses = options.maxMisses ?? 3;
-                this.minHits = options.minHits ?? 2;
+                this.minHits = options.minHits ?? MIN_HITS;
                 this.smoothing = options.smoothing ?? 0.6;
                 this.tracks = [];
                 this.nextId = 1;
@@ -430,11 +430,26 @@
         }
 
         // The slider sets the score a NEW track needs; a track already
-        // running continues on CONTINUE_MARGIN less. The default pair is
-        // 0.85 / 0.70, which is where the end-to-end sweep in the README puts
-        // the fused argmax and the plain one respectively.
+        // running continues on CONTINUE_MARGIN less. TRACK_CONFIRM is the
+        // slider's default and must equal the `value` attribute on the input
+        // above -- that attribute is what actually governs at load, and
+        // test_tta.py pins the two together because a mismatch silently runs
+        // the page at a constant nobody chose. It was 0.70 for exactly that
+        // reason.
+        //
+        // 0.80 / 0.65 / minHits 3 is measured, on 7,500 frames of 25
+        // conversational clips: against 0.85 / 0.70 / minHits 2 it confirms
+        // +25 lateral tracks (95% CI [+6, +50], P(gain) 99.8%) with midline
+        // confirmations indistinguishable (0, CI [-5, +4]). It is deliberately
+        // NOT TTA_SCORE_THRESHOLD: that is the single-frame argmax, and a
+        // track confirming over minHits frames has evidence a single frame
+        // does not, so it can afford a lower bar. See the README's clips
+        // section, including what the measurement is a proxy for.
+        const TRACK_CONFIRM = 0.80;
         const CONTINUE_MARGIN = 0.15;
-        const tracker = new EarTracker();
+        const MIN_HITS = 3;
+        const tracker = new EarTracker({confirmScore: TRACK_CONFIRM,
+                                        minHits: MIN_HITS});
 
         function applyThresholds(confirm) {
             const keep = Math.max(0.5, confirm - CONTINUE_MARGIN);
@@ -506,7 +521,20 @@
                 // Detect on original image
                 try {
                     const startTime = performance.now();
-                    const detections = await detector.detect(img);
+                    // One frame carries no temporal evidence, so nothing can
+                    // confirm a track here. Gate at the single-frame
+                    // threshold instead of the tracker's continue score,
+                    // which would draw unconfirmed candidates.
+                    const earStage = detector.ear ?? detector;
+                    const trackingThreshold = earStage.confidenceThreshold;
+                    earStage.confidenceThreshold = Math.max(
+                        trackingThreshold, TTA_SCORE_THRESHOLD);
+                    let detections;
+                    try {
+                        detections = await detector.detect(img);
+                    } finally {
+                        earStage.confidenceThreshold = trackingThreshold;
+                    }
                     const inferenceTime = (performance.now() - startTime).toFixed(1);
                     
                     // Draw detections (scaled)
