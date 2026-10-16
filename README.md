@@ -1615,19 +1615,51 @@ worth keeping is 0.47 SD**, and both figures are the most extreme of seven
 band comparisons, which is the right way to compare them and leaves them a
 coin's width apart.
 
-So the honest status is **unresolved**: the only evidence is the most extreme
-of seven comparisons, at an excursion this repo's own seeds reached on a
-different band. Not "the solid one", not a survivor, not suggestive -- a
+So the status at that point was **unresolved**: the only evidence was the most
+extreme of seven comparisons, at an excursion this repo's own seeds reached on
+a different band. (A third seed, below, then resolved it the other way --
+which is recorded in this order because the argument that looked fatal was
+fatal to the *reasoning*, not to the result, and that distinction is the
+whole content of this passage.) Not "the solid one", not a survivor, not suggestive -- a
 thing to re-test. `trainable_blazeface` made this argument from the numbers
 above after being asked to check whether the lopsidedness case was weaker
 than it had been given credit for; it was, and the asking is what made row 3
 legible, because it had been sitting in the table unused.
 
-**The decisive test is one training run.** What is needed is the seed
-distribution on the mode band rather than one draw from it: a third seed
-gives three within-arm pairs on 64-80. If within-arm excursions there stay
-under about 1 SD across those pairs, the arm's 2.71 means something. If any
-reaches 2, it does not.
+**That test has been run, and it reinstates the mode-band result while
+burying the overall one further.** A third seed of the same recipe gives three
+within-arm pairs. Their excursions, in SD from even, on the band the arm
+result sits on and on the worst band each pair produced anywhere:
+
+| pair | 64-80 (mode) | overall | worst band in that pair |
+|---|---|---|---|
+| seed 1 v 2 | 0.67 | 1.86 | 2.24 (80-96) |
+| seed 1 v 3 | **0.49** | **2.92, p=0.0044** | 2.65 (120+) |
+| seed 2 v 3 | 1.09 | 1.13 | 1.70 (48-64) |
+
+**Seeds do not move the mode band.** The worst within-arm excursion on 64-80
+across all three pairs is 1.09 SD, against the arm's 2.71. And the control is
+internal rather than assumed: the very pair that is quietest on the mode band
+(1 v 3, 0.49) is the pair that produced 2.56 on 80-96 and 2.65 on 120+, so
+these were not simply three placid pairs. By the criterion stated before the
+run -- under about 1 SD and the arm result means something, 2 or above and it
+does not -- **the mode-band p=0.0096 stands, and the withdrawal above is
+itself withdrawn.**
+
+Two reasons that is not as clean as it reads, both of which cut against the
+conclusion I now prefer. Three pairs drawn from three seeds are not
+independent: they share runs, so there are two degrees of freedom and not
+three. And the multiplicity argument that applied to a post-hoc most-extreme
+band does not apply here, but only because the mode band was **pre-registered
+as the guard** in `queue_augment_scale_ab.sh` before any arm was trained --
+"the mode is the guard, not an extra". Had it been selected after the fact
+for being the largest effect, three quiet pairs would not rescue it.
+
+**The overall figure is now comprehensively dead.** Seeds 1 and 3, one
+recipe, differ overall at **2.92 SD, p=0.0044** -- an order of magnitude
+beyond the arm comparison's own p=0.049, which the table above already
+retracted. Any overall p-value from a single-seed arm comparison on this
+harness should be treated as uninformative regardless of how small it is.
 
 Nothing about the disposition changes -- the levers were reverted because
 nothing here was a gain, and that still holds. What changes is that this
