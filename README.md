@@ -2202,6 +2202,26 @@ IoU and no-face-frame rate for both detectors on the 25 clips, a few hours,
 and it is the only thing that could make the swap worth its re-sweep before
 stage-2 scoring is fixed.
 
+One method note from the handoff, because it generalises past this decision.
+Rather than review my code, `trainable_blazeface` shipped a numerical fixture
+(`utils/tests/assets/reference_fixture.json` in their repo): one pinned
+image, its letterbox parameters, the SHA-256 and mean of the preprocessed
+tensor, and top-5 raw anchor indices and scores for both models. Running it
+here, the **tensor hash matched on the first attempt and the scores were
+wrong by an order of magnitude** -- stock's top anchor at 0.025 against their
+0.6119 -- because `forward` does not normalise and `get_training_outputs`
+does, so a [0,255] tensor went into the network unscaled. Both arms reproduce
+to 2e-4 through the right entry point.
+
+The hazard worth keeping is the near miss rather than the catch: **a matching
+hash certifies the preprocessing and says nothing about the call site**, so it
+makes the next step feel safe. A review of my preprocessing diff would have
+passed, and the run would have measured their model handicapped and concluded
+stock was steadier -- which is the result this side was predisposed to
+believe. Their fixture now carries that as its own warning. For any future
+comparison against another session's weights, the lesson is that the control
+has to reach the output being compared, not the input being prepared.
+
 **Re-ask when the 0-32 px band becomes convertible.** The gain is real and
 sitting there; it is gated on stage 2, not on stage 1. Their generalisable
 warning stands and is why neither model's own metrics could have settled
