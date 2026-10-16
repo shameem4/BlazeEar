@@ -49,8 +49,9 @@ from utils.config import (DEFAULT_INPUT_SIZE, FACE_CROP_EXPAND,
                           FACE_CROP_MAX_FACES, FACE_CROP_THRESHOLD,
                           TTA_SCORE_THRESHOLD)
 from utils.tta import VIEWS
+from utils.box_tracker import BoxTracker
 
-MATCH_IOU = 0.3        # mirrors EarTracker.matchIou in docs/index.html
+MATCH_IOU = 0.3        # the tracker default; utils/box_tracker.py owns it
 MIDLINE = 0.15
 LATERAL = 0.25
 
@@ -99,52 +100,42 @@ def link_frames(frames):
     return tracks
 
 
-def simulate(frames, confirm, keep, min_hits, max_misses):
-    """The demo tracker's accept/drop logic, over a real frame sequence.
+def simulate(frames, confirm, keep, min_hits, max_misses, fps=30.0):
+    """Replay the SHIPPED tracker over a real frame sequence.
 
-    Mirrors `EarTracker` in docs/index.html: confirm at `confirm` AND
-    `min_hits` frames, continue at `keep`, coast up to `max_misses`. Returns
-    one record per confirmed track so the outcome can be split by geometry.
+    This used to be a hand-written mirror of the tracker in docs/index.html,
+    and the mirror drifted: it assigned the raw detection box while the page
+    matched IoU against the smoothed one, which is worth 189 -> 212 lateral
+    confirmations on this corpus. So it now calls `utils.box_tracker`, the
+    same code the demo loads, and a divergence of that kind is no longer
+    expressible. The box smoother is left at None here deliberately: matching
+    reads the raw box, so smoothing cannot change which detection joins which
+    track, and leaving it out keeps this measurement independent of a display
+    choice.
+
+    Returns one record per confirmed track so the outcome can be split by
+    geometry. `u` is collected on every matched frame including the
+    pre-confirmation ones, which is what the original did and what the
+    position classification was measured against.
     """
-    tracks, done = [], []
-    for dets in frames:
-        cands = sorted([d for d in dets if d['score'] >= keep],
-                       key=lambda d: -d['score'])
-        claimed = set()
-        for tr in tracks:
-            best, best_iou = -1, MATCH_IOU
-            for i, d in enumerate(cands):
-                if i in claimed:
-                    continue
-                v = iou(tr['box'], d['box'])
-                if v >= best_iou:
-                    best, best_iou = i, v
-            if best < 0:
-                tr['misses'] += 1
-                continue
-            claimed.add(best)
-            tr['box'] = cands[best]['box']
-            tr['u'].append(cands[best]['u'])
-            tr['hits'] += 1
-            tr['misses'] = 0
-        for i, d in enumerate(cands):
-            if i in claimed or d['score'] < confirm:
-                continue
-            tracks.append({'box': d['box'], 'u': [d['u']], 'hits': 1,
-                           'misses': 0, 'drawn': 0})
-        # Order matters and mirrors the JS: drop over-missed tracks FIRST,
-        # then count what is drawn. Incrementing before the filter credits a
-        # track one frame it never appeared in, which is a one-frame
-        # disagreement with the shipped tracker.
-        keep_list = []
-        for tr in tracks:
-            (keep_list if tr['misses'] <= max_misses else done).append(tr)
-        tracks = keep_list
-        for tr in tracks:
-            if tr['hits'] >= min_hits:
-                tr['drawn'] += 1
-    done += tracks
-    return [tr for tr in done if tr['drawn'] > 0]
+    tracker = BoxTracker(confirm_score=confirm, continue_score=keep,
+                         min_hits=min_hits, max_misses=max_misses,
+                         match_iou=MATCH_IOU, smoother=None)
+    us, drawn = {}, {}
+    for i, dets in enumerate(frames):
+        detections = [{'xmin': d['box'][1], 'ymin': d['box'][0],
+                       'width': d['box'][3] - d['box'][1],
+                       'height': d['box'][2] - d['box'][0],
+                       'confidence': d['score']} for d in dets]
+        out = tracker.update(detections, i / fps)
+        # Read the tracker's own state, so pre-confirmation frames are counted
+        # the way the original mirror counted them.
+        for tr in tracker.tracks:
+            if tr['matched'] and tr['det_index'] is not None:
+                us.setdefault(tr['id'], []).append(dets[tr['det_index']]['u'])
+        for r in out:
+            drawn[r['id']] = drawn.get(r['id'], 0) + 1
+    return [{'u': us.get(tid, []), 'drawn': n} for tid, n in drawn.items()]
 
 
 def candidates_for_frame(face, ear, image, views, max_faces):

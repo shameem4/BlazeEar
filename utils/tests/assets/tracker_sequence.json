@@ -1,0 +1,1026 @@
+{
+ "_what": "Shared sequence for the Python/JS box-tracker parity test.",
+ "_why": "A constants-only pin cannot catch a behavioural divergence; the EMA-vs-raw matching bug lived under a correct-looking comment and would have passed one.",
+ "fps": 30.0,
+ "frames": [
+  {
+   "t": 0.0,
+   "detections": [
+    {
+     "xmin": 99.64766552966633,
+     "ymin": 79.301698347849,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 300.2414951568638,
+     "ymin": 89.31589805866807,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.7
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.03333333333333333,
+   "detections": [
+    {
+     "xmin": 102.07176400861337,
+     "ymin": 79.73137783382518,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 299.29279827963956,
+     "ymin": 90.01189717310307,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.86
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.06666666666666667,
+   "detections": [
+    {
+     "xmin": 103.07499131688397,
+     "ymin": 79.86729136732477,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 299.3117686777194,
+     "ymin": 89.34514082135018,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.86
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.1,
+   "detections": [
+    {
+     "xmin": 105.84903837828503,
+     "ymin": 80.65370424934407,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 299.3980831378394,
+     "ymin": 89.55718234337122,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.7
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.13333333333333333,
+   "detections": [
+    {
+     "xmin": 108.25486644481119,
+     "ymin": 80.89541788491401,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 300.123364717788,
+     "ymin": 89.83468875944125,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.86
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.16666666666666666,
+   "detections": [
+    {
+     "xmin": 110.95251021118584,
+     "ymin": 79.0931653612355,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 300.5735495344779,
+     "ymin": 89.66337485813068,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.86
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.2,
+   "detections": [
+    {
+     "xmin": 111.28851016671487,
+     "ymin": 79.23558447615673,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 299.69357091856307,
+     "ymin": 90.50580217459205,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.7
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.23333333333333334,
+   "detections": [
+    {
+     "xmin": 113.36145275984788,
+     "ymin": 80.16320032732493,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 300.22226155028187,
+     "ymin": 89.79583606836117,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.86
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.26666666666666666,
+   "detections": [
+    {
+     "xmin": 116.09548893141911,
+     "ymin": 79.12557794994665,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 299.295361871946,
+     "ymin": 89.52953394051092,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.86
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.3,
+   "detections": [
+    {
+     "xmin": 118.36079994636357,
+     "ymin": 79.8551846113388,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 299.7026354726029,
+     "ymin": 90.13689898161222,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.7
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.3333333333333333,
+   "detections": [
+    {
+     "xmin": 119.90636875274156,
+     "ymin": 79.59953399372736,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 300.471007170436,
+     "ymin": 90.3183910939673,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.86
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.36666666666666664,
+   "detections": [
+    {
+     "xmin": 121.4881930214443,
+     "ymin": 80.14884742051734,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 300.04031440609833,
+     "ymin": 90.60021999291749,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.86
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.4,
+   "detections": [
+    {
+     "xmin": 124.45889057887844,
+     "ymin": 79.57587552978038,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 300.76827975598815,
+     "ymin": 89.38890524520794,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.7
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.43333333333333335,
+   "detections": [
+    {
+     "xmin": 125.83624564357045,
+     "ymin": 80.5142818591305,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 299.4431752554568,
+     "ymin": 89.98234096076129,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.86
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.4666666666666667,
+   "detections": [
+    {
+     "xmin": 127.07841451409487,
+     "ymin": 80.33643171306879,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 300.4233133859405,
+     "ymin": 90.11684150444381,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.86
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.5,
+   "detections": [
+    {
+     "xmin": 130.75095562366178,
+     "ymin": 79.62749502569619,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 300.31247258603787,
+     "ymin": 90.15099180336803,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.7
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.5333333333333333,
+   "detections": [
+    {
+     "xmin": 132.159790408565,
+     "ymin": 79.91241066260282,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 300.54394844882006,
+     "ymin": 90.7114897521727,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.86
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.5666666666666667,
+   "detections": [
+    {
+     "xmin": 133.9481966748393,
+     "ymin": 80.32830441094934,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 299.29707108415556,
+     "ymin": 90.32238723408707,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.86
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.6,
+   "detections": [
+    {
+     "xmin": 300.23540616724426,
+     "ymin": 90.78895350314662,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.7
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.6333333333333333,
+   "detections": [
+    {
+     "xmin": 300.51507965857553,
+     "ymin": 89.65535285135064,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.86
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.6666666666666666,
+   "detections": [
+    {
+     "xmin": 299.81726630791474,
+     "ymin": 90.2698443454147,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.86
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.7,
+   "detections": [
+    {
+     "xmin": 141.04512585611118,
+     "ymin": 79.92339057259953,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 299.4688774062505,
+     "ymin": 89.38735327117077,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.7
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.7333333333333333,
+   "detections": [
+    {
+     "xmin": 143.11790883866263,
+     "ymin": 80.53646597694504,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 299.4069443552299,
+     "ymin": 89.59618373391507,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.86
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.7666666666666667,
+   "detections": [
+    {
+     "xmin": 145.78189940626646,
+     "ymin": 80.7428439482526,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 299.32893008192025,
+     "ymin": 89.91869984151893,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.86
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.8,
+   "detections": [
+    {
+     "xmin": 148.09887981828808,
+     "ymin": 80.76676765288302,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 300.5108477405372,
+     "ymin": 90.58237515151762,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.7
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.8333333333333334,
+   "detections": [
+    {
+     "xmin": 149.55684212902779,
+     "ymin": 79.8305930344234,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 299.7740338645306,
+     "ymin": 90.61470852351715,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.86
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.8666666666666667,
+   "detections": [
+    {
+     "xmin": 152.91546240792798,
+     "ymin": 79.30184181158222,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 299.48194836558457,
+     "ymin": 89.57113098691126,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.86
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.9,
+   "detections": [
+    {
+     "xmin": 153.46667216736174,
+     "ymin": 79.96992546068272,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 300.1425976059716,
+     "ymin": 89.62039459087767,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.7
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.9333333333333333,
+   "detections": [
+    {
+     "xmin": 155.00818720677012,
+     "ymin": 79.83789300225065,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 299.79080571663155,
+     "ymin": 90.10614595793022,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.86
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 0.9666666666666667,
+   "detections": [
+    {
+     "xmin": 158.9061958510502,
+     "ymin": 80.38098731427196,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 300.02478629291323,
+     "ymin": 90.1881483990546,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.86
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 1.0,
+   "detections": [
+    {
+     "xmin": 160.352400164899,
+     "ymin": 79.10798578644759,
+     "width": 90,
+     "height": 132,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 300.6392528160927,
+     "ymin": 90.44795118512971,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.7
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 1.0333333333333334,
+   "detections": [
+    {
+     "xmin": 162.74902636826894,
+     "ymin": 80.59574624239313,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 299.827806251026,
+     "ymin": 89.83836613171243,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.86
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 1.0666666666666667,
+   "detections": [
+    {
+     "xmin": 163.20707418742066,
+     "ymin": 80.26857913137142,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 299.2995965145899,
+     "ymin": 89.30775618534884,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.86
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 1.1,
+   "detections": [
+    {
+     "xmin": 165.41752637089232,
+     "ymin": 79.32460637554419,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 299.7440858435717,
+     "ymin": 89.28412096622442,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.7
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 1.1333333333333333,
+   "detections": [
+    {
+     "xmin": 167.00046656380272,
+     "ymin": 79.30252986455885,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 299.36234298883613,
+     "ymin": 89.78177587525532,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.86
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 1.1666666666666667,
+   "detections": [
+    {
+     "xmin": 169.0510017733323,
+     "ymin": 80.74866475474764,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 300.18251038046157,
+     "ymin": 89.43768077652943,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.86
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 1.2,
+   "detections": [
+    {
+     "xmin": 171.50451551311414,
+     "ymin": 79.69477909210741,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 299.78266150324527,
+     "ymin": 89.3965475692195,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.7
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 1.2333333333333334,
+   "detections": [
+    {
+     "xmin": 174.69787385296922,
+     "ymin": 80.98620544340943,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 299.9455831346559,
+     "ymin": 89.97413545026603,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.86
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 1.2666666666666666,
+   "detections": [
+    {
+     "xmin": 175.17176932311233,
+     "ymin": 79.20437523349634,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 299.7482173411888,
+     "ymin": 89.62361102674748,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.86
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  },
+  {
+   "t": 1.3,
+   "detections": [
+    {
+     "xmin": 178.65771075624312,
+     "ymin": 79.32287722105286,
+     "width": 30,
+     "height": 44,
+     "confidence": 0.9
+    },
+    {
+     "xmin": 299.2369531536724,
+     "ymin": 90.72157691659952,
+     "width": 28,
+     "height": 40,
+     "confidence": 0.7
+    },
+    {
+     "xmin": 200,
+     "ymin": 200,
+     "width": 20,
+     "height": 20,
+     "confidence": 0.66
+    }
+   ]
+  }
+ ]
+}

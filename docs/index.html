@@ -199,6 +199,9 @@
     <!-- ONNX Runtime Web (latest with better int64 support) -->
     <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
     
+    <!-- Shared box tracker, mirrored by utils/box_tracker.py -->
+    <script src="ear_tracker.js"></script>
+
     <!-- BlazeEar Inference Module -->
     <script type="module">
         import { BlazeEarTwoStage } from './blazeear_inference.js';
@@ -299,156 +302,20 @@
             statsEl.textContent = '';
         });
 
-        /**
-         * Frame-to-frame hysteresis for the webcam loop.
-         *
-         * The detector decides each frame from scratch, so a candidate whose
-         * score sits near the gate re-decides at the frame rate and the box
-         * strobes. No single threshold fixes that: raising it only makes
-         * borderline candidates rarer. This is the standard answer --
-         * detect, then track, with two thresholds instead of one.
-         *
-         * A track needs `confirmScore` and `minHits` consecutive frames to
-         * appear, then survives on `continueScore` and tolerates `maxMisses`
-         * dropped frames. A real ear persists and so is kept at the lower
-         * score; a one-frame artefact never reaches minHits. That is why this
-         * buys back recall the gate gave up rather than trading it: the
-         * evidence is temporal, which the per-frame score does not contain.
-         *
-         * Deliberately NOT in blazeear_inference.js. That file is mirrored
-         * against the Python pipeline and pinned by test_tta.py; a temporal
-         * component has no Python counterpart, so putting it there would
-         * break the parity the tests enforce. A consumer that wants this has
-         * to lift it, which is the cost of keeping that invariant.
-         */
-        class EarTracker {
-            constructor(options = {}) {
-                this.confirmScore = options.confirmScore ?? 0.85;
-                this.continueScore = options.continueScore ?? 0.70;
-                this.matchIou = options.matchIou ?? 0.3;
-                this.maxMisses = options.maxMisses ?? 3;
-                this.minHits = options.minHits ?? MIN_HITS;
-                this.smoothing = options.smoothing ?? 0.6;
-                this.tracks = [];
-                this.nextId = 1;
-            }
-
-            reset() {
-                this.tracks = [];
-                this.nextId = 1;
-            }
-
-            static iou(a, b) {
-                const x0 = Math.max(a.xmin, b.xmin);
-                const y0 = Math.max(a.ymin, b.ymin);
-                const x1 = Math.min(a.xmin + a.width, b.xmin + b.width);
-                const y1 = Math.min(a.ymin + a.height, b.ymin + b.height);
-                const inter = Math.max(0, x1 - x0) * Math.max(0, y1 - y0);
-                const union = a.width * a.height + b.width * b.height - inter;
-                return union > 0 ? inter / union : 0;
-            }
-
-            /**
-             * One frame in, the boxes to draw out.
-             * @param {Array} detections - every candidate at or above
-             *     `continueScore`; the confirm decision is made here, not by
-             *     the detector's own threshold.
-             */
-            update(detections) {
-                const candidates = detections
-                    .filter(d => d.confidence >= this.continueScore)
-                    .sort((a, b) => b.confidence - a.confidence);
-                const claimed = new Set();
-
-                // Existing tracks get first claim, highest-scoring candidate
-                // first, so two tracks cannot absorb the same detection.
-                for (const track of this.tracks) {
-                    let best = -1;
-                    let bestIou = this.matchIou;
-                    for (let i = 0; i < candidates.length; i++) {
-                        if (claimed.has(i)) continue;
-                        const iou = EarTracker.iou(track.rawBox,
-                                                  candidates[i]);
-                        if (iou >= bestIou) {
-                            bestIou = iou;
-                            best = i;
-                        }
-                    }
-                    if (best < 0) {
-                        track.misses++;
-                        continue;
-                    }
-                    claimed.add(best);
-                    const det = candidates[best];
-                    const k = this.smoothing;
-                    // Two boxes per track, deliberately. `rawBox` is the last
-                    // matched detection and is what IoU matching sees; `box`
-                    // is the smoothed one and is display only.
-                    //
-                    // They were the same field until headsize v2 read this
-                    // code against measure_video_dynamics.py and found the
-                    // comment describing an intent the code did not
-                    // implement: matching ran against the EMA blend, while
-                    // the Python that measured 0.80 / 0.65 / minHits 3
-                    // matched against the raw box. Replaying the 25 clips
-                    // both ways, that is 189 lateral / 9 midline
-                    // confirmations as measured against 212 / 14 as shipped
-                    // -- a divergence the same size as the +25 lateral the
-                    // constants were chosen for, so it was not cosmetic.
-                    track.rawBox = {
-                        xmin: det.xmin, ymin: det.ymin,
-                        width: det.width, height: det.height,
-                    };
-                    track.box = {
-                        xmin: k * track.box.xmin + (1 - k) * det.xmin,
-                        ymin: k * track.box.ymin + (1 - k) * det.ymin,
-                        width: k * track.box.width + (1 - k) * det.width,
-                        height: k * track.box.height + (1 - k) * det.height,
-                    };
-                    track.confidence = det.confidence;
-                    track.hits++;
-                    track.misses = 0;
-                }
-
-                // An unclaimed candidate starts a track only at the high score.
-                for (let i = 0; i < candidates.length; i++) {
-                    if (claimed.has(i)) continue;
-                    const det = candidates[i];
-                    if (det.confidence < this.confirmScore) continue;
-                    this.tracks.push({
-                        id: this.nextId++,
-                        box: {
-                            xmin: det.xmin, ymin: det.ymin,
-                            width: det.width, height: det.height,
-                        },
-                        rawBox: {
-                            xmin: det.xmin, ymin: det.ymin,
-                            width: det.width, height: det.height,
-                        },
-                        confidence: det.confidence,
-                        hits: 1,
-                        misses: 0,
-                    });
-                }
-
-                this.tracks = this.tracks.filter(
-                    tr => tr.misses <= this.maxMisses);
-                // Drawn through a short gap, not only on frames that
-                // matched. Dropping the box on the first miss would put the
-                // strobe back for any ear the detector loses for one frame,
-                // which is the thing this exists to stop; `maxMisses` bounds
-                // how long a vanished ear can coast.
-                return this.tracks
-                    .filter(tr => tr.hits >= this.minHits)
-                    .map(tr => ({
-                        xmin: tr.box.xmin, ymin: tr.box.ymin,
-                        width: tr.box.width, height: tr.box.height,
-                        xmax: tr.box.xmin + tr.box.width,
-                        ymax: tr.box.ymin + tr.box.height,
-                        confidence: tr.confidence,
-                    }));
-            }
-        }
+        // The tracker itself lives in ear_tracker.js, loaded above as a
+        // classic script, and is mirrored by utils/box_tracker.py with a
+        // behavioural parity test over a shared sequence
+        // (utils/tests/assets/tracker_sequence.json). It used to be inline
+        // here, which is how it drifted from the Python that measured its
+        // constants: this page matched IoU against the smoothed box while
+        // measure_video_dynamics.py matched against the raw one, worth 189 ->
+        // 212 lateral confirmations on the clips. The shared module exists so
+        // that class of divergence cannot recur rather than being found twice.
+        //
+        // Deliberately still NOT in blazeear_inference.js: that file is
+        // mirrored against the Python inference path and pinned by
+        // test_tta.py, and a temporal component belongs in its own file so
+        // downstream repos can vendor it on its own.
 
         // The slider sets the score a NEW track needs; a track already
         // running continues on CONTINUE_MARGIN less. TRACK_CONFIRM is the
@@ -469,8 +336,14 @@
         const TRACK_CONFIRM = 0.80;
         const CONTINUE_MARGIN = 0.15;
         const MIN_HITS = 3;
-        const tracker = new EarTracker({confirmScore: TRACK_CONFIRM,
-                                        minHits: MIN_HITS});
+        // One Euro rather than the EMA this page used to carry, measured on
+        // the same 25 clips: jitter -24.6% from raw against the EMA's -12.4%,
+        // better on 110 of 140 tracks (95% CI [-0.0013, -0.0008] on the
+        // paired difference), at lag that is indistinguishable (75 of 140,
+        // CI spans zero). Better on one axis and free on the other.
+        const tracker = new BoxTracker({confirmScore: TRACK_CONFIRM,
+                                        minHits: MIN_HITS,
+                                        smoother: OneEuroBoxSmoother});
 
         function applyThresholds(confirm) {
             const keep = Math.max(0.5, confirm - CONTINUE_MARGIN);
@@ -496,7 +369,11 @@
             
             try {
                 const raw = await detector.detect(video);
-                const detections = tracker.update(raw);
+                // Seconds, and a real one. One Euro's alpha comes from dt, so
+                // a synthesised or constant timestep would smooth the wrong
+                // amount -- and differently from the Python mirror, which is
+                // what measure_video_dynamics.py replays.
+                const detections = tracker.update(raw, startTime / 1000);
 
                 // Clear and draw detections
                 ctx.clearRect(0, 0, canvas.width, canvas.height);

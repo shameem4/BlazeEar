@@ -154,6 +154,17 @@ In short: `trainable_blazeface` made BlazeFace trainable; BlazeEar uses that fou
   predicted tragions land on the ears that escape the crop (they do not), what
   a same-size shifted crop could recover (5.1pp, given a direction), and where
   the anchor budget goes against where the ears actually are.
+- `utils/box_tracker.py`, `docs/ear_tracker.js`  
+  The shared box tracker, one implementation per language, pinned against
+  each other behaviourally over `utils/tests/assets/tracker_sequence.json`
+  rather than only on constants -- a constants-only pin is what let the demo
+  drift from the Python that measured it. Hysteresis plus pluggable box
+  smoothing, One Euro by default. `measure_video_dynamics.py` calls the
+  Python one, so the measured code and the shipped code are the same code.
+- `measure_box_smoothing.py`  
+  EMA against One Euro on the clips, banded by raw detection speed: jitter
+  while nearly still against lag while moving fast, which is the trade every
+  smoother makes and is measurable without per-frame box labels.
 - `check_referees.py`, `check_resolvability.py`  
   Independent-detector checks, both against the fine-tuned YOLOv11 ear
   detector and COCO pose. The first asks whether the clips' midline/lateral
@@ -2162,6 +2173,89 @@ partial face that the face GT scores as a false positive is exactly the crop
 that contains an ear. Every constant fitted against stock is in stock's
 units, and the optimum for a swapped detector cannot be derived from either
 model's own metrics -- it has to be swept against delivered ears.
+
+### One box tracker, in both languages, and One Euro beats the EMA on measurement
+
+Three repositories wanted the same component and each had half of it. This
+demo had hysteresis -- confirm at 0.80 over three frames, continue at 0.65,
+coast three -- with an EMA at k=0.6 chosen by eye. `Ear_Landmarker` had One
+Euro box smoothing in centre/size form, measured on its own pipeline to cut
+jitter 66-80% while also lowering error, and no hysteresis at all.
+`headSize-gnm` vendors Ear_Landmarker's files and wanted one approach. It
+lives here because the constants were measured here, and a constant only
+means something alongside the association rule it was measured with.
+
+`utils/box_tracker.py` and `docs/ear_tracker.js`, with a behavioural parity
+test over a shared sequence (`utils/tests/assets/tracker_sequence.json`) that
+compares every emitted box to 1e-9. `measure_video_dynamics.py` now calls the
+Python one, so the measured code and the shipped code are the same code; it
+reproduces the published 189 lateral / 9 midline / 6 between exactly.
+
+**EMA against One Euro, measured on the clips rather than argued.** There are
+no per-frame box labels for the 25 clips, so Ear_Landmarker's error half
+cannot be reproduced here. What can be measured without labels is the trade
+every smoother makes: jitter, the emitted box's frame-to-frame movement while
+the ear is nearly still, and lag, its distance from the raw detection while
+the ear moves fast. Speed comes from the raw series, so both arms are banded
+on the same frames, and association is identical by construction because
+matching reads the raw box. 140 tracks of 8+ matched frames,
+`measure_box_smoothing.py`:
+
+| arm | jitter | vs raw | lag |
+|---|---|---|---|
+| raw (no smoothing) | 0.0092 | — | 0 |
+| EMA k=0.6 (previous) | 0.0080 | -12.4% | 0.0421 |
+| **One Euro (centre/size)** | **0.0069** | **-24.6%** | 0.0386 |
+
+Paired by track, One Euro is better on jitter for **110 of 140 tracks**,
+median paired difference -0.00102 with a 95% bootstrap CI of [-0.00131,
+-0.00084]. **The lag column does not survive pairing**: better on 75 of 140,
+CI [-0.00365, +0.00230], spanning zero. So the honest claim is better jitter
+at indistinguishable lag -- a free win on one axis rather than a win on both,
+and the pooled lag figures above would have supported the stronger reading.
+One Euro ships as the default.
+
+Two mechanisms recorded because they are the reason, not decoration. The
+EMA's `k` has no timestep in it, so at 24 fps and 60 fps it smooths the same
+motion by different amounts; the clips run 24-60 fps and the demo's webcam
+rate is whatever the device gives. One Euro's alpha is computed from `dt`,
+which is also why the page now passes a real timestamp. And boxes are
+filtered in centre/size form rather than by corner, so smoothing cannot shear
+the box: position and scale are independent and scale is smoothed harder,
+because scale wobble is almost always noise where position often is not.
+
+**Two decisions that came out of review rather than design.** `headsize v2`
+read the proposed interface against Ear_Landmarker's and found that coasting
+and emitting are separate axes, which the first pass had collapsed: a
+consumer wants a track's id and filter state to survive a dropout without
+drawing a stale box. Each `Track` now carries `matched` and `det_index`, so a
+consumer filters per track rather than configuring per tracker, and
+pass-through is configuration rather than a flag:
+
+    BoxTracker(confirm_score=0.70, continue_score=0.70, min_hits=1,
+               max_misses=5, smoother=OneEuroBoxSmoother)
+
+They also established that **One Euro must be fed only on matched frames**,
+and that this is load-bearing rather than tidy. After a gap, `dt` spans the
+whole gap, alpha rises, and the filter jumps most of the way to the new
+observation. Feeding it a repeated or coasted box at small `dt` instead reads
+as "the ear stopped", drags the speed estimate toward zero and over-smooths
+the next real motion -- sluggishness on exactly the frames after a flicker,
+which is what the tracker exists to prevent. A coasting track emits its last
+smoothed box unchanged. Pre-confirmation frames (`hits < min_hits`) *are*
+fed: those are real detections of the same track, and withholding them would
+cold-start the filter at the moment the box becomes visible. Both are pinned
+by tests, because both are the kind of thing a reasonable implementation gets
+backwards.
+
+Association stays IoU at 0.3 rather than Ear_Landmarker's nearest-centre at
+0.6x size, and not because IoU is better: because every constant here was
+measured with it, and switching association silently re-denominates them the
+way adopting a detector with 10% larger boxes would re-denominate `expand`.
+Their adoption is therefore "near pass-through" and needs checking against
+their own jitter benchmark. If that check fails, the answer is a second
+association mode with its own swept constants, not loosening this one until
+their tests pass.
 
 ### The demo matched against the smoothed box, and the constants were measured against the raw one
 

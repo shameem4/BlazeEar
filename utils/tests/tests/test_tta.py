@@ -174,32 +174,32 @@ class TestViewsMatchJs(unittest.TestCase):
                         'a running track should continue below the '
                         'single-frame gate; that is the hysteresis')
 
-    def test_demo_tracker_matches_against_the_raw_box(self):
-        """Matching must see the last matched detection, not the EMA blend.
+    def test_demo_page_uses_the_shared_tracker_module(self):
+        """The tracker moved out of this page, and must not come back.
 
-        These were one field until `headsize v2` read the demo against
-        `measure_video_dynamics.py` and found the comment describing an intent
-        the code did not implement. The Python that measured 0.80 / 0.65 /
-        minHits 3 matches against the raw box; the JS was matching against the
-        smoothed one. Replaying the 25 clips both ways gives 189 lateral / 9
-        midline confirmations as measured against 212 / 14 as shipped, a
-        divergence the same size as the +25 lateral the constants were chosen
-        for. So this is not a style question: if the two languages disagree
-        here, the shipped constants are not the measured ones.
+        It was inline here, which is how it drifted from the Python that
+        measured its constants: this page matched IoU against the smoothed box
+        while measure_video_dynamics.py matched against the raw one, worth
+        189 -> 212 lateral confirmations on the clips corpus. The behavioural
+        checks now live in test_box_tracker.py, which runs both
+        implementations over a shared sequence. What this test guards is the
+        wiring: that the page loads the shared file, constructs the shared
+        class, and does not carry a private copy that could drift again.
         """
         page = (JS_PATH.parent / 'index.html').read_text(encoding='utf-8')
-        body = re.search(r'class EarTracker \{(.*?)\n        \}', page, re.S)
-        self.assertIsNotNone(body, 'EarTracker not found in the demo page')
-        body = body.group(1)
-        self.assertIn('EarTracker.iou(track.rawBox', body,
-                      'IoU matching must use the raw box, which is what '
-                      'measure_video_dynamics.py matches against')
-        self.assertNotIn('EarTracker.iou(track.box', body,
-                         'matching against the smoothed box re-denominates '
-                         'the measured constants')
-        self.assertEqual(body.count('rawBox = {') + body.count('rawBox: {'), 2,
-                         'rawBox must be set both when a track is created '
-                         'and when it matches, or matching sees a stale box')
+        self.assertIn('src="ear_tracker.js"', page,
+                      'the demo must load the shared tracker module')
+        self.assertIn('new BoxTracker(', page)
+        self.assertNotIn('class EarTracker', page,
+                         'a private copy of the tracker in this page is what '
+                         'allowed it to drift from the measured Python')
+        self.assertIn('smoother: OneEuroBoxSmoother', page,
+                      'One Euro is the measured default: jitter -24.6% from '
+                      "raw against the EMA's -12.4%, better on 110 of 140 "
+                      'tracks, at indistinguishable lag')
+        self.assertRegex(page, r'tracker\.update\(raw,\s*startTime\s*/\s*1000\)',
+                         "One Euro's alpha comes from dt, so the page must "
+                         'pass a real timestamp in seconds')
 
     def test_fused_threshold_is_not_below_the_plain_one(self):
         """Relaxed from `>` to `>=` when both paths were set to 0.70.
