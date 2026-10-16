@@ -2281,6 +2281,60 @@ does not change any conclusion here -- the localise-88%-report-72% gap is
 far larger than a point -- but the figure should be read as 72% plus or minus
 a point rather than as 72.4%.
 
+**And the per-band spread turns out to be predictable, which makes it useful
+rather than merely alarming.** `trainable_blazeface` ran the same question on
+their three face-detector seeds (`c171fb4`, their measurement): pooled recall
+spread 0.24pp, 8-16 px band 1.7pp on ~2,850 boxes, dense bands 0.1-0.2pp. A
+factor of seven between the pooled figure and the band figure, on the same
+runs. Their reading is that it is band *population* rather than anything
+about the band, and that this repo's 4-6pp on bands of 46 and 230 is the same
+effect further along the same curve.
+
+Checking that against the table above, it is stronger than an analogy. The
+observed seed-to-seed difference in each band sits at or below the binomial
+standard error for a difference of two proportions at that band's own n:
+
+| band | n | observed | binomial SE |
+|---|---|---|---|
+| 0-32 | 123 | 1.7pp | 2.3pp |
+| 32-48 | 250 | 0.8pp | 4.2pp |
+| 48-64 | 698 | 1.7pp | 2.3pp |
+| 64-80 | 758 | 0.6pp | 1.6pp |
+| 80-96 | 230 | 4.4pp | 3.5pp |
+| 96-120 | 88 | 2.2pp | 6.8pp |
+| 120+ | 46 | 6.5pp | 10.0pp |
+| all | 2193 | 1.1pp | 1.4pp |
+
+So **a band's untrustworthiness can be read off its n before any seed is
+spent**: `sqrt(2p(1-p)/n)` is a usable upper bound on what two identical
+configurations will differ by, and on this evidence a fairly tight one. The
+80-96 band exceeding its bound slightly is within what one draw does.
+
+One caveat on that formula, since it is the kind of thing that gets reused.
+Both arms score the *same* images, so the correct null for a paired
+difference is narrower than the unpaired binomial -- only the ears that flip
+between arms contribute. That the observed differences land near the
+*unpaired* bound suggests the two seeds flip nearly independent sets of ears,
+which is to say pairing buys little here. That is an inference from one pair,
+not a measured property, and it is the part of this that would change with
+more seeds.
+
+Two notes on how this was arrived at, both from the same exchange. Their
+README had already flagged a retired result -- a `min16` configuration at
+0.869 against stock's 0.857 on 16-32 px -- with "+1.2 points is the size of
+effect that routinely fails to replicate", which was an intuition at the
+time. The measured per-band spread is 1.2-1.7pp, so the number they had
+picked out of the air as suspicious is the noise floor. And they named the
+error class this repo nearly committed tonight: **comparing the cap's -0.9pp
+against an mAP spread would have been reading a number denominated in one
+measurement's units against another's.** That is the third instance, after
+the detection gate fitted in crop space and deployed end to end, and
+`expand` 1.5 fitted on stock's boxes and carried toward a detector whose
+boxes are 10% larger. It is the only error class in this project that has
+recurred, and it recurred in three unrelated places, which is worth more
+attention than any single one of them got.
+
+
 **n=2, which is a difference and not a variance estimate.** One draw from
 the seed-difference distribution, with no way to bound how much wider it
 gets. `trainable_blazeface`'s warning against quoting a sigma off n=3 applies
