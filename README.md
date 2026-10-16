@@ -1722,16 +1722,20 @@ The second row is the point: **0.72 is drawn when it belongs to a confirmed
 track and discarded when it does not**, which no single threshold can
 express.
 
-**What this does NOT license is a lower confirm score, and an earlier version
-of this section said otherwise.** It claimed the hysteresis works "because a
-real ear persists across frames and a midline artefact does not". That is
-false for this artefact. The nose bridge is a *stationary* structure: a
-midline candidate sitting at 0.72 matches itself frame after frame, reaches
-`minHits`, confirms, and then coasts -- the tracker would make it steadier,
-not rarer. Hysteresis filters *transient* false positives; against a
-persistent one its only defence is the bar at entry, which is exactly why
-confirm stays at the measured argmax rather than following the continue score
-down.
+**On whether this licenses a lower confirm score, this section has now been
+wrong in both directions.** It first claimed the hysteresis works "because a
+real ear persists across frames and a midline artefact does not". That was
+retracted on the reasoning that a nose bridge is a *stationary* structure, so
+a midline candidate at 0.72 would match itself frame after frame, confirm,
+and coast -- making it steadier rather than rarer. **Measured on 7,500 frames
+of 25 conversational clips, the retraction was the wrong call and the
+original claim was closer to right.** Midline candidates are *less*
+persistent than lateral ones: p90 lifetime 4 frames against 8, reaching 0.85
+in 3.1% of tracks against 6.8%, and crossing the 0.85 boundary *more* often
+per frame, 0.080 against 0.055. They are flickerier than real ears, so
+`minHits` suppresses them preferentially. The stationary-structure argument
+was asserted from the geometry and never tested against a frame sequence; it
+is wrong by every statistic that bears on it. See the clips section below.
 
 So the two mechanisms are not interchangeable. The gate decides what may
 enter, and is picked on the end-to-end sweep. The tracker decides what may
@@ -1807,11 +1811,9 @@ a replacement.
 
 Implementing it needs `merge_views` to return each cluster's distinct view
 count, which it computes and discards today, and the pipeline to drop
-single-view clusters. Not done. `minHits` and `maxMisses` remain
-picked from principle rather than data: every split here is still images, so
-each figure above is a per-frame rate, and those two constants are about
-frame *ordering*, which no still-image proxy reaches. `CONTINUE_MARGIN` is
-now measured, below.
+single-view clusters. Not done. `CONTINUE_MARGIN` is measured below, and
+`minHits` and `maxMisses` -- which are about frame *ordering*, so no
+still-image proxy reaches them -- are measured on `data/clips` further down.
 
 The first version of this filtered drawn boxes on `misses === 0` and so
 dropped the box on any single missed frame -- reintroducing the strobe for
@@ -2215,6 +2217,63 @@ model trained to find more faces may well have a better-placed tail, so the
 head-ness question stays open for their checkpoint and should be settled by
 training the objective rather than by mining anyone's tail. And the sparse
 band is 85 ears, so 2.26x is suggestive rather than tight.
+
+### Tracker constants, measured on 25 conversational clips
+
+`data/clips` is 25 people, 30s each, 750s at 720p and 24-60 fps -- the selfie
+and video-call framing the earlier video work lacked, and the deployment
+distribution: median face side 0.473 of frame height against the exercise
+corpus's 0.284, and 0.8% of sampled frames with no face against 19.2%.
+`measure_video_dynamics.py` on 7,500 consecutive frames at the deployed
+4-view setting.
+
+**The face stage is not a flicker source here, which retires a claim this
+file made three times.** 3 of 7,500 frames have no face -- 0.0%. Adjacent
+frame face-box IoU is median 0.972, p10 0.908, and under 0.5 in 0.2% of
+transitions. The "flicker is upstream" finding went 19.2% on exercise
+footage, to 4.2% once structural gaps were separated out, to essentially zero
+on the distribution that ships. `maxMisses = 3` therefore protects very
+little: coasting a dropped frame is free and still prevents a one-frame
+blink, but the recall it defends is near nil, and the earlier claim that the
+constant was "now measured" was measured on the wrong corpus.
+
+**Midline candidates are flickerier than ears, not steadier**, which reverses
+the retraction recorded in the tracker section above.
+
+| class | tracks | median life | p90 life | ever >= 0.85 | crossings/frame |
+|---|---|---|---|---|---|
+| midline | 544 | 1.0 | 4.0 | 3.1% | **0.080** |
+| lateral | 2634 | 1.0 | 8.0 | 6.8% | 0.055 |
+
+**So `minHits` discriminates, and a lower confirm score becomes affordable.**
+Both swept over one detection pass, confirmed tracks counted by position:
+
+| confirm | keep | minHits | midline | lateral | lateral vs shipped |
+|---|---|---|---|---|---|
+| **0.85** | **0.70** | **2 (shipped)** | **9** | **164** | -- |
+| 0.85 | 0.70 | 3 | 6 | 150 | 91.5% |
+| 0.80 | 0.65 | 2 | 17 | 210 | 128.0% |
+| **0.80** | **0.65** | **3** | **9** | **189** | **115.2%** |
+| 0.80 | 0.65 | 4 | 7 | 171 | 104.3% |
+| 0.75 | 0.60 | 3 | 15 | 227 | 138.4% |
+| 0.70 | 0.55 | 3 | 27 | 302 | 184.1% |
+
+Bootstrapped over the 25 clips, 20,000 draws, **0.80 / 0.65 / minHits 3**
+against the shipped **0.85 / 0.70 / minHits 2**: lateral confirmations
+**+25, 95% CI [+6, +50], P(gain) = 99.8%**; midline confirmations **0, 95% CI
+[-5, +4], P(worse) = 44.9%**. The gain is solid; the cost is
+*indistinguishable* rather than zero -- that test has power only to about
++/-5 events on a base of 9, because midline false positives are concentrated
+in 5 of the 25 clips and absent from the other 20. `minHits = 3` costs one
+extra frame of latency, 33-42 ms here.
+
+**What this is not.** "Lateral" is not "true positive": lateral candidates
+include false positives that happen to sit laterally, and 11.4% of real ears
+fall inside the midline band, so this is a position proxy rather than a
+precision/recall measurement. Converting it needs labelled frames, which is
+the deliberately deferred Phase 2. The direction is strong enough to justify
+that labelling and not strong enough on its own to be called a recall gain,
+so the shipped constants are unchanged pending it.
 
 ### Where this can go next, and what it is worth
 
