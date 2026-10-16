@@ -367,7 +367,8 @@
                     let bestIou = this.matchIou;
                     for (let i = 0; i < candidates.length; i++) {
                         if (claimed.has(i)) continue;
-                        const iou = EarTracker.iou(track.box, candidates[i]);
+                        const iou = EarTracker.iou(track.rawBox,
+                                                  candidates[i]);
                         if (iou >= bestIou) {
                             bestIou = iou;
                             best = i;
@@ -380,8 +381,24 @@
                     claimed.add(best);
                     const det = candidates[best];
                     const k = this.smoothing;
-                    // Smoothed for display only; matching uses the same box,
-                    // which is what keeps a jittering detection on one track.
+                    // Two boxes per track, deliberately. `rawBox` is the last
+                    // matched detection and is what IoU matching sees; `box`
+                    // is the smoothed one and is display only.
+                    //
+                    // They were the same field until headsize v2 read this
+                    // code against measure_video_dynamics.py and found the
+                    // comment describing an intent the code did not
+                    // implement: matching ran against the EMA blend, while
+                    // the Python that measured 0.80 / 0.65 / minHits 3
+                    // matched against the raw box. Replaying the 25 clips
+                    // both ways, that is 189 lateral / 9 midline
+                    // confirmations as measured against 212 / 14 as shipped
+                    // -- a divergence the same size as the +25 lateral the
+                    // constants were chosen for, so it was not cosmetic.
+                    track.rawBox = {
+                        xmin: det.xmin, ymin: det.ymin,
+                        width: det.width, height: det.height,
+                    };
                     track.box = {
                         xmin: k * track.box.xmin + (1 - k) * det.xmin,
                         ymin: k * track.box.ymin + (1 - k) * det.ymin,
@@ -401,6 +418,10 @@
                     this.tracks.push({
                         id: this.nextId++,
                         box: {
+                            xmin: det.xmin, ymin: det.ymin,
+                            width: det.width, height: det.height,
+                        },
+                        rawBox: {
                             xmin: det.xmin, ymin: det.ymin,
                             width: det.width, height: det.height,
                         },

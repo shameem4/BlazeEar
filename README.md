@@ -2163,6 +2163,51 @@ that contains an ear. Every constant fitted against stock is in stock's
 units, and the optimum for a swapped detector cannot be derived from either
 model's own metrics -- it has to be swept against delivered ears.
 
+### The demo matched against the smoothed box, and the constants were measured against the raw one
+
+Found by `headsize v2` reading `docs/index.html` against
+`measure_video_dynamics.py` while checking a proposed shared tracker
+interface. `EarTracker.update()` computed IoU against `track.box`, which is
+the EMA blend, directly under a comment reading "Smoothed for display only;
+matching uses the same box". The comment described an intent the code did not
+implement. `simulate()` in the Python mirror assigns the raw detection box,
+so **the constants 0.80 / 0.65 / minHits 3 were measured with raw-box
+matching and shipped with smoothed-box matching.**
+
+Replaying the same cached candidates from the 25 clips both ways, 7,500
+frames:
+
+| matching box | midline | between | lateral | frames drawn |
+|---|---|---|---|---|
+| raw (as measured) | 9 | 6 | **189** | 9,665 |
+| EMA 0.6 (as shipped) | 14 | 7 | **212** | 9,605 |
+
+**The divergence is the same size as the effect the constants were chosen
+for.** The measured case for `0.80 / 0.65 / minHits 3` was +25 lateral
+confirmations with midline indistinguishable; matching against the smoothed
+box moves lateral by +23 and midline by +5 on its own. So the shipped
+configuration was neither the measured one nor obviously worse -- it was
+unmeasured, and the published justification did not apply to the code that
+ran.
+
+Fixed by giving each track two boxes: `rawBox`, the last matched detection,
+which is what IoU matching sees, and `box`, the smoothed one, display only --
+which is what the comment always claimed. `test_tta.py` now pins it, checking
+both that matching reads `rawBox` and that it is assigned on track creation
+as well as on match, since a stale `rawBox` would reintroduce the same class
+of bug silently.
+
+Two notes worth keeping. **The earlier retraction was in the wrong
+direction**: this README previously recorded the Python/JS tracker
+divergence as an off-by-one in when `drawn` was incremented, and treated the
+box difference as display-only on the strength of that comment. The comment
+was the thing that needed checking. And **the fix is not obviously an
+improvement** -- it is a restoration of the measured configuration. Smoothed-
+box matching has a defensible mechanism behind it (a smoothed box is a
+better prediction of where a jittering ear will be next frame) and it drew
+more lateral confirmations here. It is rejected because it is not what was
+measured, not because it lost. If it is wanted, it gets its own sweep.
+
 ### The upgraded face stage is not swapped in, and both sessions agree why
 
 `trainable_blazeface` retrained its face detector and I asked whether to
