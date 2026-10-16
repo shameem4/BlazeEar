@@ -1398,8 +1398,9 @@ run there.
 
 Run 2026-10-15, 100 epochs per arm on `crops_train`, scored on `crops_val`
 (2,193 human ears in 2,033 crops) at the then-deployed 0.80 gate, hit =
-IoU >= 0.5. The gate is now 0.70; see the gate section below for this same
-comparison re-read there.
+IoU >= 0.5, which is also the deployed gate -- it was briefly moved to 0.70
+and reverted; see the gate section below for that excursion and for this same
+comparison re-read at 0.70.
 `python score_arm_bands.py`. Arms differ only in the two constants:
 
 | band | n | baseline | cap_only | treatment | cap - base | B1 |
@@ -1508,7 +1509,7 @@ still stands, for a narrower reason: 0.80 was the threshold that shipped, no arm
 gains at any gate, and each arm's own best achievable recall still orders
 baseline first (87.87 / 87.46 / 87.28%).
 
-### Why the gate was 0.80, what it cost, and why it is now 0.70
+### Why the gate is 0.80, what it costs, and the 0.70 excursion
 
 `DETECTION_SCORE_THRESHOLD` was 0.80, fitted on a different measurement
 from the one above: **F1**, end to end, on `common_heldout` (355 ears), where
@@ -1894,7 +1895,7 @@ not reachable from the loss or the augmentation at all; and at the deployed
 gate the second stage localises 87.9% of ears while reporting 72.4%, of which
 about 6.5pp is available for 0.11 FP/image and the rest is not cheap.
 
-### The flicker is upstream: the face stage drops out
+### The flicker is partly upstream: 4.2% transient face dropout
 
 `measure_video_dynamics.py`, label-free, on 5,378 frames of 60 hand-held
 videos. No annotation is needed because the two constants in question --
@@ -1912,7 +1913,10 @@ midline, but enough for the question asked.
 | ... p10 | 0.565 |
 | ... below 0.5 | 6.8% of transitions |
 
-**19.2% of frames lose the face entirely**, and a frame with no face has no
+**19.2% of frames lose the face entirely** -- but only about a fifth of that
+is a face the detector should have found, as the run-length split below
+shows, so 4.2% is the figure that transfers and the 19.2% is mostly frames
+with no face in them. A frame with no face has no
 crop, so it has no ear detection whatever the ear model or the gate does.
 That single number explains the ear-side result: median candidate lifetime is
 1 frame for *every* position class, because a track cannot survive a frame
@@ -1996,7 +2000,7 @@ with head movement, where the face is continuously present so that structural
 gaps vanish and the transient rate can be measured on its own. Exercise video
 cannot provide it, and that is now demonstrated rather than assumed.
 
-### The cheapest stage-1 coverage win is a constant, not a model
+### A constant buys stage-1 coverage, and the coverage does not convert
 
 Prompted by a handoff from `trainable_blazeface` (via Ear_Landmarker,
 `handoff/t4_stage1/` at commit 3d17c65), which measured a fine-tuned stage 1
