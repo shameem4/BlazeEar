@@ -2290,6 +2290,29 @@ because that makes it an ES module, which is a syntax error under `require()`
 and would silently disable the parity test itself -- the check and the thing
 it checks share a failure mode.
 
+**And a fourth, from Ear_Landmarker, after `headSize-gnm` had already
+vendored the file.** The JS built each track's smoother with
+`new this.smoother()`, so a class worked and a factory did not:
+`smoother: () => new OneEuroBoxSmoother({minCutoff: 2})` -- the only way to
+pass non-default filter constants -- ran in Python and threw
+"this.smoother is not a constructor" in JS. They subclassed to get around it.
+The JSDoc said "factory", so the documentation described the Python
+behaviour, and the shared sequence only ever passed a class, so the fixture
+that exists to catch exactly this did not reach it. **The parity test covered
+the two implementations and not the two call conventions.** The JS now
+accepts either form, trying `new` first (which also handles a plain
+`function` factory) and falling back only on "is not a constructor", so a
+genuine throw inside a constructor still propagates. A test runs a factory
+with a non-default cutoff through both languages and compares the boxes --
+and separately asserts that the tuned output *differs* from the default,
+because otherwise it would pass on a factory whose arguments never reached
+the filter.
+
+Three consumer-side findings in a row now, each one a thing that looked
+correct from inside: a silently ignored option, a call convention the fixture
+did not reach, and before them the smoothed-box matching. All three were
+found by running the code rather than reading it.
+
 Association stays IoU at 0.3 rather than Ear_Landmarker's nearest-centre at
 0.6x size, and not because IoU is better: because every constant here was
 measured with it, and switching association silently re-denominates them the

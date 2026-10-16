@@ -346,6 +346,69 @@ class TestJsParity(unittest.TestCase):
         self.assertIn('detIndex', keys)
         self.assertNotIn('det_index', keys)
 
+    def test_a_parameterised_factory_works_and_agrees(self):
+        """A tuned smoother must be passable the same way in both languages.
+
+        Found by Ear_Landmarker from the consumer side: the JS did
+        `new this.smoother()`, so `smoother: () => new OneEuroBoxSmoother(...)`
+        -- the only way to pass non-default filter constants -- worked in
+        Python and threw "this.smoother is not a constructor" in JS. The
+        JSDoc said "factory" and this fixture only ever passed a class, so
+        neither the documentation nor the tests covered the difference. They
+        subclassed to get around it.
+
+        This runs a factory with a non-default cutoff through both and
+        compares the boxes, so the asymmetry cannot come back quietly and
+        the parameters are proven to actually reach the filter.
+        """
+        tr = BoxTracker(smoother=lambda: OneEuroBoxSmoother(min_cutoff=2.0))
+        py = [[{k: r[k] for k in ('id', 'matched', 'xmin', 'ymin',
+                                  'width', 'height', 'hits', 'misses')}
+               for r in tr.update(f['detections'], f['t'])]
+              for f in self.seq['frames']]
+        js = self._js('() => new OneEuroBoxSmoother({minCutoff: 2.0})')
+        self._compare(py, js, 'parameterised factory')
+
+        # ...and a tuned filter must differ from the default, or the test
+        # above would pass on a factory whose arguments were ignored.
+        default = self._python(OneEuroBoxSmoother)
+        self.assertNotEqual([r['xmin'] for f in py for r in f],
+                            [r['xmin'] for f in default for r in f],
+                            'min_cutoff=2.0 produced the default output, so '
+                            'the factory arguments are not reaching the '
+                            'filter')
+
+    def test_a_genuine_constructor_error_is_not_swallowed(self):
+        """The class-or-factory fallback must not retry a real failure.
+
+        It is narrowed to "is not a constructor" precisely so that a throw
+        inside a smoother's constructor propagates rather than being called
+        again as a function and failing somewhere less informative.
+        """
+        class Boom:
+            def __init__(self):
+                raise RuntimeError('boom')
+
+        tr = BoxTracker(smoother=Boom)
+        with self.assertRaises(RuntimeError):
+            tr.update([det(10, 10, 20, 30, 0.9)])
+
+        script = f"""
+        const {{BoxTracker}} = require({str(JS)!r});
+        class Boom {{ constructor() {{ throw new RangeError('boom'); }} }}
+        try {{
+            new BoxTracker({{smoother: Boom, minHits: 1}}).update(
+                [{{xmin: 1, ymin: 1, width: 5, height: 5, confidence: 0.9}}], 0);
+            console.log('SWALLOWED');
+        }} catch (e) {{
+            console.log(e.constructor.name);
+        }}
+        """
+        res = subprocess.run(['node', '-e', script], capture_output=True,
+                             text=True, cwd=ROOT)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual(res.stdout.strip(), 'RangeError')
+
     def test_js_constants_match_python(self):
         text = JS.read_text()
         import re
