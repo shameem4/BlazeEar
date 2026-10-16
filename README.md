@@ -1996,6 +1996,63 @@ with head movement, where the face is continuously present so that structural
 gaps vanish and the transient rate can be measured on its own. Exercise video
 cannot provide it, and that is now demonstrated rather than assumed.
 
+### The cheapest stage-1 coverage win is a constant, not a model
+
+Prompted by a handoff from `trainable_blazeface` (via Ear_Landmarker,
+`handoff/t4_stage1/` at commit 3d17c65), which measured a fine-tuned stage 1
+end to end on this corpus: ears no crop covers fall 1,301 -> 530 of 15,359,
+and converting that into delivered ears at matched precision yields roughly
+nothing, because the extra crops carry extra non-ear scene. Their own
+conclusion is that the cheapest stage-1 win is `FACE_CROP_THRESHOLD` rather
+than a new model. That is right, and it goes further than they put it.
+
+Their nine configurations swept the face threshold only on their own
+checkpoint, holding stock at its fitted 0.2. On stock MediaPipe, 900 `val_v2`
+images and 1,148 ears at expand 1.5, counting ears whose centre no crop
+contains:
+
+| face threshold | crops/image | ears no crop covers |
+|---|---|---|
+| 0.30 | 1.51 | 12.63% |
+| **0.20 (shipped)** | **1.95** | **9.41%** |
+| 0.15 | 2.50 | 7.75% |
+| **0.10** | 3.69 | **4.62%** |
+| 0.05 | 6.15 | 2.61% |
+
+**Stock halves its own uncovered ears by lowering a constant**, 9.41% to
+4.62%, which is the same order of effect as their 8.5% -> 3.5% and needs no
+new weights. So "a fine-tuned stage 1 finds faces stock misses" and "a lower
+threshold finds faces the shipped constant discards" are not separated by
+anything in that handoff. The missing arm is stock at 0.10 and 0.05 through
+the same paired harness; their `--ckpt` and `--face-thresh-*` flags already
+support it.
+
+This is coverage, not delivered recall at matched precision, and that
+distinction is the whole lesson of their result: 3.69 crops per image instead
+of 1.95 means more non-ear scene, so a lower stock threshold should pay the
+same 4-7pp precision cost theirs did. The cost looks like a property of
+lowering the threshold rather than of anyone's weights -- which is why the
+constant is not a free win either, and why it is only worth taking against
+the downstream objective.
+
+Two of their constants are worth recording here regardless. Their boxes are
+linearly **1.0998x** larger than stock's on this corpus (bootstrap CI
+1.094-1.105), so `make_face_crops.py`'s `side = expand * max(box_w, box_h)`
+turns an expand of 1.5 into an effective 1.65 for their detector. And their
+measurement that restoring 1.364 makes *both* arms worse -- stock 79.09% ->
+77.52% -- is the coverage/resolution trade this README already records for
+the 1.5 optimum, with coverage dominating below it. They read that as the
+recorded mechanism being incomplete; it reads here as confirmation, since the
+claim was always that the two trade and 1.5 is where they balance.
+
+Their `FACE_CROP_THRESHOLD` lesson generalises past this pipeline and is
+worth keeping verbatim in substance: a face detector's own precision metric
+and this pipeline's objective disagree by construction, because a profile or
+partial face that the face GT scores as a false positive is exactly the crop
+that contains an ear. Every constant fitted against stock is in stock's
+units, and the optimum for a swapped detector cannot be derived from either
+model's own metrics -- it has to be swept against delivered ears.
+
 ### Where this can go next, and what it is worth
 
 Written at the close of the gate/tracker work, so the next person does not
