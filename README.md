@@ -2317,10 +2317,32 @@ Association stays IoU at 0.3 rather than Ear_Landmarker's nearest-centre at
 0.6x size, and not because IoU is better: because every constant here was
 measured with it, and switching association silently re-denominates them the
 way adopting a detector with 10% larger boxes would re-denominate `expand`.
-Their adoption is therefore "near pass-through" and needs checking against
-their own jitter benchmark. If that check fails, the answer is a second
-association mode with its own swept constants, not loosening this one until
-their tests pass.
+Their adoption is therefore "near pass-through" and needed checking against
+their own jitter benchmark.
+
+**They ran it, and the association change buys nothing measurable.** Their
+reported result (`60481f7`, their measurement, not reproduced here): the
+existing `scripts/eval_jitter.py` could not answer the question at all,
+because it synthesises crop wobble from single images and never touches the
+tracker, so association cannot move it -- a benchmark that would have
+returned a confident null for the wrong reason. They built
+`scripts/clip_jitter.py` instead, detector to tracker to landmarker end to
+end on these 25 clips, measuring median per-point displacement of the primary
+ear between consecutive frames. Nearest-centre to IoU 0.3: **1.2956 ->
+1.3034 px, +0.6%, Wilcoxon p=0.58**, better on 6 clips and worse on 4, with
+15 of 25 bit-identical because only a clip containing a track switch can
+differ at all. The largest single change went *against* the new rule (M05
++16.8%); the largest for it was W09 -17.3%.
+
+So a **-14.5% reduction in track switches does not convert into less visible
+jitter**, which is the same shape as this repo's other conversion failures:
+an intermediate quantity improves and the thing anyone would notice does not.
+The practical reading is that the association rule is a free choice on
+jitter, which is what makes "keep the one the constants were measured with"
+the right tie-break rather than a concession. It also means the case for IoU
+rests entirely on constant denomination and not at all on tracking quality,
+and that is worth stating plainly, because "we switched association and
+switches fell 14.5%" would read as an improvement and is not one.
 
 ### The demo matched against the smoothed box, and the constants were measured against the raw one
 
