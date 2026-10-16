@@ -2140,6 +2140,74 @@ that contains an ear. Every constant fitted against stock is in stock's
 units, and the optimum for a swapped detector cannot be derived from either
 model's own metrics -- it has to be swept against delivered ears.
 
+### The upgraded face stage is not swapped in, and both sessions agree why
+
+`trainable_blazeface` retrained its face detector and I asked whether to
+replace stock MediaPipe with it. The determination is **no**, reached
+independently on both sides and for the same reason, so it is worth recording
+with the numbers rather than as a preference.
+
+The upgrade is retrained weights and nothing else: same architecture, same
+128 px input, same 896 anchors, same 101,390 parameters, all 78 state_dict
+tensors identical in key and shape. It loads into this pipeline with
+`strict=True`. What changed is how ground-truth boxes were assigned to
+anchors during training. On their full val split, 8,081 images and 20,505
+boxes at IoU >= 0.5:
+
+| | precision | recall | FP | 8-16 px | 16-32 px | 32+ px |
+|---|---|---|---|---|---|---|
+| stock | 0.9380 | 0.4372 | 592 | 0.078 | 0.862 | 0.973 |
+| tuned | 0.9649 | **0.5011** | 374 | **0.402** | 0.934 | 0.980 |
+
+At matched precision that is 0.433 -> 0.503, three seeds, spread 0.0022, and
+it holds against YuNet detections rather than their own labels (+0.071
+recall, larger than against the teacher, which is the check that rules out
+mimicry). Their split is per-image disjoint with zero path overlap, but all
+62 WIDER categories appear on both sides and is not perceptually
+deduplicated, so it is "held out" rather than independent -- their
+characterisation, offered unprompted.
+
+**The detector is better. It is better in the one band this pipeline has
+measured as unable to receive it.** The 8-16 px recall going 0.078 -> 0.402
+is the largest single number they have, and `score_rescued_ears.py` found
+1 of 332 ears in the 0-32 px band scoreable *in an oracle crop* -- the stock
+face box nearest the ear, expanded by the minimum factor that brings the ear
+inside -- with 56.9% producing no box at all. So the strongest thing on offer
+is delivery into the band that cannot score. That is the whole argument, and
+they made it themselves.
+
+**The geometry is the second reason and it is the expensive one.** On 1,739
+faces both models detect, theirs are 11.7% larger linearly (area 1.248x,
+width 1.115x, height 1.120x) with the centre ~4.8% of box height higher. The
+1.0998x [1.0936, 1.1048] measured here on this corpus *excludes* their 1.117,
+so the ratio is real and does not transfer between corpora. Every constant
+denominated in face-box units moves: `expand` 1.5 becomes effectively ~1.675,
+and the gate and tracker thresholds sit downstream of a crop that is no
+longer the same crop. Rescaling does not rescue it, because expand 1.364 was
+already measured worse than 1.5 for *both* detectors here. A swap costs a
+full re-sweep of expand, gate and tracker constants.
+
+Cost is identical (101,390 params, 2.24 vs 2.26 ms CPU forward) and there is
+an ONNX export at 128 px verified to 1e-7, so neither cost nor the browser
+path is the obstacle.
+
+**The axis that would decide it has no data on either side.** Stage 1 is not
+this pipeline's complaint on video -- stock gives 3 no-face frames in 7,500
+and adjacent-frame box IoU median 0.972 -- but nobody has run the tuned
+detector on video at all. Their nearest proxy is horizontal-flip agreement on
+stills (0.9140 -> 0.9364), a different axis, which they declined to
+substitute for the one asked about. The open measurement is adjacent-frame
+IoU and no-face-frame rate for both detectors on the 25 clips, a few hours,
+and it is the only thing that could make the swap worth its re-sweep before
+stage-2 scoring is fixed.
+
+**Re-ask when the 0-32 px band becomes convertible.** The gain is real and
+sitting there; it is gated on stage 2, not on stage 1. Their generalisable
+warning stands and is why neither model's own metrics could have settled
+this: a face detector's precision metric and this pipeline's objective
+disagree by construction, because a profile or partial face that face GT
+scores as a false positive is exactly the crop that contains an ear.
+
 ### Crop placement carries ear information, and it is not just composition
 
 `trainable_blazeface` raised the sharpest objection in the stage-1 exchange.
