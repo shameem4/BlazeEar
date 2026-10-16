@@ -95,7 +95,42 @@ run_arm () {
     # Editing config.py here would invalidate the as-run snapshot above, which
     # is the thing that makes a finished arm interpretable later.
     echo "=== arm $name: scale=($low, $high)  prior cap=$cap ==="
+    # MemoryMax, because this launcher had no ceiling at all: an arm that
+    # leaked grew until the kernel's OOM killer chose a victim, and the victim
+    # is whatever the kernel likes rather than this job. Flagged by the
+    # Documents session as the last unguarded heavy job on the machine.
+    #
+    # 12G is from a measurement rather than a guess. Three 100-epoch runs of
+    # this exact command tonight peaked at 4.3G, 3.9G and 4.3G
+    # (`systemctl --user show <unit> -p MemoryPeak --value`, or the journal's
+    # own "N memory peak" line), so 12G is about 2.8x the peak -- loose enough
+    # that a legitimate arm never touches it, tight enough that a leak is
+    # killed while the machine is still usable. A 24G cap on a 4.3G job is a
+    # cap in name only.
+    #
+    # MemoryMax KILLS; MemoryHigh only throttles, so a runaway would crawl at
+    # the ceiling until something else died and the blame would land in the
+    # wrong place. MemorySwapMax=0 stops it trading into swap and taking the
+    # desktop down with it before it dies.
+    #
+    # WRITE THE UNIT. systemd reads a bare number as BYTES, so
+    # `-p MemoryMax=12` is a 12-BYTE cgroup: the job is killed before it
+    # prints anything and the failure looks exactly like a real memory
+    # blowup. That cost a sibling session three runs and a wrong diagnosis of
+    # systemd itself. Nothing validates this value here, because this calls
+    # systemd-run directly.
+    #
+    # NOT COUNTED BY ADMISSION CONTROL. $CODE_UTILITIES/guard_run.sh refuses a
+    # job when other guarded jobs hold the headroom (ceiling: MemTotal minus a
+    # 12 GiB desktop allowance). A bare systemd-run registers no reservation,
+    # so an arm running here is invisible to that accounting and another
+    # session can be admitted on top of it. Moving to guard_run would fix the
+    # visibility but trades this service for a --scope: the --setenv flags
+    # become unnecessary and the journal logging becomes a log file, which is
+    # a bigger change to a launcher whose as-run reproducibility is the point.
+    # Capping was the urgent half; visibility is a separate decision.
     systemd-run --user --unit="blazeear-$name" --same-dir --wait --collect \
+        -p MemoryMax=12G -p MemorySwapMax=0 \
         --setenv=LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
         --setenv=BLAZEEAR_AUGMENT_SCALE_LOW="$low" \
         --setenv=BLAZEEAR_AUGMENT_SCALE_HIGH="$high" \

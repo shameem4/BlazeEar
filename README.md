@@ -174,7 +174,14 @@ In short: `trainable_blazeface` made BlazeFace trainable; BlazeEar uses that fou
   described correctly as unseeded. A single unseeded run cannot be compared
   against the shipped checkpoint. Writes an as-run snapshot and checksums
   before launching anything, and runs under `systemd-run --user` so the
-  output lands in the journal and survives a reboot.
+  output lands in the journal and survives a reboot. Capped at
+  `MemoryMax=12G` with `MemorySwapMax=0` -- it had no ceiling at all until
+  the Documents session flagged it as the last unguarded heavy job on the
+  machine. 12G is about 2.8x the measured peak: three 100-epoch runs of this
+  exact command came in at 4.3G, 3.9G and 4.3G, which is also why it is not
+  the 24G suggested, since a 24G cap on a 4.3G job is a cap in name only.
+  Note the units trap -- systemd reads a bare `12` as twelve BYTES, and the
+  resulting kill looks exactly like a real memory blowup.
 - `measure_tragion_coverage.py`, `measure_crop_shift.py`,
   `measure_anchor_budget.py`  
   Standalone measurements behind claims in this README, kept runnable so the
