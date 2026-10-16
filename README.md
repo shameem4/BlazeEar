@@ -19,7 +19,11 @@ your browser, on your device. No image leaves the page.
 > ceiling, three separate geometric vetoes, a better upstream face detector
 > from a sibling project. Every one was reasonable. Every one came back null
 > or negative, and the nulls are the useful part, because each replaced a story
-> with a number.
+> with a number. The face detector is the clearest case: it genuinely finds
+> faces this one misses, five times as many in the smallest band, and that is
+> exactly why it cannot help -- its margin lands where this pipeline cannot
+> score, and taking it would re-denominate every constant measured here. Both
+> sessions reached that independently.
 >
 > What actually moved the needle was never a model change. It was calibration
 > (giving the fused and single-frame paths their own measured thresholds,
@@ -37,6 +41,15 @@ your browser, on your device. No image leaves the page.
 > the face box -- crop geometry, face keypoints, a lower face threshold --
 > fails in exactly the conditions that create the problem, because it fails
 > together with the box it came from.
+>
+> That limit has since been tested rather than assumed, which matters because
+> the alternative reading was that the anchors simply could not represent ears
+> that small -- a weakness the measurements do show, and an opposite fix. An
+> independent detector sharing none of this repo's anchors, target assignment
+> or training recipe, run at 640 px against stage 2's 256, **still missed
+> 62.7% of the same 0-24 px ears**, with no significant difference between the
+> two in any size band. The band is information-limited *and* the anchors are
+> weak there; the two being separable is what makes the first claim stand.
 >
 > The habit worth stealing is in the commit log rather than the code. Claims
 > here carry the measurement that produced them, retractions stay in the text
@@ -141,6 +154,15 @@ In short: `trainable_blazeface` made BlazeFace trainable; BlazeEar uses that fou
   predicted tragions land on the ears that escape the crop (they do not), what
   a same-size shifted crop could recover (5.1pp, given a direction), and where
   the anchor budget goes against where the ears actually are.
+- `check_referees.py`, `check_resolvability.py`  
+  Independent-detector checks, both against the fine-tuned YOLOv11 ear
+  detector and COCO pose. The first asks whether the clips' midline/lateral
+  position proxy agrees with something that knows what an ear is; the second
+  asks whether the 0-32 px band is genuinely information-limited or merely
+  outside what this repo's anchors can represent, by handing the same crops
+  to a detector that shares the labels but none of the anchors, targets or
+  recipe. Neither referee is ground truth, which is the point: agreement is
+  evidence and disagreement marks what a human should look at.
 - `utils/`  
   Anchor helpers, augmentations, visualization, metric utilities, debug scripts, and tests.
 - `runs/`  
