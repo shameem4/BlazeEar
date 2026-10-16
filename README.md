@@ -977,10 +977,14 @@ Areas that naturally follow from the current pipeline:
 - Widen `augment_scale`'s low end from 0.75 to about 0.35, so the training
   distribution reaches the size band the model is worst at. One line, 1-3
   GPU-hours, untested; the reasoning is in the score-head section below.
-- Cap hard-negative mining per feature level. 57% of the anchor budget
-  currently takes global mining pressure while receiving 7.7% of the
-  positives. Same section.
-- Export to ONNX/TFLite for edge deployment.
+- Cap hard-negative mining per feature level. 57% of the anchor budget takes
+  global mining pressure while receiving 7.7% of the positives. **Built and
+  measured since this list was written, and it did not pay** -- -0.87 to
+  -1.09pp at p=0.178, implementation kept and defaulted off. Whether that is
+  a real loss or noise is the first thing the seed runs decide, so this is
+  not closed, it is blocked. Same section.
+- Export to TFLite for edge deployment. ONNX is done: `export_onnx.py`,
+  and `docs/` carries the two graphs the browser demo runs.
 - Price 320 px. 256 paid, the grid argument keeps scaling, and the
   anchor machinery is now size-parameterised, so the run is a constant
   change -- but CPU grows as the square and 3.0x is already the headline
@@ -1771,14 +1775,25 @@ with hysteresis is the standard answer and is orthogonal to the gate: require
 a high score to *start* a track and a lower one to *continue* it, and drop a
 track after N consecutive misses.
 
-**The tracker now exists**, in `docs/index.html` as `EarTracker`. A new track
-needs the confirm score (the slider, default `TTA_SCORE_THRESHOLD` = 0.85)
-*and* two consecutive frames; a running track then survives on 0.70 and
-coasts through up to three dropped frames before it is dropped. Matching is
-IoU >= 0.3 against the track's own smoothed box, and the box is EMA-smoothed
-at 0.6 for display. The detector is asked for candidates down to the continue
-score, because a track needs something to survive on; the confirm decision
-moves out of the detector and into the tracker.
+**The tracker now exists.** As first written, in `docs/index.html` as
+`EarTracker`: a new track needed the confirm score (the slider, default
+`TTA_SCORE_THRESHOLD` = 0.85) *and* two consecutive frames; a running track
+survived on 0.70 and coasted up to three dropped frames. Matching was IoU >=
+0.3 against the track's own smoothed box, EMA-smoothed at 0.6. The detector
+is asked for candidates down to the continue score, because a track needs
+something to survive on; the confirm decision moves out of the detector and
+into the tracker.
+
+**Three of those details have since changed and the paragraph above is kept
+as written.** The constants were measured on the clips corpus and are now
+0.80 confirm / 0.65 continue / `minHits` 3, not 0.85 / 0.70 / 2. Matching
+against the smoothed box turned out to be a defect rather than a design --
+the comment beside it said raw, the Python that measured the constants used
+raw, and the difference is worth 189 -> 212 lateral confirmations. And the
+EMA lost a measured comparison to One Euro. The tracker now lives in
+`utils/box_tracker.py` and `docs/ear_tracker.js`, pinned to each other
+behaviourally; see "One box tracker, in both languages" and "The demo matched
+against the smoothed box" below.
 
 Five behaviours, checked before it shipped:
 
@@ -1948,8 +1963,10 @@ adopted.
 
 **The measurement that should come before any further arm** is two baseline
 seeds, 1.5 GPU-hours. Every figure here, the -1.23pp that drove the revert
-included, is read against a run-to-run noise floor nobody has measured, and
-`train_blazeear.py` still has no `--seed`. Something seed-sensitive is
+included, is read against a run-to-run noise floor nobody has measured.
+`train_blazeear.py` now takes `--seed`, so the two runs are possible; until
+they land, every figure in this section is still one run against one run.
+Something seed-sensitive is
 already known to be in here: which prior the negative budget concentrates on
 is not reproducible across runs. If baseline-to-baseline spread is +/-1.5pp
 then this A/B establishes nothing and no further arm is worth running; if it
@@ -2059,6 +2076,15 @@ not be raised. The sweep is run through a Python mirror of the shipped
 `EarTracker`, checked against the same five behaviour cases the JS passes --
 which caught a one-frame disagreement on the first attempt, where `drawn` was
 incremented before the `maxMisses` filter rather than after it.
+
+**Both conclusions in that paragraph were later overturned, and the mirror is
+why.** `minHits` was raised to 3 once the constants were measured on the
+clips corpus rather than this proxy. And the "same five behaviour cases"
+check passed while the two implementations matched IoU against *different
+boxes* -- the arithmetic agreed and the behaviour did not, which is the
+failure a case-by-case check cannot see. There is no mirror now: there is one
+module in two languages, pinned by replaying a shared sequence and comparing
+every emitted box.
 
 **So the next change is probably a face tracker rather than a better ear
 gate, on a smaller claim than this section first made.** The hysteresis now
@@ -2751,10 +2777,13 @@ reaches them.
 
 In rough order of value per unit of cost:
 
-1. **Two baseline seeds, and a `--seed` flag to make them possible.** ~1.5
-   GPU-hours. `train_blazeear.py` has no seed control, so every training
-   result here is one run against one run, and the effects in play are about
-   a point. This blocks more than it looks: whether the negative-mining cap's
+1. **Two baseline seeds.** ~1.5 GPU-hours. The `--seed` flag this needed
+   now exists, defaulting to None so every run predating it is still
+   correctly described as unseeded; it seeds the main process and the
+   DataLoader shuffle but not each worker's augmentation RNG, which is enough
+   to measure a spread and is documented rather than overclaimed. Until the
+   runs land, every training result here is one run against one run, and the
+   effects in play are about a point. This blocks more than it looks: whether the negative-mining cap's
    -1.09pp is real, whether a B1-only arm is worth running, and whether *any*
    future training change could be detected at all. Cheapest thing on this
    list and it unblocks the whole of item 4. Something seed-sensitive is
@@ -2843,9 +2872,10 @@ them structural rather than careless:
 
 - **Slicing a sorted or grouped file and calling it a sample.** A CSV ordered
   by source gives a "sample" that is one dataset.
-- **Combining figures from runs with different draws.** `train_blazeear.py`
-  has no `--seed`, so two runs are two draws; a ratio across them measures
-  nothing. This is also why `queue_augment_scale_ab.sh` runs a control arm
+- **Combining figures from runs with different draws.** Two unseeded runs
+  are two draws, and a ratio across them measures nothing. `--seed` now
+  exists, but every checkpoint and every number in this README predates it,
+  so this applies to all of them. This is also why `queue_augment_scale_ab.sh` runs a control arm
   instead of comparing against the shipped checkpoint.
 
 A third, specific to this repository and already warned about elsewhere in
