@@ -2096,6 +2096,56 @@ that contains an ear. Every constant fitted against stock is in stock's
 units, and the optimum for a swapped detector cannot be derived from either
 model's own metrics -- it has to be swept against delivered ears.
 
+### Crop placement carries ear information, and it is not just composition
+
+`trainable_blazeface` raised the sharpest objection in the stage-1 exchange.
+A placement ablation on this corpus (Ear_Landmarker) randomised where the
+face stage's crops land while holding count, sizes and images fixed, and
+face-stage misses rose ninefold -- which establishes that placement carries
+information about where ears are, but cannot separate two explanations:
+
+* **head-ness** -- the windows seek heads, which is where ears are
+* **composition** -- these frames are head-filling, so "lands on a head" and
+  "lands on image content rather than background" are nearly the same event,
+  and a tail that merely avoids background would ablate identically
+
+Their proposed discriminator is face size, and it is a subset selection on
+data already in hand rather than a new measurement. `measure_placement_lift.py`
+runs it: real crop placement against a null that preserves each image's window
+count and each window's side and destroys only position, 20 draws per image,
+reported per face-size band.
+
+| largest face / frame height | images | ears | real cover | random null | lift |
+|---|---|---|---|---|---|
+| 0.00-0.20 | 138 | 176 | 81.8% | 15.9% | **5.15x** |
+| 0.20-0.30 | 358 | 483 | 87.0% | 33.7% | 2.58x |
+| 0.30-0.45 | 354 | 425 | 93.6% | 58.1% | 1.61x |
+| 0.45+ | 337 | 412 | 98.3% | 89.6% | **1.10x** |
+| all | 1187 | 1496 | 91.4% | 53.9% | 1.69x |
+
+**The objection is correct as method and the conclusion survives it.** In
+head-filling frames the lift is 1.10x against an 89.6% null -- composition
+explains almost all of it, exactly as warned. In small-head frames the lift
+is 5.15x against a 15.9% null, where a random window lands on background
+five times out of six. The lift therefore survives, and strengthens, in
+precisely the regime where the two explanations come apart, which is
+head-ness's prediction and not composition's.
+
+The methodological half matters independently: the aggregate 1.69x is a
+mixture dominated by head-filling frames, so any placement ablation reported
+in aggregate on this corpus is mostly measuring composition. The small-face
+band is where the answer lives, and that is where it should be reported.
+
+Scope, because it is easy to overclaim this. What is measured here is the
+ordinary face-stage crop -- stock at `FACE_CROP_THRESHOLD` 0.2, 1.97 windows
+per image -- against a random null. It is **not** the fine-tuned detector's
+0.10-0.20 low-score tail, which is the population their ablation used and a
+different one. So this establishes that face-box placement on this corpus
+carries real ear information beyond composition, strongest where heads are
+small; it does not by itself establish that the tail does. It does establish
+that the confound is band-dependent, which is what their ablation needs to be
+re-reported against.
+
 ### Where this can go next, and what it is worth
 
 Written at the close of the gate/tracker work, so the next person does not
