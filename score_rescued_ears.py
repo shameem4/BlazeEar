@@ -149,8 +149,8 @@ def report(rows, gate):
           f'{100*(sc >= gate).mean():12.1f}%   '
           f'{np.median(sc[loc]):12.3f}')
     print('\nThis is a CEILING: the crop is chosen per ear to contain it. '
-          f'A real stage 1\ncannot do better, so a band that fails here '
-          f'cannot be rescued by stage 1 at all.')
+          'A real stage 1\ncannot do better, so a band that fails here '
+          'cannot be rescued by stage 1 at all.')
 
 
 def build_parser():
