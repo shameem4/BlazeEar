@@ -25,6 +25,15 @@
  * Pre-confirmation frames ARE fed: real detections of the same track, and
  * withholding them would cold-start the filter when the box becomes visible.
  *
+ * CONSUMING THIS FILE. In the browser, load it with a plain `<script src>`
+ * and read the globals; in node, `require` it; from an ES module, do a
+ * side-effect `import './ear_tracker.js'` and then read `globalThis`. Please
+ * do NOT add a bare `export` -- that makes the file an ES module, which is a
+ * syntax error under `require()`, and the parity test that keeps this file
+ * honest requires it. Field names differ by language on purpose, each
+ * idiomatic to its own: `det_index` in Python, `detIndex` here. The parity
+ * test maps between them explicitly rather than letting either drift.
+ *
  * One Euro is the default because it was measured against the EMA on those
  * clips: jitter -24.6% against -12.4% from raw, better on 110 of 140 tracks,
  * 95% CI on the paired difference [-0.0013, -0.0008], at lag that is
@@ -157,6 +166,25 @@ class BoxTracker {
      *                 filter that smooths differently in the two languages.
      */
     constructor(options = {}) {
+        // Unknown keys throw. Python's signature already rejects a
+        // misspelling with a TypeError, and Object.assign accepted anything,
+        // so the two languages disagreed about whether a typo was an error.
+        // The concrete failure headsize v2 hit: passing this module's own
+        // Python names ({confirm_score: 0.7, min_hits: 1}) to the JS, which
+        // took none of them, silently ran 0.80 / minHits 3 and emitted
+        // nothing on frame one. That is the same shape as the slider's
+        // value="0.70" bug -- a constant nobody chose, running quietly -- and
+        // it is likely precisely because Python is snake_case here and JS is
+        // camelCase.
+        const allowed = new Set([...Object.keys(TRACKER_DEFAULTS),
+                                 'smoother', 'fps']);
+        const unknown = Object.keys(options).filter(k => !allowed.has(k));
+        if (unknown.length) {
+            throw new TypeError(
+                `BoxTracker: unknown option(s) ${unknown.join(', ')}. ` +
+                `Expected ${[...allowed].join(', ')}. Note this file is ` +
+                `camelCase and utils/box_tracker.py is snake_case.`);
+        }
         Object.assign(this, TRACKER_DEFAULTS, options);
         this.smoother = options.smoother ?? null;
         this.fps = options.fps ?? null;

@@ -279,6 +279,73 @@ class TestJsParity(unittest.TestCase):
         self._compare(self._python(EmaBoxSmoother),
                       self._js('EmaBoxSmoother'), 'ema')
 
+    def test_both_languages_reject_an_unknown_option(self):
+        """A misspelled option must fail, not run a constant nobody chose.
+
+        `headsize v2` hit the concrete case from the consumer side: passing
+        this module's own Python names to the JS ({confirm_score: 0.7,
+        min_hits: 1}), which took none of them, silently ran 0.80 / minHits 3
+        and emitted nothing on frame one. Python's signature already rejected
+        it; `Object.assign` accepted anything, so the two languages disagreed
+        about whether a typo was an error. That is the same shape as the
+        slider's value="0.70" bug, and it is likely precisely BECAUSE the
+        naming differs between the two files.
+        """
+        with self.assertRaises(TypeError):
+            BoxTracker(confirmScore=0.7)        # the JS spelling, in Python
+        script = f"""
+        const {{BoxTracker}} = require({str(JS)!r});
+        try {{
+            new BoxTracker({{confirm_score: 0.7, min_hits: 1}});
+            console.log('ACCEPTED');
+        }} catch (e) {{
+            console.log(e instanceof TypeError ? 'TYPEERROR' : 'OTHER');
+        }}
+        """
+        res = subprocess.run(['node', '-e', script], capture_output=True,
+                             text=True, cwd=ROOT)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual(res.stdout.strip(), 'TYPEERROR',
+                         'the Python spelling must not be silently ignored '
+                         'by the JS')
+
+    def test_the_js_is_not_an_es_module(self):
+        """A bare `export` would break the parity test that guards this file.
+
+        Consumers reach it by <script src> and globals, by require, or by a
+        side-effect import plus globalThis. Making it an ES module is a
+        syntax error under require(), which would silently disable the only
+        check that compares the two implementations' behaviour.
+        """
+        text = JS.read_text()
+        self.assertNotRegex(text, r'(?m)^\s*export\s',
+                            'adding a bare export disables the parity test')
+        self.assertIn('globalThis.BoxTracker', text)
+
+    def test_field_names_are_pinned_per_language(self):
+        """They differ on purpose -- idiomatic in each -- so pin both."""
+        tr = BoxTracker()
+        d = [det(10, 10, 20, 30, 0.9)]
+        for _ in range(3):
+            out = tr.update(d)
+        self.assertIn('det_index', out[0])
+        self.assertNotIn('detIndex', out[0])
+        script = f"""
+        const {{BoxTracker}} = require({str(JS)!r});
+        const tr = new BoxTracker();
+        const d = [{{xmin: 10, ymin: 10, width: 20, height: 30,
+                    confidence: 0.9}}];
+        let out;
+        for (let i = 0; i < 3; i++) out = tr.update(d, i / 30);
+        console.log(JSON.stringify(Object.keys(out[0])));
+        """
+        res = subprocess.run(['node', '-e', script], capture_output=True,
+                             text=True, cwd=ROOT)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        keys = json.loads(res.stdout)
+        self.assertIn('detIndex', keys)
+        self.assertNotIn('det_index', keys)
+
     def test_js_constants_match_python(self):
         text = JS.read_text()
         import re

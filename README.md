@@ -2248,6 +2248,22 @@ cold-start the filter at the moment the box becomes visible. Both are pinned
 by tests, because both are the kind of thing a reasonable implementation gets
 backwards.
 
+**A third thing they found from the consumer side, after it shipped.** The JS
+built itself with `Object.assign(this, TRACKER_DEFAULTS, options)`, which
+accepts any key. Passing this module's own *Python* names to the JS --
+`{confirm_score: 0.7, min_hits: 1}` -- took none of them, ran 0.80 / minHits
+3 and emitted nothing on frame one, silently. Python's signature already
+raised a `TypeError` for the reverse slip, so the two languages disagreed
+about whether a typo was an error, and the typo is likely *because* one file
+is snake_case and the other camelCase. Same shape as the slider's
+`value="0.70"`: a constant nobody chose, running quietly. Both now throw on
+unknown keys, with a parity test asserting it in both languages, and the
+per-language field naming (`det_index` against `detIndex`) is pinned rather
+than left to drift. The file also carries a note not to add a bare `export`,
+because that makes it an ES module, which is a syntax error under `require()`
+and would silently disable the parity test itself -- the check and the thing
+it checks share a failure mode.
+
 Association stays IoU at 0.3 rather than Ear_Landmarker's nearest-centre at
 0.6x size, and not because IoU is better: because every constant here was
 measured with it, and switching association silently re-denominates them the
