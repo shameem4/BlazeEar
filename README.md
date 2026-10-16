@@ -71,6 +71,14 @@ your browser, on your device. No image leaves the page.
 > review caught none of them; execution by a second party caught all of them.
 > That is a stronger claim about process than anything about ears in here.
 >
+> With one correction that belongs next to it, from the session on the other
+> end: the argument was had twice before either of us proposed the
+> fifty-minute run that could settle it. **That is a case for running the
+> cheap thing earlier, not for the arguing having been valuable.** The two
+> rounds of argument produced one retraction, one reinstatement, and a
+> criterion invented mid-conversation that was then applied as if it were a
+> test. The run produced the answer.
+>
 > The habit worth stealing is in the commit log rather than the code. Claims
 > here carry the measurement that produced them, retractions stay in the text
 > next to what they retract, and the count of mechanisms that sounded right
@@ -1637,23 +1645,63 @@ result sits on and on the worst band each pair produced anywhere:
 | seed 1 v 3 | **0.49** | **2.92, p=0.0044** | 2.65 (120+) |
 | seed 2 v 3 | 1.09 | 1.13 | 1.70 (48-64) |
 
-**Seeds do not move the mode band.** The worst within-arm excursion on 64-80
-across all three pairs is 1.09 SD, against the arm's 2.71. And the control is
-internal rather than assumed: the very pair that is quietest on the mode band
-(1 v 3, 0.49) is the pair that produced 2.56 on 80-96 and 2.65 on 120+, so
-these were not simply three placid pairs. By the criterion stated before the
-run -- under about 1 SD and the arm result means something, 2 or above and it
-does not -- **the mode-band p=0.0096 stands, and the withdrawal above is
-itself withdrawn.**
+The worst within-arm excursion on 64-80 across all three pairs is 1.09 SD
+against the arm's 2.71, so **the mode-band result survives a three-seed
+within-arm check -- and that is all it does.** It is not established, and the
+check has two degrees of freedom. `trainable_blazeface` reviewed the
+reasoning when asked and took apart three of the four things propping it up;
+what follows is their objections, because each is right and the first two are
+about method rather than this result.
 
-Two reasons that is not as clean as it reads, both of which cut against the
-conclusion I now prefer. Three pairs drawn from three seeds are not
-independent: they share runs, so there are two degrees of freedom and not
-three. And the multiplicity argument that applied to a post-hoc most-extreme
-band does not apply here, but only because the mode band was **pre-registered
-as the guard** in `queue_augment_scale_ab.sh` before any arm was trained --
-"the mode is the guard, not an extra". Had it been selected after the fact
-for being the largest effect, three quiet pairs would not rescue it.
+**The "~1 SD" criterion was a heuristic with no derivation**, invented in a
+message to give something actionable, and 1.09 is on the wrong side of it. I
+read a threshold as a test, which is the error this whole section is about.
+The question is not "is the max under 1" but "where does 2.71 sit in the
+within-arm distribution", and no threshold answers that.
+
+**The degrees-of-freedom point is bigger than it was credited.** Three pairs
+from three seeds give two independent contrasts, so "worst of three pairs" is
+nearer "worst of two draws", and two draws say almost nothing about a tail.
+Establishing that 2.71 is unlikely under the within-arm distribution at
+conventional confidence would take on the order of twenty seeds, which is not
+worth spending.
+
+**The internal control is weaker than it looks, for a reason inside the
+statistic.** The argument was that pair 1 v 3 was quiet on the mode band
+(0.49) while loud on 120+ (2.65), so those seeds were volatile and the mode
+band escaped it. But SD-from-even is coarse at small discordance:
+
+| discordant | max possible SD | step between adjacent splits |
+|---|---|---|
+| 7 | 2.65 | 0.76 |
+| 36 | 6.00 | 0.33 |
+
+That 2.65 is a 0/7 split -- **the maximum the statistic can reach at that
+discordance**, and one flipped ear from 1.89 -- while the mode band moves in
+steps of 0.33 and can reach 6.00. Over 7 bands x 3 pairs, the expected count
+of maximally-lopsided splits at discordance 7 is about 0.33, so seeing one is
+unremarkable. The control survives in weakened form -- the mode band is
+quieter across seeds than the bands that worried me -- but not as evidence
+that those particular seeds were volatile.
+
+**Pre-registration does real work and is the one leg that holds.** The mode
+band was named in `queue_augment_scale_ab.sh` before any arm was trained --
+"the mode is the guard, not an extra" -- which disposes of band-selection
+multiplicity; without it, three quiet pairs would rescue nothing. Their
+wrinkle was that a band registered as a *guard* is registered for a harm
+check, so claiming a benefit there runs the other way. **That wrinkle does
+not apply here, and this is the one objection of the four that does not
+land**: the mode-band finding *is* a harm -- the treatment lost 31 ears and
+gained 13, -2.37pp -- which is exactly the direction the guard was registered
+to catch. The registration and the claim point the same way.
+
+**The feasible next test is not more seeds of this arm**, which chases a
+nuisance parameter and never has enough. It is **two seeds of the treatment
+arm**, giving four cross-arm comparisons on the mode band: if the effect is
+real its sign and rough magnitude survive all four while seed noise does not.
+One training run per seed on the existing harness. Not run, because it cannot
+change the disposition -- the levers are reverted either way -- so it is
+recorded as the test that would settle it rather than as a plan.
 
 **The overall figure is now comprehensively dead.** Seeds 1 and 3, one
 recipe, differ overall at **2.92 SD, p=0.0044** -- an order of magnitude
